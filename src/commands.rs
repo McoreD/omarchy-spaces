@@ -2,7 +2,7 @@
 //! where things are, then dispatches. What Hyprland can't hold about a space,
 //! its name and the terminal it follows, is in the store (`spaces.rs`).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -11,11 +11,13 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use crate::config::Config;
+use crate::core;
 use crate::hypr::{self, Hypr};
 use crate::name::{self, HOME, Location};
 use crate::paths;
 use crate::spaces::{self, Store};
 use crate::state::{self, Last};
+use crate::status::{self, Status};
 use crate::terminal;
 
 /// Where `space ws` goes. A space's workspaces are its tabs.
@@ -185,16 +187,44 @@ pub(crate) struct Snapshot {
     pub space_windows: Vec<SpaceWindow>,
 }
 
-/// The snapshot, and which of its windows are terminals and where.
+/// The snapshot, which of its windows are terminals and where, and what
+/// the agents in them are doing.
 #[derive(Default)]
 pub(crate) struct Live {
     active: Option<String>,
     windows: BTreeMap<String, u32>,
     workspaces: BTreeMap<String, BTreeSet<u8>>,
     terminals: BTreeMap<String, Vec<Terminal>>,
+    /// Every window's address, by space.
+    addresses: BTreeMap<String, Vec<String>>,
+    /// Agents' statuses, by window address.
+    pub statuses: HashMap<String, Status>,
 }
 
 impl Live {
+    /// Each terminal's status from what its agent reported, `seen` saying
+    /// whether you've seen a core terminal's turn end.
+    pub fn set_statuses(&mut self, seen: impl Fn(&terminal::Agent) -> bool) {
+        self.statuses = self
+            .terminals
+            .values()
+            .flatten()
+            .filter_map(|t| {
+                let agent = t.shell.agent.as_ref()?;
+                let status = status::from_report(&agent.word, seen(agent))?;
+                Some((t.address.clone(), status))
+            })
+            .collect();
+    }
+
+    /// The core terminals of the windows on screen, by window address.
+    pub fn agents(&self) -> impl Iterator<Item = (&str, &terminal::Agent)> {
+        self.terminals
+            .values()
+            .flatten()
+            .filter_map(|t| Some((t.address.as_str(), t.shell.agent.as_ref()?)))
+    }
+
     /// The spaces Hyprland has, `home` aside.
     fn spaces(&self) -> BTreeSet<String> {
         self.workspaces
@@ -253,7 +283,12 @@ pub(crate) fn live_from(
     mut shell: impl FnMut(&SpaceWindow) -> Option<terminal::Shell>,
 ) -> Live {
     let mut terminals: BTreeMap<String, Vec<Terminal>> = BTreeMap::new();
+    let mut addresses: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for window in &snapshot.space_windows {
+        addresses
+            .entry(window.space.clone())
+            .or_default()
+            .push(window.address.clone());
         if let Some(shell) = shell(window) {
             terminals
                 .entry(window.space.clone())
@@ -275,13 +310,20 @@ pub(crate) fn live_from(
         windows: snapshot.windows.clone(),
         workspaces: snapshot.workspaces.clone(),
         terminals,
+        addresses,
+        statuses: HashMap::new(),
     }
 }
 
 fn live(hypr: &Hypr) -> Result<Live> {
-    Ok(live_from(&snapshot(hypr)?, |window| {
-        terminal::shell(window.pid)
-    }))
+    let core = core::list().ok().map(core::Terminals::new);
+    let mut live = live_from(&snapshot(hypr)?, |window| {
+        terminal::shell_of(window.pid, core.as_ref())
+    });
+    // Nothing here knows what you've seen: a `done` shows until `watch`,
+    // which does, says otherwise.
+    live.set_statuses(|_| false);
+    Ok(live)
 }
 
 /// One space, as `space ls` and the sidebar show it.
@@ -308,6 +350,9 @@ pub struct Row {
     pub left_at: u64,
     /// Its terminal windows, oldest first. Empty without Hyprland.
     pub terminals: Vec<TerminalRow>,
+    /// What most needs you among the agents in its windows, if any is
+    /// working, done or waiting.
+    pub status: Option<Status>,
 }
 
 /// A terminal window, as the bar names its tab.
@@ -322,16 +367,19 @@ pub struct TerminalRow {
     pub program: Option<String>,
     /// What its tab shows: the program, or else the folder's name.
     pub label: String,
+    /// What the agent in it is doing, if one reports it and isn't idle.
+    pub status: Option<Status>,
 }
 
-impl From<&Terminal> for TerminalRow {
-    fn from(t: &Terminal) -> Self {
+impl TerminalRow {
+    fn new(t: &Terminal, live: &Live) -> Self {
         Self {
             address: t.address.clone(),
             slot: t.slot,
             folder: t.shell.cwd.clone(),
             program: t.shell.program.clone(),
             label: t.shell.label(),
+            status: live.statuses.get(&t.address).copied(),
         }
     }
 }
@@ -408,9 +456,16 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
             last: visit.map(|v| v.slot).unwrap_or(1),
             left_at: visit.map(|v| v.at).unwrap_or(0),
             terminals: live
-                .and_then(|l| l.terminals.get(id))
-                .map(|list| list.iter().map(TerminalRow::from).collect())
+                .and_then(|l| Some((l, l.terminals.get(id)?)))
+                .map(|(l, list)| list.iter().map(|t| TerminalRow::new(t, l)).collect())
                 .unwrap_or_default(),
+            status: live.and_then(|l| {
+                l.addresses
+                    .get(id)?
+                    .iter()
+                    .filter_map(|address| l.statuses.get(address).copied())
+                    .max()
+            }),
         }
     };
 
@@ -992,6 +1047,7 @@ mod tests {
             shell: terminal::Shell {
                 cwd: cwd.into(),
                 program: None,
+                agent: None,
             },
         }
     }
@@ -1079,6 +1135,7 @@ mod tests {
             last: 1,
             left_at: 0,
             terminals: Vec::new(),
+            status: None,
         }
     }
 

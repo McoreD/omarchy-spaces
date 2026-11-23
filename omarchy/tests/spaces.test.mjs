@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, badgeColor, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, tabsFor, terminalLabels, windowMotion } from "../Spaces.mjs"
+import { appName, badgeColor, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, statusColors, tabsFor, terminalsByAddress, moreUrgent, windowMotion } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -13,7 +13,7 @@ const json = JSON.stringify([
 test("parses space ls --json", () => {
   const rows = parseRows(json)
   assert.equal(rows.length, 4)
-  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, folder: "", active: false, windows: 4, leftAt: 1000, terminals: [] })
+  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, folder: "", active: false, windows: 4, leftAt: 1000, status: "", terminals: [] })
   assert.equal(rows[3].windows, -1, "no count without Hyprland")
   assert.equal(rows[3].named, true)
   assert.throws(() => parseRows("space: error"), /unexpected/)
@@ -85,8 +85,8 @@ test("builds the active space's tabs", () => {
   assert.deepEqual(tabsFor(workspaces, windows, { id: -1338, name: "ren:3" }), {
     space: "ren",
     tabs: [
-      { slot: 1, label: "Chromium", windows: 2, active: false },
-      { slot: 3, label: "Nvim", windows: 1, active: true },
+      { slot: 1, label: "Chromium", status: "", windows: 2, active: false },
+      { slot: 3, label: "Nvim", status: "", windows: 1, active: true },
     ],
   })
 })
@@ -100,8 +100,9 @@ test("names a terminal's tab by what it runs, else its folder", () => {
       { address: 7, label: "broken" },
     ] },
   ]))
-  const labels = terminalLabels(rows)
-  assert.deepEqual(labels, { "0xa": "~", "0xb": "claude", "0xc": "src" })
+  const labels = terminalsByAddress(rows)
+  assert.deepEqual(Object.keys(labels), ["0xa", "0xb", "0xc"])
+  assert.equal(labels["0xb"].label, "claude")
 
   const workspaces = [{ id: -1337, name: "s1:1" }, { id: -1338, name: "s1:2" }, { id: -1339, name: "s1:3" }]
   const windows = [
@@ -113,6 +114,39 @@ test("names a terminal's tab by what it runs, else its folder", () => {
   const tabs = tabsFor(workspaces, windows, { id: -1337, name: "s1:1" }, labels).tabs
   assert.deepEqual(tabs.map((t) => t.label), ["claude", "src", "Kitty"])
   assert.equal(tabsFor(workspaces, windows, { id: -1337, name: "s1:1" }).tabs[0].label, "Kitty", "no labels: classes")
+})
+
+test("shows what most needs you among a tab's and a space's agents", () => {
+  const rows = parseRows(JSON.stringify([
+    { id: "s1", status: "waiting", terminals: [
+      { address: "0xa", label: "claude", status: "working" },
+      { address: "0xb", label: "claude", status: "waiting" },
+      { address: "0xc", label: "claude", status: "done" },
+      { address: "0xd", label: "nvim", status: null },
+      { address: "0xe", label: "x", status: "bogus" },
+    ] },
+    { id: "s2", status: "asleep" },
+  ]))
+  assert.equal(rows[0].status, "waiting")
+  assert.equal(rows[1].status, "", "an unknown status is idle")
+  assert.equal(rows[0].terminals[4].status, "")
+
+  const workspaces = [{ id: -1, name: "s1:1" }, { id: -2, name: "s1:2" }, { id: -3, name: "s1:3" }]
+  const windows = [
+    { workspaceId: -1, address: "0xa", windowClass: "kitty", focus: 0 },
+    { workspaceId: -1, address: "0xb", windowClass: "kitty", focus: 1 },
+    { workspaceId: -2, address: "0xc", windowClass: "kitty", focus: 2 },
+    { workspaceId: -2, address: "0xa1", windowClass: "chromium", focus: 3 },
+    { workspaceId: -3, address: "0xd", windowClass: "kitty", focus: 4 },
+  ]
+  const tabs = tabsFor(workspaces, windows, { id: -1, name: "s1:1" }, terminalsByAddress(rows)).tabs
+  assert.deepEqual(tabs.map((t) => t.status), ["waiting", "done", ""])
+
+  assert.equal(moreUrgent("working", "done"), "done")
+  assert.equal(moreUrgent("waiting", "done"), "waiting")
+  assert.equal(moreUrgent("", "working"), "working")
+  assert.deepEqual(statusColors('red = "#F7768E"\ngreen = "#9ece6a"\n'), { waiting: "#f7768e", done: "#9ece6a" })
+  assert.deepEqual(statusColors(""), { waiting: "", done: "" })
 })
 
 test("a new tab is empty until something opens on it", () => {

@@ -187,6 +187,7 @@ BarWidget {
       TabButton {
         required property var modelData
         text: root.tabLabel(modelData)
+        status: modelData.status
         current: modelData.active
         cap: root.tabCap
         onClicked: root.run(["space", "ws", String(modelData.slot)])
@@ -211,6 +212,7 @@ BarWidget {
       TabButton {
         required property var modelData
         text: root.tabLabel(modelData)
+        status: modelData.status
         current: modelData.active
         onClicked: root.run(["space", "ws", String(modelData.slot)])
       }
@@ -221,11 +223,16 @@ BarWidget {
     id: button
     property string text: ""
     property bool current: false
+    // What most needs you among the agents on the tab, if any.
+    property string status: ""
     signal clicked()
+
+    // Room after the label for the status's dot, on a horizontal bar.
+    readonly property real dotRoom: button.status !== "" && !root.vertical ? dot.width + Style.spacing.sm : 0
 
     // A share of the room before the bar's centre caps a tab, not the `+`.
     property real cap: Infinity
-    readonly property real natural: Math.min(label.implicitWidth + Style.spacing.rowPaddingX * 2, Style.space(220))
+    readonly property real natural: Math.min(label.implicitWidth + button.dotRoom + Style.spacing.rowPaddingX * 2, Style.space(220))
     width: root.vertical ? root.barSize : Math.min(button.natural, button.cap)
     height: root.vertical ? Style.space(26) : root.barSize
 
@@ -240,7 +247,7 @@ BarWidget {
       id: label
       anchors.fill: parent
       anchors.leftMargin: root.vertical ? 0 : Style.spacing.rowPaddingX
-      anchors.rightMargin: root.vertical ? 0 : Style.spacing.rowPaddingX
+      anchors.rightMargin: root.vertical ? 0 : Style.spacing.rowPaddingX + button.dotRoom
       verticalAlignment: Text.AlignVCenter
       horizontalAlignment: Text.AlignHCenter
       textFormat: Text.PlainText
@@ -251,6 +258,18 @@ BarWidget {
       font.family: root.fontFamily
       font.pixelSize: root.fontSize
       font.bold: button.current
+    }
+
+    // After the label on a horizontal bar; on a vertical one, on the
+    // number's corner.
+    StatusDot {
+      id: dot
+      status: button.status
+      colors: root.sidebar ? root.sidebar.statusColors : null
+      workingColor: root.foreground
+      size: Math.max(5, Math.round(root.fontSize * 0.45))
+      x: root.vertical ? parent.width * 0.7 : label.x + Math.min(label.contentWidth, label.width) + Style.spacing.sm
+      y: root.vertical ? Style.spacing.xs : (parent.height - height) / 2
     }
 
     MouseArea {

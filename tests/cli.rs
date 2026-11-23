@@ -225,6 +225,145 @@ impl Hyprland {
     }
 }
 
+/// A fake herdr-core: renSpace's terminals, over the same JSON-RPC.
+#[derive(Default)]
+struct CoreState {
+    terminals: Vec<Value>,
+    subscribers: Vec<UnixStream>,
+    requests: Vec<Value>,
+    next: u32,
+}
+
+impl CoreState {
+    fn broadcast(&mut self, terminal: &str, kind: &str, data: Value) {
+        let line = json!({ "jsonrpc": "2.0", "method": "event", "params": { "seq": 1, "type": kind, "terminal": terminal, "data": data } });
+        self.subscribers
+            .retain_mut(|s| writeln!(s, "{line}").and_then(|()| s.flush()).is_ok());
+    }
+
+    fn handle(&mut self, request: &Value, stream: &UnixStream) -> Value {
+        self.requests.push(request.clone());
+        let params = &request["params"];
+        let result = match request["method"].as_str().unwrap_or("") {
+            "terminal.list" => {
+                json!({ "terminals": self.terminals, "hidden_finished": 0, "machines": [] })
+            }
+            "events.subscribe" => {
+                self.subscribers.push(stream.try_clone().unwrap());
+                json!({ "seq": 0, "terminals": self.terminals })
+            }
+            "terminal.run" => {
+                self.next += 1;
+                let record = json!({ "address": format!("t{}", self.next), "labels": params["labels"], "cwd": params["cwd"], "turn": 0, "state": "live" });
+                self.terminals.push(record.clone());
+                record
+            }
+            "terminal.kill" => {
+                let address = params["terminal"].as_str().unwrap_or("").to_string();
+                self.terminals.retain(|t| t["address"] != address.as_str());
+                self.broadcast(&address, "finished", json!({ "reason": "killed" }));
+                json!({})
+            }
+            _ => {
+                return json!({ "jsonrpc": "2.0", "id": request["id"], "error": { "code": -32601, "message": "no such method" } });
+            }
+        };
+        json!({ "jsonrpc": "2.0", "id": request["id"], "result": result })
+    }
+}
+
+struct Core {
+    state: Arc<Mutex<CoreState>>,
+    socket: PathBuf,
+}
+
+impl Core {
+    fn start(env: &Env) -> Self {
+        let socket = env.root.path().join("core.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let state = Arc::new(Mutex::new(CoreState::default()));
+        let served = Arc::clone(&state);
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { break };
+                let served = Arc::clone(&served);
+                thread::spawn(move || {
+                    use std::io::BufRead;
+                    let reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut writer = stream.try_clone().unwrap();
+                    for line in reader.lines() {
+                        let Ok(line) = line else { break };
+                        let Ok(request) = serde_json::from_str::<Value>(&line) else {
+                            break;
+                        };
+                        let reply = served.lock().unwrap().handle(&request, &stream);
+                        if writeln!(writer, "{reply}").is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        Self { state, socket }
+    }
+
+    /// A terminal showing in the window at `address`, whose process is
+    /// `1000 + address` as the fake Hyprland has it, at its prompt in `dir`.
+    fn add(&self, window: &str, dir: &Path) -> String {
+        let pid = 1000 + u32::from_str_radix(window.trim_start_matches("0x"), 16).unwrap();
+        let mut state = self.state.lock().unwrap();
+        state.next += 1;
+        let address = format!("t{}", state.next);
+        let record = json!({
+            "address": address,
+            "labels": { "renspace": "1", "renspace-window": pid.to_string() },
+            "cwd": dir.display().to_string(),
+            "foreground": { "pid": 1, "name": "zsh", "argv": ["-zsh"], "cwd": dir.display().to_string() },
+            "turn": 0,
+            "state": "live",
+        });
+        state.terminals.push(record.clone());
+        state.broadcast(&address, "created", record);
+        address
+    }
+
+    /// Something changes in a terminal, as core's events say.
+    fn event(&self, terminal: &str, kind: &str, data: Value) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(record) = state
+            .terminals
+            .iter_mut()
+            .find(|t| t["address"] == terminal)
+        {
+            match kind {
+                "status" => record["status"] = data["status"].clone(),
+                "foreground" => record["foreground"] = data.clone(),
+                "turn" => record["turn"] = data["turn"].clone(),
+                _ => {}
+            }
+        }
+        state.broadcast(terminal, kind, data);
+    }
+
+    fn requests(&self, method: &str) -> Vec<Value> {
+        let state = self.state.lock().unwrap();
+        state
+            .requests
+            .iter()
+            .filter(|r| r["method"] == method)
+            .cloned()
+            .collect()
+    }
+
+    /// Core goes away.
+    fn stop(&self) {
+        let _ = fs::remove_file(&self.socket);
+        for stream in self.state.lock().unwrap().subscribers.drain(..) {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
 struct Env {
     root: tempfile::TempDir,
     hypr: Arc<Mutex<Hyprland>>,
@@ -298,7 +437,8 @@ impl Env {
             .env("HOME", self.home())
             .env("XDG_RUNTIME_DIR", self.root.path().join("run"))
             .env("HYPRLAND_INSTANCE_SIGNATURE", "test")
-            .env("RENSPACE_FAKE_CWDS", self.cwds());
+            .env("RENSPACE_FAKE_CWDS", self.cwds())
+            .env("HC_SOCKET", self.root.path().join("core.sock"));
         command
     }
 
@@ -895,13 +1035,13 @@ fn ls_lists_each_spaces_terminals_by_what_they_run() {
     let rows = env.ls_json();
     assert_eq!(
         rows[0]["terminals"],
-        json!([{ "address": notes, "slot": 1, "folder": env.dir("").display().to_string(), "program": null, "label": "~" }])
+        json!([{ "address": notes, "slot": 1, "folder": env.dir("").display().to_string(), "program": null, "label": "~", "status": null }])
     );
     assert_eq!(
         rows[1]["terminals"],
         json!([
-            { "address": agent, "slot": 1, "folder": ren.display().to_string(), "program": "claude", "label": "claude" },
-            { "address": shell, "slot": 2, "folder": ren.join("src").display().to_string(), "program": null, "label": "src" },
+            { "address": agent, "slot": 1, "folder": ren.display().to_string(), "program": "claude", "label": "claude", "status": null },
+            { "address": shell, "slot": 2, "folder": ren.join("src").display().to_string(), "program": null, "label": "src", "status": null },
         ])
     );
     // The space still goes by its first terminal's checkout.
@@ -909,6 +1049,199 @@ fn ls_lists_each_spaces_terminals_by_what_they_run() {
 
     env.run_program(&agent, None);
     assert_eq!(env.ls_json()[1]["terminals"][0]["label"], "ren");
+}
+
+#[test]
+fn a_terminal_in_core_is_named_and_followed_through_core() {
+    let env = Env::new();
+    let core = Core::start(&env);
+    let ren = env.dir("ren");
+    fs::create_dir_all(ren.join(".git")).unwrap();
+    // A window showing a core terminal, whose own shell renSpace can't see,
+    // and a plain one.
+    let window = env.add_window("s1:1");
+    let t = core.add(&window, &ren);
+    let plain = env.add_terminal("s1:2", &env.dir("notes"));
+    env.set_active("1");
+
+    let rows = env.ls_json();
+    assert_eq!(rows[1]["label"], "ren");
+    assert_eq!(rows[1]["terminals"][0]["address"], window);
+    assert_eq!(rows[1]["terminals"][0]["label"], "ren");
+    assert_eq!(rows[1]["terminals"][1]["address"], plain);
+    assert_eq!(rows[1]["status"], Value::Null);
+
+    // Its shell starts an agent in a folder further in.
+    core.event(&t, "foreground", json!({ "pid": 9, "name": "claude", "argv": ["claude"], "cwd": ren.join("src").display().to_string() }));
+    core.event(&t, "status", json!({ "status": { "state": "working", "app": "claude-code" }, "records": {}, "reported": true }));
+    let rows = env.ls_json();
+    assert_eq!(rows[1]["terminals"][0]["label"], "claude");
+    assert_eq!(
+        rows[1]["terminals"][0]["folder"],
+        ren.join("src").display().to_string()
+    );
+    assert_eq!(rows[1]["label"], "ren", "still its checkout");
+    assert_eq!(rows[1]["terminals"][0]["status"], "working");
+    assert_eq!(rows[1]["status"], "working");
+
+    for (word, shown) in [
+        ("blocked", json!("waiting")),
+        ("error", json!("waiting")),
+        ("done", json!("done")),
+        ("idle", Value::Null),
+    ] {
+        core.event(
+            &t,
+            "status",
+            json!({ "status": { "state": word }, "records": {}, "reported": true }),
+        );
+        assert_eq!(env.ls_json()[1]["status"], shown, "{word}");
+    }
+
+    // A shell at its prompt is named after its folder.
+    core.event(
+        &t,
+        "foreground",
+        json!({ "pid": 8, "name": "zsh", "argv": ["-zsh"], "cwd": ren.display().to_string() }),
+    );
+    assert_eq!(env.ls_json()[1]["terminals"][0]["label"], "ren");
+}
+
+#[test]
+fn watch_shows_what_core_reports_and_clears_done_once_seen() {
+    use std::time::Duration;
+    let env = Env::new();
+    let core = Core::start(&env);
+    let ren = env.dir("ren");
+    let agent = env.add_window("s1:1");
+    let t = core.add(&agent, &ren);
+    let other = env.add_window("s1:2");
+    let u = core.add(&other, &ren);
+    env.add_window("1");
+    env.set_active("1");
+
+    let watch = Watch::start(&env);
+    let status = |rows: &[Value]| rows[1]["status"].clone();
+    assert_eq!(
+        status(&watch.next_rows(Duration::from_secs(3))),
+        Value::Null
+    );
+    watch.joined(&env);
+
+    // Core says so as it happens.
+    core.event(
+        &t,
+        "status",
+        json!({ "status": { "state": "working" }, "records": {}, "reported": true }),
+    );
+    assert_eq!(status(&watch.next_rows(Duration::from_secs(1))), "working");
+    core.event(&t, "turn", json!({ "turn": 1, "state": "done" }));
+    core.event(
+        &t,
+        "status",
+        json!({ "status": { "state": "done" }, "records": {}, "reported": true }),
+    );
+    core.event(&u, "turn", json!({ "turn": 1, "state": "done" }));
+    core.event(
+        &u,
+        "status",
+        json!({ "status": { "state": "done" }, "records": {}, "reported": true }),
+    );
+    assert_eq!(status(&watch.next_rows(Duration::from_secs(1))), "done");
+
+    // You look at the agent's window: its turn is seen, the other's isn't.
+    env.event(&format!(
+        "activewindowv2>>{}",
+        agent.trim_start_matches("0x")
+    ));
+    let rows = watch.next_rows(Duration::from_secs(1));
+    assert_eq!(rows[1]["terminals"][0]["status"], Value::Null);
+    assert_eq!(rows[1]["terminals"][1]["status"], "done");
+
+    // Its next turn ends while you're elsewhere: done again.
+    env.event("activewindowv2>>");
+    core.event(
+        &t,
+        "status",
+        json!({ "status": { "state": "working" }, "records": {}, "reported": true }),
+    );
+    core.event(&t, "turn", json!({ "turn": 2, "state": "done" }));
+    core.event(
+        &t,
+        "status",
+        json!({ "status": { "state": "done" }, "records": {}, "reported": true }),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let rows = watch.next_rows(Duration::from_secs(2));
+        if rows[1]["terminals"][0]["status"] == "done" {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "never done again");
+    }
+
+    // Core goes: so do the statuses.
+    core.stop();
+    let rows = watch.next_rows(Duration::from_secs(2));
+    assert_eq!(status(&rows), Value::Null);
+}
+
+#[test]
+fn shell_runs_in_core_and_ends_with_its_window() {
+    // It attaches with the real `hc`.
+    let on_path = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .any(|dir| dir.join("hc").is_file());
+    if !on_path {
+        eprintln!("skipped: hc isn't installed");
+        return;
+    }
+    let env = Env::new();
+    let core = Core::start(&env);
+    let ren = env.dir("ren");
+    let out = env
+        .command(&["shell"])
+        .current_dir(&ren)
+        .env("TERM", "xterm-kitty")
+        .env("SSH_AUTH_SOCK", "/run/ssh")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    let runs = core.requests("terminal.run");
+    assert_eq!(runs.len(), 1, "{stderr}");
+    let run = &runs[0]["params"];
+    assert_eq!(run["cwd"], ren.display().to_string());
+    assert_eq!(run["labels"]["renspace"], "1");
+    assert_eq!(
+        run["labels"]["renspace-window"],
+        std::process::id().to_string(),
+        "the window's process: its parent"
+    );
+    assert_eq!(run["rm"], true);
+    assert_eq!(run["env"]["SSH_AUTH_SOCK"], "/run/ssh");
+    assert_eq!(
+        run["env"]["TERM"],
+        Value::Null,
+        "core's emulator names itself"
+    );
+    // Attaching here fails, as if the window closed at once: the shell ends.
+    let kills = core.requests("terminal.kill");
+    assert_eq!(kills.len(), 1, "{stderr}");
+    assert_eq!(kills[0]["params"]["terminal"], "t1");
+}
+
+#[test]
+fn shell_without_core_runs_your_own() {
+    let env = Env::new();
+    let out = env
+        .command(&["shell"])
+        .env("SHELL", "/usr/bin/true")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("plain shell"));
 }
 
 #[test]
@@ -984,14 +1317,20 @@ impl Watch {
     /// The labels in the next list it prints within `within`.
     #[track_caller]
     fn next(&self, within: std::time::Duration) -> Vec<String> {
+        self.next_rows(within)
+            .iter()
+            .map(|r| r["label"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// The next list it prints within `within`.
+    #[track_caller]
+    fn next_rows(&self, within: std::time::Duration) -> Vec<Value> {
         let line = self
             .lines
             .recv_timeout(within)
             .expect("space watch printed nothing new in time");
-        let rows: Vec<Value> = serde_json::from_str(&line).unwrap();
-        rows.iter()
-            .map(|r| r["label"].as_str().unwrap().to_string())
-            .collect()
+        serde_json::from_str(&line).unwrap()
     }
 
     /// Waits for its listener to join, so events reach it.

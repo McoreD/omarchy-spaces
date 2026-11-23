@@ -211,6 +211,7 @@ Item {
           // Its badge: two letters on a tint of its colour, or a house for
           // home, which is no folder's.
           Rectangle {
+            id: badge
             x: (root.slot - width) / 2
             anchors.verticalCenter: parent.verticalCenter
             width: root.badgeSize
@@ -242,6 +243,17 @@ Item {
               font.pixelSize: rowItem.home ? Style.font.icon : Math.round(root.badgeSize * 0.42)
               font.bold: true
             }
+          }
+
+          // What most needs you among its agents, on the badge's corner, at
+          // full strength however dimmed the badge is.
+          StatusDot {
+            status: rowItem.modelData.status
+            colors: root.sidebar.statusColors
+            workingColor: root.foreground
+            size: Math.max(6, Math.round(root.badgeSize * 0.28))
+            x: badge.x + badge.width - width * 0.7
+            y: badge.y - height * 0.3
           }
 
           Column {

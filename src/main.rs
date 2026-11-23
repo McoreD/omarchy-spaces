@@ -4,7 +4,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 use clap::{Parser, Subcommand};
 
-use renspace::{commands, name, watch};
+use renspace::{commands, name, shell, watch};
 
 /// Spaces for Hyprland: a set of tabs for each thing you work on.
 #[derive(Parser)]
@@ -49,6 +49,10 @@ enum Cmd {
     Terminal,
     /// Print the spaces as `ls --json` does, a line each time they change.
     Watch,
+    /// Run as a terminal window's program: a shell in herdr-core, attached
+    /// here and ended with the window, else your own shell.
+    #[command(hide = true)]
+    Shell,
     /// Run by Hyprland when closing a window empties the workspace you are
     /// on: go to another tab, or end the space.
     #[command(hide = true)]
@@ -94,8 +98,8 @@ fn main() -> ExitCode {
     // notification.
     // `watch` ends whenever Hyprland restarts, and the plugin restarts it: not
     // worth a notification.
-    let unseen =
-        !matches!(cli.command, Cmd::Ls { .. } | Cmd::Watch) && !std::io::stderr().is_terminal();
+    let unseen = !matches!(cli.command, Cmd::Ls { .. } | Cmd::Watch | Cmd::Shell)
+        && !std::io::stderr().is_terminal();
 
     let result = match cli.command {
         Cmd::New { dir } => commands::new(dir),
@@ -108,6 +112,7 @@ fn main() -> ExitCode {
         Cmd::Close { space } => commands::close(space),
         Cmd::Terminal => commands::open_terminal(),
         Cmd::Watch => watch::watch(),
+        Cmd::Shell => shell::shell(),
         Cmd::Emptied { workspace } => commands::emptied(&workspace),
         Cmd::Ws { target } => commands::ws(target),
         Cmd::Move { n, silent } => commands::move_window(n, silent),

@@ -121,6 +121,15 @@ impl Hypr {
         Ok(window.get("address").is_some())
     }
 
+    /// The address of the focused window, if a window has focus.
+    pub fn active_window_address(&self) -> Result<Option<String>> {
+        let window: serde_json::Value = self.query("activewindow")?;
+        Ok(window
+            .get("address")
+            .and_then(serde_json::Value::as_str)
+            .map(String::from))
+    }
+
     /// The process of the focused window, if a window has focus.
     pub fn active_window_pid(&self) -> Result<Option<u32>> {
         let window: serde_json::Value = self.query("activewindow")?;

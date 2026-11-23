@@ -1,12 +1,15 @@
 //! Terminals: the folder a terminal window's shell is in, which names its
-//! space, and opening a new terminal in a folder.
+//! space, what it runs, and opening a new terminal in a folder.
+//!
+//! A window's shell is herdr-core's when the window shows one of its
+//! terminals (`core.rs`), and is found in `/proc` otherwise.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 
-use crate::paths;
+use crate::{core, paths};
 
 /// What the shell of a terminal window is doing: the folder it's in, and
 /// the program it's running, unless it's at its prompt.
@@ -16,6 +19,22 @@ pub struct Shell {
     /// The command running in the terminal's foreground (`claude`, `nvim`),
     /// or `None` at the prompt.
     pub program: Option<String>,
+    /// The herdr-core terminal it is, which knows what its agent says it's
+    /// doing. `None` for a shell outside core.
+    pub agent: Option<Agent>,
+}
+
+/// What a core terminal's program last reported through OSC 7501.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Agent {
+    /// The terminal's address in core: `t7`.
+    pub address: String,
+    /// The program's word: idle, working, done, blocked, error; empty when
+    /// it reports nothing.
+    pub word: String,
+    /// Goes up each time it stops working, so a `done` seen can be told
+    /// from the next.
+    pub turn: u64,
 }
 
 impl Shell {
@@ -31,11 +50,51 @@ impl Shell {
 /// The folder the shell of the terminal window run by `pid` is in, or `None`
 /// when the window isn't a terminal.
 pub fn shell_cwd(pid: u32) -> Option<PathBuf> {
-    shell(pid).map(|shell| shell.cwd)
+    let core = core::list().ok().map(core::Terminals::new);
+    shell_of(pid, core.as_ref()).map(|shell| shell.cwd)
 }
 
-/// The shell of the terminal window run by `pid`, or `None` when the window
-/// isn't a terminal. As `omarchy-cmd-terminal-cwd` decides: a terminal's
+/// The shell of the terminal window run by `pid`: core's terminal in it,
+/// when `core` has one, else the window's own (`shell`).
+pub fn shell_of(pid: u32, core: Option<&core::Terminals>) -> Option<Shell> {
+    if let Some(terminal) = core.and_then(|core| core.in_window(pid).first().copied()) {
+        return Some(from_core(terminal));
+    }
+    shell(pid)
+}
+
+/// A core terminal's shell: its foreground program's folder and name, a
+/// shell counting as its prompt.
+fn from_core(terminal: &core::Terminal) -> Shell {
+    let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+    let (cwd, program) = match &terminal.foreground {
+        Some(fg) => {
+            let shell = shells
+                .lines()
+                .filter_map(|line| line.trim().rsplit('/').next())
+                .any(|name| !name.is_empty() && name == fg.name);
+            let program = display_name(&fg.name, fg.argv.iter().map(String::as_str));
+            (fg.cwd.clone(), program.filter(|_| !shell))
+        }
+        None => (terminal.cwd.clone(), None),
+    };
+    Shell {
+        cwd,
+        program,
+        agent: Some(Agent {
+            address: terminal.address.clone(),
+            word: terminal
+                .status
+                .as_ref()
+                .map(|s| s.state.clone())
+                .unwrap_or_default(),
+            turn: terminal.turn,
+        }),
+    }
+}
+
+/// The window's own shell, run by the terminal app `pid`, or `None` when
+/// the window isn't a terminal. As `omarchy-cmd-terminal-cwd` decides: a terminal's
 /// shell is its newest child that leads its own session on a tty and is a
 /// login shell (listed in `/etc/shells`). Other apps' children, such as
 /// kitty's `kitten` helpers or a browser's, don't qualify.
@@ -51,7 +110,11 @@ pub fn shell(pid: u32) -> Option<Shell> {
             .ok()
             .map(|p| p.trim().to_string())
             .filter(|p| !p.is_empty());
-        return Some(Shell { cwd, program });
+        return Some(Shell {
+            cwd,
+            program,
+            agent: None,
+        });
     }
     let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
     let mut children: Vec<u32> = std::fs::read_dir(format!("/proc/{pid}/task"))
@@ -73,6 +136,7 @@ pub fn shell(pid: u32) -> Option<Shell> {
     Some(Shell {
         cwd,
         program: foreground(&stat, &shells),
+        agent: None,
     })
 }
 
@@ -146,18 +210,21 @@ fn foreground(shell: &Stat, shells: &str) -> Option<String> {
 /// any `: ` (tmux calls its client `tmux: client`).
 fn program_name(pid: u32) -> Option<String> {
     let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
-    let comm = comm.trim_end_matches('\n');
+    let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+    let args: Vec<String> = cmdline
+        .split(|&b| b == 0)
+        .map(|arg| String::from_utf8_lossy(arg).into_owned())
+        .collect();
+    display_name(comm.trim_end_matches('\n'), args.iter().map(String::as_str))
+}
+
+/// What to call a program from its command name (`comm`) and arguments.
+fn display_name<'a>(comm: &str, args: impl Iterator<Item = &'a str>) -> Option<String> {
     // The kernel keeps 15 bytes of it.
     let full = if comm.len() >= 15 {
-        std::fs::read(format!("/proc/{pid}/cmdline"))
-            .ok()
-            .and_then(|cmdline| {
-                cmdline
-                    .split(|&b| b == 0)
-                    .map(|arg| String::from_utf8_lossy(arg).into_owned())
-                    .map(|arg| arg.rsplit('/').next().unwrap_or_default().to_string())
-                    .find(|base| base.starts_with(comm))
-            })
+        args.map(|arg| arg.rsplit('/').next().unwrap_or_default())
+            .find(|base| base.starts_with(comm))
+            .map(String::from)
     } else {
         None
     };
@@ -298,6 +365,7 @@ mod tests {
         let at = |cwd: &Path, program: Option<&str>| Shell {
             cwd: cwd.to_path_buf(),
             program: program.map(String::from),
+            agent: None,
         };
         assert_eq!(at(Path::new("/p/ren"), Some("claude")).label(), "claude");
         assert_eq!(at(Path::new("/p/ren/src"), None).label(), "src");

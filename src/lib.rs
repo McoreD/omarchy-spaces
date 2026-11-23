@@ -4,10 +4,13 @@
 
 pub mod commands;
 pub mod config;
+pub mod core;
 pub mod hypr;
 pub mod name;
 pub mod paths;
+pub mod shell;
 pub mod spaces;
 pub mod state;
+pub mod status;
 pub mod terminal;
 pub mod watch;

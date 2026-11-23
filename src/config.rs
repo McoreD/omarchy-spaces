@@ -22,9 +22,19 @@ pub const DEFAULT_PICKERS: &[(&str, &str)] = &[
 
 /// Opens a terminal in `$RENSPACE_DIR` the way Omarchy's `super+enter`
 /// does (`omarchy-launch-terminal`), so it is the terminal you chose in
-/// Omarchy. Outside a uwsm session, without the app scope.
+/// Omarchy. Outside a uwsm session, without the app scope. It runs
+/// `space shell`, a shell in herdr-core when it's installed (`shell.rs`).
 const OMARCHY_TERMINAL: &str = "exec setsid uwsm-app -- xdg-terminal-exec --dir=\"$RENSPACE_DIR\"";
 const PLAIN_TERMINAL: &str = "exec xdg-terminal-exec --dir=\"$RENSPACE_DIR\"";
+
+/// This program, to run as `space shell`, by its path so it needn't be on
+/// the terminal's PATH.
+fn space_shell() -> String {
+    let exe = std::env::current_exe()
+        .map(|exe| exe.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "space".into());
+    format!("'{}' shell", exe.replace('\'', "'\\''"))
+}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -56,8 +66,8 @@ impl Config {
     pub fn terminal(&self) -> String {
         match &self.terminal {
             Some(terminal) => terminal.clone(),
-            None if on_path("uwsm-app") => OMARCHY_TERMINAL.to_string(),
-            None => PLAIN_TERMINAL.to_string(),
+            None if on_path("uwsm-app") => format!("{OMARCHY_TERMINAL} {}", space_shell()),
+            None => format!("{PLAIN_TERMINAL} {}", space_shell()),
         }
     }
 
@@ -73,7 +83,7 @@ impl Config {
     }
 }
 
-fn on_path(program: &str) -> bool {
+pub fn on_path(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
@@ -88,6 +98,11 @@ mod tests {
         let config = Config::load_from(&dir.path().join("config.toml")).unwrap();
         assert_eq!(config.picker, None);
         assert!(config.terminal().contains("xdg-terminal-exec"));
+        assert!(
+            config.terminal().ends_with("' shell"),
+            "{}",
+            config.terminal()
+        );
     }
 
     #[test]

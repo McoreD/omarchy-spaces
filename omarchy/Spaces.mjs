@@ -20,10 +20,30 @@ export function parseRows(text) {
       active: row.active === true,
       windows: typeof row.windows === "number" ? row.windows : -1,
       leftAt: typeof row.left_at === "number" ? row.left_at : 0,
+      status: status(row.status),
       terminals: (Array.isArray(row.terminals) ? row.terminals : [])
         .filter((t) => t && typeof t.address === "string" && typeof t.label === "string")
-        .map((t) => ({ address: t.address, label: t.label })),
+        .map((t) => ({ address: t.address, label: t.label, status: status(t.status) })),
     }))
+}
+
+// What an agent is doing, least to most in need of you; "" when idle.
+const STATUSES = ["", "working", "done", "waiting"]
+
+function status(value) {
+  return STATUSES.includes(value) ? value : ""
+}
+
+// Whichever of two statuses needs you more.
+export function moreUrgent(a, b) {
+  return STATUSES.indexOf(status(b)) > STATUSES.indexOf(status(a)) ? status(b) : status(a)
+}
+
+// The colours of the statuses from the theme's colors.toml: waiting in its
+// red, done in its green, working in no colour of its own (the text's).
+export function statusColors(text) {
+  const colors = themeColors(text)
+  return { waiting: colors.red || "", done: colors.green || "" }
 }
 
 // How well `query` matches `name`: higher is better, -1 for no match. A
@@ -140,23 +160,25 @@ export function appName(windowClass) {
   return name ? name[0].toUpperCase() + name.slice(1) : ""
 }
 
-// What each terminal window's tab shows, by its address, from the rows:
-// what it runs, or its folder.
-export function terminalLabels(rows) {
-  const labels = {}
+// The terminal windows by address, from the rows: what each one's tab shows
+// (what it runs, or its folder) and what the agent in it is doing.
+export function terminalsByAddress(rows) {
+  const terminals = {}
   for (const row of rows || []) {
-    for (const terminal of row.terminals || []) labels[terminal.address] = terminal.label
+    for (const terminal of row.terminals || []) terminals[terminal.address] = terminal
   }
-  return labels
+  return terminals
 }
 
 // The active space's tabs from Hyprland's workspaces and windows.
 //   workspaces: [{ id, name }]
 //   windows:    [{ workspaceId, address, windowClass, focus }]  (focus: lower is more recent)
 //   active:     { id, name } of the focused workspace
-//   labels:     terminalLabels(rows), which name terminals better than their class
-// Returns { space, tabs: [{ slot, label, windows, active }] } in slot order.
-export function tabsFor(workspaces, windows, active, labels) {
+//   terminals:  terminalsByAddress(rows), which name terminals better than
+//               their class, and say what their agents are doing
+// Returns { space, tabs: [{ slot, label, status, windows, active }] } in slot
+// order, a tab's status the one most in need of you among its windows.
+export function tabsFor(workspaces, windows, active, terminals) {
   const here = locate(active ? active.id : 0, active ? active.name : "")
   const block = (id) => Math.floor((id - 1) / SLOTS)
   const activeBlock = block(active && active.id > 0 ? active.id : 1)
@@ -172,10 +194,10 @@ export function tabsFor(workspaces, windows, active, labels) {
   for (const workspace of workspaces || []) {
     const slot = tabOf(workspace)
     if (slot === null || tabs.has(slot)) continue
-    tabs.set(slot, { id: workspace.id, slot, label: "", windows: 0, active: false, focus: Infinity })
+    tabs.set(slot, { id: workspace.id, slot, label: "", status: "", windows: 0, focus: Infinity })
   }
   if (here.slot > 0 && !tabs.has(here.slot)) {
-    tabs.set(here.slot, { id: active.id, slot: here.slot, label: "", windows: 0, active: false, focus: Infinity })
+    tabs.set(here.slot, { id: active.id, slot: here.slot, label: "", status: "", windows: 0, focus: Infinity })
   }
 
   const byId = new Map([...tabs.values()].map((tab) => [tab.id, tab]))
@@ -183,11 +205,13 @@ export function tabsFor(workspaces, windows, active, labels) {
     const tab = byId.get(window.workspaceId)
     if (!tab) continue
     tab.windows++
+    const terminal = terminals && Object.prototype.hasOwnProperty.call(terminals, window.address)
+      ? terminals[window.address] : null
+    if (terminal) tab.status = moreUrgent(tab.status, terminal.status)
     const focus = typeof window.focus === "number" ? window.focus : Infinity
     // The most recently focused window names the tab.
     if (!tab.label || focus < tab.focus) {
-      const terminal = labels && Object.prototype.hasOwnProperty.call(labels, window.address) ? labels[window.address] : ""
-      tab.label = terminal || appName(window.windowClass)
+      tab.label = (terminal && terminal.label) || appName(window.windowClass)
       tab.focus = focus
     }
   }
@@ -199,6 +223,7 @@ export function tabsFor(workspaces, windows, active, labels) {
       .map((tab) => ({
         slot: tab.slot,
         label: tab.label || "New tab",
+        status: tab.status,
         windows: tab.windows,
         active: tab.slot === here.slot,
       })),
@@ -300,14 +325,20 @@ export function badgeColor(name, palette) {
 // What badges are coloured with when the theme doesn't say.
 export const DEFAULT_PALETTE = ["#f87171", "#fb923c", "#facc15", "#4ade80", "#2dd4bf", "#60a5fa", "#a78bfa", "#f472b6"]
 
-// The colours for badges from an Omarchy theme's colors.toml: its hues, each
-// once, in a fixed order, or the default palette when it names too few.
-export function themePalette(text) {
+// The theme's named colours from its colors.toml: { red: "#f7768e", ... }.
+export function themeColors(text) {
   const colors = {}
   for (const line of String(text || "").split("\n")) {
     const match = line.match(/^\s*([a-z_]+)\s*=\s*"(#[0-9a-fA-F]{6})"/)
     if (match) colors[match[1]] = match[2].toLowerCase()
   }
+  return colors
+}
+
+// The colours for badges from an Omarchy theme's colors.toml: its hues, each
+// once, in a fixed order, or the default palette when it names too few.
+export function themePalette(text) {
+  const colors = themeColors(text)
   const palette = []
   for (const hue of ["red", "orange", "yellow", "green", "cyan", "blue", "magenta"]) {
     if (colors[hue] && !palette.includes(colors[hue])) palette.push(colors[hue])

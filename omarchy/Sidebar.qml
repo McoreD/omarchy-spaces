@@ -79,6 +79,8 @@ Item {
   readonly property string home: Quickshell.env("HOME") || ""
   // The colours spaces' badges take, from the theme's colors.toml.
   property var palette: Spaces.DEFAULT_PALETTE
+  // The colours of agents' statuses, from it too (StatusDot.qml).
+  property var statusColors: null
 
   readonly property int panelWidth: Style.space(200)
 
@@ -429,8 +431,14 @@ Item {
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: root.palette = Spaces.themePalette(text())
-    onLoadFailed: root.palette = Spaces.DEFAULT_PALETTE
+    onLoaded: {
+      root.palette = Spaces.themePalette(text())
+      root.statusColors = Spaces.statusColors(text())
+    }
+    onLoadFailed: {
+      root.palette = Spaces.DEFAULT_PALETTE
+      root.statusColors = null
+    }
   }
 
   Process {
