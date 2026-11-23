@@ -8,20 +8,21 @@ import qs.Commons as Commons
 import qs.Ui
 import "Spaces.mjs" as Spaces
 
-// The active space's tabs on Omarchy's bar, in place of its workspaces: the
-// space's name, which opens the sidebar, then a tab per workspace. Clicks on
-// tabs run `space ws`, which stays the only thing that changes workspaces. On
-// a vertical bar there is room only for the tabs' numbers.
+// The active space's tabs on Omarchy's bar, in place of its workspaces: a tab
+// per workspace. Clicks on tabs run `space ws`, which stays the only thing
+// that changes workspaces. On a vertical bar there is room only for the tabs'
+// numbers.
 //
-// While the sidebar shows on this screen, the bar parts where the windows
-// begin. Before that line it shows the background, shaded as the sidebar
-// below it is, with the menu and the space's name on it. Past it, the tabs
-// and the rest of the bar are the space's, over its windows, from a rounded
-// corner. The line moves with the windows as they slide aside (Sidebar.qml's
-// `edge`), and it carries the tabs along once it reaches them, so they move as
-// far and as fast as the windows do. Only a widget whose left edge stays put
-// as it grows can do this, as one in the bar's left section does: anywhere
-// else, growing would move it out from under the line.
+// The bar parts where the windows begin, by the sidebar's rail or by the
+// whole sidebar. Before that line it shows the background, shaded as the
+// sidebar below it is, with the menu on it. Past it, the tabs and the rest of
+// the bar are the space's, over its windows, from a rounded corner. Which
+// space you are in shows in the sidebar's column, so the bar doesn't name it.
+// The line moves with the windows as they slide aside (Sidebar.qml's `edge`),
+// carrying the tabs, so they move as far and as fast as the windows do. Only
+// a widget whose left edge stays put as it grows can do this, as one in the
+// bar's left section does: anywhere else, growing would move it out from
+// under the line.
 BarWidget {
   id: root
   moduleName: "org.ren.renspace"
@@ -74,18 +75,47 @@ BarWidget {
     var window = root.QsWindow.window
     return window && window.screen ? window.screen.name : ""
   }
-  // Whether the sidebar parts this bar: it opens on this screen, and the
-  // widget can follow its edge.
+  // Whether the sidebar parts this bar: the widget can follow its edge.
   readonly property bool parts: !root.vertical && root.fixedEdge === "start" && !!root.sidebar
-    && !!root.sidebar.screen && root.sidebar.screen.name === root.screenName
-  // Where the windows begin on this screen, as they slide: 0 with the sidebar hidden.
-  readonly property real edge: root.parts ? root.sidebar.edge : 0
+  // Where the windows begin on this screen, as they slide.
+  readonly property real edge: {
+    if (!root.parts) return 0
+    var here = !!root.sidebar.screen && root.sidebar.screen.name === root.screenName
+    return here ? root.sidebar.edge : root.sidebar.railEdge
+  }
   onPartsChanged: root.placeLater()
 
-  // Where the tabs start: after the name, or just inside the space's part of
-  // the bar once its edge has come up to them.
-  readonly property real tabsAfterName: root.padding + head.implicitWidth + Style.spacing.xs
-  readonly property real tabsX: Math.max(root.tabsAfterName, root.edge - root.origin.x + Style.spacing.xs)
+  // Where the tabs start: just inside the space's part of the bar.
+  readonly property real tabsX: Math.max(root.padding, root.edge - root.origin.x + Style.spacing.xs)
+
+  // Where the bar's centre starts, its clock, as the bar window keeps it. Past
+  // the sidebar the tabs have less room before it, so when they would reach
+  // it the longest share what the shorter leave, their names cut short, their
+  // numbers kept. The
+  // widgets that hang off the clock's start, its indicators, are other
+  // plugins' and can't be measured, so room for two of their icons is kept
+  // when the bar has any.
+  readonly property real centerStart: {
+    var window = root.QsWindow.window
+    return window && typeof window.peekEdge === "number" && window.peekEdge > 0 ? window.peekEdge : Infinity
+  }
+  readonly property real beforeCenter: {
+    var layout = root.bar ? root.bar.layoutConfig : null
+    var hanging = layout && Array.isArray(layout.centerBegin) && layout.centerBegin.length > 0
+    return Style.spacing.lg + (hanging ? Style.bar.iconSlot * 2 : 0)
+  }
+  readonly property real tabCap: {
+    var count = root.model.tabs.length
+    if (count === 0 || root.centerStart === Infinity) return Infinity
+    var room = root.centerStart - root.beforeCenter - root.origin.x - root.tabsX
+      - newTab.width - row.spacing * count
+    var widths = []
+    for (var i = 0; i < tabRepeater.count; i++) {
+      var tab = tabRepeater.itemAt(i)
+      if (tab) widths.push(tab.natural)
+    }
+    return Math.max(Style.spacing.rowPaddingX * 2 + root.fontSize * 2, Spaces.fairCap(widths, room))
+  }
 
   function tabLabel(tab) {
     if (root.vertical) return String(tab.slot)
@@ -94,14 +124,12 @@ BarWidget {
 
   Tabs {
     id: tabs
-    // One `space watch` for the bar and the sidebar: the service's.
-    watch: root.service && root.service.watch ? root.service.watch : null
   }
 
   // The background, from the screen's edge to where the windows begin, over
   // the bar's whole thickness, and the space's part of the bar's rounded
-  // corner past it. Drawn under the name and the tabs, and over the menu
-  // before them, which it shades along with the rest.
+  // corner past it. Drawn under the tabs, and over the menu before them,
+  // which it shades along with the rest.
   Item {
     id: recess
     visible: !root.vertical && root.edge > 0.5
@@ -141,32 +169,6 @@ BarWidget {
     }
   }
 
-  // The space's name; click it to show or hide the sidebar. It stays put, on
-  // the background, as the sidebar comes and goes; the line between it and
-  // the tabs fades while they sit apart.
-  Row {
-    id: head
-    visible: !root.vertical
-    x: root.padding
-    height: root.barSize
-    spacing: Style.spacing.xs
-
-    TabButton {
-      text: tabs.label
-      bold: true
-      onClicked: root.run(["omarchy-shell", "shell", "call", "org.ren.renspace", "showOrHide", ""])
-    }
-
-    Rectangle {
-      width: 1
-      height: parent.height * 0.5
-      anchors.verticalCenter: parent.verticalCenter
-      color: root.foreground
-      opacity: root.parts && root.sidebar.opened ? 0 : 0.25
-      Behavior on opacity { NumberAnimation { duration: Style.duration(160) } }
-    }
-  }
-
   Row {
     id: row
     visible: !root.vertical
@@ -175,17 +177,20 @@ BarWidget {
     spacing: Style.spacing.xs
 
     Repeater {
+      id: tabRepeater
       model: root.vertical ? [] : root.model.tabs
 
       TabButton {
         required property var modelData
         text: root.tabLabel(modelData)
         current: modelData.active
+        cap: root.tabCap
         onClicked: root.run(["space", "ws", String(modelData.slot)])
       }
     }
 
     TabButton {
+      id: newTab
       text: "+"
       visible: root.model.tabs.length < 10
       onClicked: root.run(["space", "ws", "new"])
@@ -212,10 +217,12 @@ BarWidget {
     id: button
     property string text: ""
     property bool current: false
-    property bool bold: false
     signal clicked()
 
-    width: root.vertical ? root.barSize : Math.min(label.implicitWidth + Style.spacing.rowPaddingX * 2, Style.space(220))
+    // A share of the room before the bar's centre caps a tab, not the `+`.
+    property real cap: Infinity
+    readonly property real natural: Math.min(label.implicitWidth + Style.spacing.rowPaddingX * 2, Style.space(220))
+    width: root.vertical ? root.barSize : Math.min(button.natural, button.cap)
     height: root.vertical ? Style.space(26) : root.barSize
 
     Rectangle {
@@ -236,10 +243,10 @@ BarWidget {
       text: button.text
       elide: Text.ElideRight
       color: button.current ? root.accent : root.foreground
-      opacity: button.current || button.bold ? 1 : 0.6
+      opacity: button.current ? 1 : 0.6
       font.family: root.fontFamily
       font.pixelSize: root.fontSize
-      font.bold: button.bold || button.current
+      font.bold: button.current
     }
 
     // The current tab is underlined, like a browser's; on a vertical bar,

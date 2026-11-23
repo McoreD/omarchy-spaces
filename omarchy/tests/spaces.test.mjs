@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, barLook, displayDir, ease, filterRows, freshen, gapLeft, initialIndex, labels, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, tabsFor, windowMotion } from "../Spaces.mjs"
+import { appName, badgeColor, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, displayDir, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, tabsFor, windowMotion } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -147,6 +147,51 @@ test("reads the left of Hyprland's outer gaps", () => {
   assert.equal(gapLeft("hyprctl: no such option"), null)
 })
 
+test("marks a space with two letters, as T3 Code marks a project", () => {
+  assert.equal(monogram("rencal"), "RL")
+  assert.equal(monogram("caldir"), "CR")
+  assert.equal(monogram("Tax 2026"), "T2")
+  assert.equal(monogram("omarchy-caldir-widget"), "OW")
+  assert.equal(monogram("v2ray"), "V2")
+  assert.equal(monogram("my notes"), "MN")
+  assert.equal(monogram("x"), "X")
+  assert.equal(monogram("ångström"), "ÅM")
+  assert.equal(monogram("~"), "?")
+  assert.equal(monogram(""), "?")
+})
+
+test("colours a badge by its space's name", () => {
+  const palette = ["#111111", "#222222", "#333333"]
+  assert.equal(badgeColor("rencal", palette), badgeColor("rencal", palette), "the same each time")
+  assert.equal(badgeColor("Rencal", palette), badgeColor("rencal", palette), "whatever its case")
+  assert.ok(palette.includes(badgeColor("caldir", palette)))
+  assert.equal(badgeColor("caldir", []), "")
+})
+
+test("takes badge colours from the theme", () => {
+  const toml = [
+    'mode = "dark"',
+    'accent = "#faa968"',
+    'red = "#F85525"',
+    'yellow = "#e97b3c"',
+    'orange = "#faa968"',
+    'green = "#028391"',
+    'blue = "#3f8f8a"',
+    'magenta = "#3f8f8a"',
+    'bright_red = "#ff0000"',
+  ].join("\n")
+  assert.deepEqual(themePalette(toml), ["#f85525", "#faa968", "#e97b3c", "#028391", "#3f8f8a"])
+  assert.deepEqual(themePalette('red = "#ff0000"'), DEFAULT_PALETTE, "too few of its own")
+  assert.deepEqual(themePalette(""), DEFAULT_PALETTE)
+})
+
+test("shares the bar's room between tabs, short ones whole", () => {
+  assert.equal(fairCap([50, 60], 200), Infinity, "they fit")
+  assert.equal(fairCap([40, 100, 100], 200), 80, "the short one keeps its width")
+  assert.equal(fairCap([100, 100], 100), 50)
+  assert.equal(fairCap([], 10), Infinity)
+})
+
 test("eases along a cubic Bézier as Hyprland does", () => {
   const linear = [0, 0, 1, 1]
   assert.ok(Math.abs(ease(linear, 0.25) - 0.25) < 1e-9)
@@ -189,12 +234,6 @@ test("freshens the last rows for the space you are in now", () => {
   assert.equal(rows[initialIndex(fresh)].label, "ren", "the cursor starts on the space you came from")
   assert.equal(rows[initialIndex(rows)].label, "renspace", "the stale rows would start on the space you are in")
   assert.deepEqual(freshen(rows, "s1", 9000), rows, "nothing changed while it was closed")
-})
-
-test("maps ids to labels for the bar", () => {
-  assert.deepEqual(labels(parseRows(json)), { home: "home", s1: "ren", s2: "renspace", s3: "Tax 2026" })
-  assert.deepEqual(labels([]), {})
-  assert.deepEqual(labels(null), {})
 })
 
 test("offers rename and close, saying why close doesn't apply", () => {

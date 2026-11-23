@@ -6,7 +6,7 @@ A **space** holds one piece of work. Each space has its own **tabs**, and each t
 
 A space is called after the folder its first terminal is in: the repository's folder when it's in one, `~` for home. It follows that terminal as it changes folder. Name a space when you want a name that stays. A space lasts as long as its windows: close the last one, however it goes (`super+w`, `exit`, the app quitting), and the space ends, taking you back to the space you were in before. Closing the last window on one of a space's tabs takes you to its next tab, or the one before.
 
-The active space's name and tabs sit on Omarchy's bar, in place of its workspaces. Click the name, or press `super+b`, to show or hide the spaces sidebar: it sits on the base under the workspaces, and showing it slides the windows aside to reveal it. The bar parts along the same line: before it, the menu and the space's name sit on the background, shaded like the sidebar below them; past it, the tabs and the rest of the bar belong to the space, and slide aside with its windows, frame for frame. It keeps up as you switch spaces and tabs, and leaves the keyboard with your windows. Press `super+p` to search it. Click the `+` by its title to open a new space with a terminal in the folder you are in, or home if you aren't in one: the terminal opens there first, and you go there once it's up, so you never see the space empty. Right-click a space to rename or close it. It takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
+The spaces have their own column down the left of the screen, and the active space's tabs sit on Omarchy's bar, in place of its workspaces, beside it. Collapsed, the column is a rail of badges, one per space: two letters for its name, as T3 Code marks projects, in a colour from the theme that stays with the name. Press `super+b`, or click the toggle at its top, to expand it into the spaces sidebar, with each space's name, folder and window count: it sits on the base under the workspaces, and expanding it slides the windows aside to reveal it. The bar parts along the same line: before it, the menu sits on the background, shaded like the sidebar below it; past it, the tabs and the rest of the bar belong to the space, and slide aside with its windows, frame for frame. It keeps up as you switch spaces and tabs, and leaves the keyboard with your windows. Press `super+p` to search it. Click `+` at the end of the list to open a new space with a terminal in the folder you are in, or home if you aren't in one: the terminal opens there first, and you go there once it's up, so you never see the space empty. Right-click a space to rename or close it. It takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
 
 ## Install
 
@@ -19,8 +19,8 @@ just setup     # add the tabs to the bar, the sidebar and the keys
 
 | Keys | Does |
 |---|---|
-| `super+b` | Show or hide the spaces sidebar |
-| `super+p` | Find a space: type to filter, Enter to switch, Escape to stop. Shows the sidebar for the search if it's hidden |
+| `super+b` | Expand or collapse the spaces sidebar |
+| `super+p` | Find a space: type to filter, Enter to switch, Escape to stop. Expands the sidebar for the search if it's collapsed |
 | `super+enter` | Terminal in the folder you are in; on an empty tab, the space's folder |
 | `super+t` | New tab |
 | `super+1..0` | Go to tab N |

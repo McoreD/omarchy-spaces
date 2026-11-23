@@ -8,22 +8,25 @@ import Quickshell.Wayland
 import qs.Commons
 import "Spaces.mjs" as Spaces
 
-// The spaces sidebar: its rows, search and cursor, and when it shows. The base
-// (Base.qml) draws it by the left edge, under the windows. Showing it claims
-// its width, so Hyprland slides the windows aside and they uncover it; hiding
-// it slides them back over it. With no windows to uncover it, it slides in and
-// out by itself. Picking a space runs `space go`, which stays the only thing
-// that knows how spaces map to workspaces.
+// The spaces sidebar: its rows, search and cursor, and how wide it is. The
+// base (Base.qml) draws it by the left edge, under the windows. Collapsed, it
+// is a rail down every screen, as wide as the badges each row starts with, so
+// the spaces always have their column and the windows and the bar's tabs sit
+// beside it. Expanding it claims its whole width on one screen, so Hyprland
+// slides the windows aside and they uncover the rest of each row; collapsing
+// slides them back over it. Where nothing covers it, it is cut off where the
+// windows would be. Picking a space runs `space go`, which stays the only
+// thing that knows how spaces map to workspaces.
 //
-// Showing it (`super+b`, or the space's name on the bar) is only visual: the
-// keyboard stays with the windows, and the list keeps up with the spaces until
-// you hide it. Searching it (`super+p`) takes the keyboard to filter the list;
-// a pick, Escape, or focus moving to a window ends the search. A sidebar shown
-// just for the search hides again with it.
+// Expanding it (`super+b`, or the toggle at its top) is only visual: the
+// keyboard stays with the windows. Searching it (`super+p`) takes the keyboard
+// to filter the list; a pick, Escape, or focus moving to a window ends the
+// search. A sidebar expanded just for the search collapses again with it.
 //
 // Each space is called after the folder its first terminal is in, unless you
 // name it, so the list follows your terminals as they change folder. The `+`
-// by the title opens a new space with a terminal in the folder you are in.
+// at the end of the list opens a new space with a terminal in the folder you
+// are in.
 // Right-clicking a space opens its menu (SpaceMenu.qml), floating where you
 // clicked: rename it or close it. Renaming takes the keyboard as the search
 // does, to type the name in place; an empty name has the space called after
@@ -39,8 +42,8 @@ Item {
   // The spaces as `space watch` keeps them (Watch.qml).
   property var watch: null
 
-  // Whether the sidebar shows, and whether you are searching it, which holds
-  // the keyboard. `searchOnly` marks a sidebar shown only for the search.
+  // Whether the sidebar is expanded, and whether you are searching it, which
+  // holds the keyboard. `searchOnly` marks one expanded only for the search.
   property bool opened: false
   property bool searching: false
   property bool searchOnly: false
@@ -57,17 +60,11 @@ Item {
   readonly property var menuRow: menuFor ? rows.find(function(row) { return row.id === menuFor }) || null : null
   property real menuX: 0
   property real menuY: 0
-  // `zoned` claims the width, which makes Hyprland move the windows; `shown`
-  // draws the list, which stays drawn until the windows have covered it.
-  property bool zoned: false
-  property bool shown: false
-  // How far the list sits left of its place, while it slides by itself.
-  property real offset: -panelWidth
-  // The screen it opened on.
+  property var menuScreen: null
+  // The screen it expands on, or last expanded on.
   property var screen: null
   // Hyprland's window motion, read from `hyprctl animations -j`.
   property var motion: ({ duration: 379, bezier: [0.23, 1, 0.32, 1] })
-  readonly property var curve: [motion.bezier[0], motion.bezier[1], motion.bezier[2], motion.bezier[3], 1, 1]
   property string filterText: ""
   property int selectedIndex: 0
   property var rows: []
@@ -80,25 +77,34 @@ Item {
   // Enter pressed before there was a list, to act on once it arrives.
   property bool pending: false
   readonly property string home: Quickshell.env("HOME") || ""
+  // The colours spaces' badges take, from the theme's colors.toml.
+  property var palette: Spaces.DEFAULT_PALETTE
 
   readonly property int panelWidth: Style.space(260)
+  // Collapsed, as wide as the badges and the space either side of them.
+  readonly property int railWidth: Style.space(44)
   // Hyprland's outer gap on the left, from `hyprctl getoption`.
   property int gapLeft: 0
-  // How far from its screen's left edge the windows begin while it shows.
-  readonly property int windowsEdge: panelWidth + gapLeft
-  // How far the windows have slid aside, from 0 to its width, on the curve
-  // Hyprland slides them on, starting as they start. It is worked out from the
-  // clock each frame, rather than by a NumberAnimation, so it can run `lead`
-  // ahead: Hyprland draws the windows where they are in the frame it shows,
-  // while what the bar draws reaches the screen a frame after, so the bar is
-  // told where they will be by then. Measured on a recording, the bar lagged
-  // the windows by one frame of the screen, either way.
-  property real uncovered: 0
-  readonly property real slideTo: opened ? panelWidth : 0
-  property real slideFrom: 0
+  // How far from its screen's left edge the windows begin by the rail.
+  readonly property int railEdge: railWidth + gapLeft
+  // How much of it the windows leave uncovered on its screen, from the rail's
+  // width to its whole width, on the curve Hyprland slides them on, starting
+  // as they start. It is worked out from the clock each frame, rather than by
+  // a NumberAnimation, so it can run `lead` ahead: Hyprland draws the windows
+  // where they are in the frame it shows, while what the shell draws reaches
+  // the screen a frame after, so the bar is told where they will be by then.
+  // Measured on a recording, the bar lagged the windows by one frame of the
+  // screen, either way.
+  property real uncovered: railWidth
+  // How much of it to draw: never less than the windows uncover, so no gap
+  // opens between its edge and theirs. Ahead of them as they uncover more,
+  // and behind them, under them, as they cover it again.
+  property real revealed: railWidth
+  readonly property real slideTo: opened ? panelWidth : railWidth
+  property real slideFrom: railWidth
   property double slideStart: 0
-  // With no windows to move, the sidebar slides by itself, and the bar keeps
-  // to it frame for frame.
+  // With no windows to move, nothing to keep up with but itself, so the bar
+  // and the sidebar keep to each other frame for frame.
   property bool leading: true
   readonly property int lead: {
     if (!root.leading) return 0
@@ -115,15 +121,18 @@ Item {
     root.step()
   }
 
-  function step() {
+  // How much is uncovered `elapsed` milliseconds into the slide.
+  function uncoveredAt(elapsed) {
     var duration = root.motion.duration
-    var progress = duration > 0 ? (Date.now() - root.slideStart + root.lead) / duration : 1
-    if (progress >= 1) {
-      root.uncovered = root.slideTo
-      slide.stop()
-      return
-    }
-    root.uncovered = root.slideFrom + (root.slideTo - root.slideFrom) * Spaces.ease(root.motion.bezier, progress)
+    var progress = duration > 0 ? elapsed / duration : 1
+    return root.slideFrom + (root.slideTo - root.slideFrom) * Spaces.ease(root.motion.bezier, progress)
+  }
+
+  function step() {
+    var elapsed = Date.now() - root.slideStart
+    root.uncovered = root.uncoveredAt(elapsed + root.lead)
+    root.revealed = root.slideTo > root.slideFrom ? root.uncovered : root.uncoveredAt(elapsed)
+    if (elapsed >= root.motion.duration) slide.stop()
   }
 
   FrameAnimation {
@@ -133,23 +142,15 @@ Item {
   // Where the windows' left edge is on its screen as they slide: the bar
   // shows the background up to it and keeps the space's tabs past it
   // (TabsWidget.qml), so the bar parts along the same line as the screen.
-  readonly property real edge: panelWidth > 0 ? uncovered / panelWidth * windowsEdge : 0
+  // Every other screen parts at `railEdge`.
+  readonly property real edge: uncovered + gapLeft
 
-  function show() {
+  // Expands it on `screen`, or the focused one.
+  function show(screen) {
     if (root.opened) return
-    root.screen = root.focusedScreen()
+    root.screen = screen || root.focusedScreen()
     root.leading = root.windowsToMove()
     root.opened = true
-    root.zoned = true
-    root.shown = true
-    hideTimer.stop()
-    slideOut.stop()
-    if (root.windowsToMove()) {
-      slideIn.stop()
-      root.offset = 0
-    } else {
-      slideIn.restart()
-    }
     root.take()
   }
 
@@ -161,16 +162,12 @@ Item {
     root.closeMenu()
     root.leading = root.windowsToMove()
     root.opened = false
-    root.zoned = false
-    slideIn.stop()
-    if (root.windowsToMove()) hideTimer.restart()
-    else slideOut.restart()
     if (wasSearching) root.searchEnded()
   }
 
-  function showOrHide() {
+  function showOrHide(screen) {
     if (root.opened) root.hide()
-    else root.show()
+    else root.show(screen)
   }
 
   // Takes the keyboard to search the list, showing the sidebar for it if it
@@ -240,10 +237,14 @@ Item {
     }
   }
 
+  // The rail shows the spaces too, so the list keeps up while collapsed.
   Connections {
     target: root.watch
-    function onRowsChanged() { if (root.opened) root.update() }
-    function onErrorChanged() { if (root.opened && root.rows.length === 0) root.error = root.watch.error }
+    function onRowsChanged() {
+      if (root.opened) root.update()
+      else root.take()
+    }
+    function onErrorChanged() { if (root.rows.length === 0) root.error = root.watch.error }
   }
 
   function applyFilter(resetCursor) {
@@ -299,9 +300,9 @@ Item {
     root.run(["space", "new"])
   }
 
-  // Opens a space's menu at a point on the sidebar's screen. The menu takes
-  // the keyboard, so a search ends, leaving the sidebar open.
-  function openMenu(id, x, y) {
+  // Opens a space's menu at a point on `screen`. The menu takes the keyboard,
+  // so a search ends, leaving the sidebar open.
+  function openMenu(id, x, y, screen) {
     root.endNaming(false)
     if (root.searching) {
       root.searchOnly = false
@@ -310,6 +311,7 @@ Item {
     }
     root.menuX = x
     root.menuY = y
+    root.menuScreen = screen || root.screen || root.focusedScreen()
     root.menuFor = id
   }
 
@@ -390,37 +392,6 @@ Item {
     stderr: StdioCollector {}
   }
 
-  // Hide the list once the windows have slid back over it.
-  Timer {
-    id: hideTimer
-    interval: root.motion.duration + 40
-    onTriggered: if (!root.opened) root.shown = false
-  }
-
-  // On an empty workspace nothing uncovers the list, so it slides itself, on
-  // the same curve the windows would move on.
-  NumberAnimation {
-    id: slideIn
-    target: root
-    property: "offset"
-    from: -root.panelWidth
-    to: 0
-    duration: root.motion.duration
-    easing.type: Easing.BezierSpline
-    easing.bezierCurve: root.curve
-  }
-
-  NumberAnimation {
-    id: slideOut
-    target: root
-    property: "offset"
-    to: -root.panelWidth
-    duration: root.motion.duration
-    easing.type: Easing.BezierSpline
-    easing.bezierCurve: root.curve
-    onFinished: if (!root.opened) root.shown = false
-  }
-
   Process {
     id: motionProc
     command: ["hyprctl", "animations", "-j"]
@@ -430,6 +401,17 @@ Item {
         if (motion) root.motion = motion
       }
     }
+  }
+
+  // A new theme changes current/; the watch on a file inside it fires for the
+  // whole directory, as it does for the bar.
+  FileView {
+    path: (Quickshell.env("XDG_STATE_HOME") || (root.home + "/.local/state")) + "/omarchy/current/theme/colors.toml"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.palette = Spaces.themePalette(text())
+    onLoadFailed: root.palette = Spaces.DEFAULT_PALETTE
   }
 
   Process {
@@ -446,6 +428,7 @@ Item {
   Component.onCompleted: {
     motionProc.running = true
     gapsProc.running = true
+    root.take()
   }
 
   // A click on a window or a switch of tab during a search or a rename moves
@@ -464,18 +447,38 @@ Item {
     }
   }
 
-  // A one-pixel-wide panel on a top layer, drawing nothing and taking no
-  // clicks. During a search it holds the keyboard, which the bottom
-  // layer can't do the way the top layers can, and reserves the sidebar's
-  // width, which makes Hyprland move the windows. The shell makes the bar
-  // first, so this reserves room below a top bar and the bar never moves.
+  // On each screen, a one-pixel-wide panel on a top layer, drawing nothing
+  // and taking no clicks, that reserves the sidebar's width, the rail's or the
+  // whole of it, which makes Hyprland move the windows. The shell makes the
+  // bar first, so this reserves room below a top bar and the bar never moves.
+  Variants {
+    model: Quickshell.screens
+
+    PanelWindow {
+      required property var modelData
+      readonly property bool expanded: root.opened && !!root.screen && root.screen.name === modelData.name
+      screen: modelData
+      anchors { left: true; top: true; bottom: true }
+      implicitWidth: 1
+      exclusionMode: ExclusionMode.Normal
+      exclusiveZone: expanded ? root.panelWidth : root.railWidth
+      mask: Region {}
+      color: "transparent"
+      WlrLayershell.namespace: "renspace-sidebar-room"
+      WlrLayershell.layer: WlrLayer.Top
+      WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+    }
+  }
+
+  // Like it, on the screen it expands on, holding the keyboard during a
+  // search or a rename, which the bottom layer can't do the way the top
+  // layers can. It reserves nothing.
   PanelWindow {
     id: keys
     screen: root.screen || root.focusedScreen()
     anchors { left: true; top: true; bottom: true }
     implicitWidth: 1
-    exclusionMode: ExclusionMode.Normal
-    exclusiveZone: root.zoned ? root.panelWidth : 0
+    exclusionMode: ExclusionMode.Ignore
     mask: Region {}
     color: "transparent"
     WlrLayershell.namespace: "renspace-sidebar-keys"

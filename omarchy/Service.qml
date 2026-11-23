@@ -19,7 +19,7 @@ Item {
 
   function search() { sidebarItem.search() }
   function endSearch() { sidebarItem.endSearch() }
-  function showOrHide() { sidebarItem.showOrHide() }
+  function showOrHide(screen) { sidebarItem.showOrHide(screen) }
 
   Base {
     sidebar: sidebarItem

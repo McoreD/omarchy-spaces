@@ -4,25 +4,9 @@ import QtQuick
 import Quickshell.Hyprland
 import "Spaces.mjs" as Spaces
 
-// The active space's tabs, which are its workspaces, read live from Hyprland,
-// and what the space is called. Its workspaces are named after its id (`s1`);
-// what to call it, the name you gave it or its terminal's folder, comes from
-// `space watch` (Watch.qml): the service's, or one of its own when the
-// service can't be reached.
+// The active space's tabs, which are its workspaces, read live from Hyprland.
 Item {
   id: root
-
-  // The service's watch, when the bar can reach it.
-  property var watch: null
-  readonly property var rows: root.watch ? root.watch.rows : (own.item ? own.item.rows : [])
-  readonly property var labels: Spaces.labels(root.rows)
-  readonly property string label: root.labels[root.model.space] || root.model.space
-
-  Loader {
-    id: own
-    active: !root.watch
-    sourceComponent: Watch {}
-  }
 
   // Bumped after Hyprland has answered a refresh, for anything bindings miss.
   property int revision: 0

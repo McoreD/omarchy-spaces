@@ -68,13 +68,6 @@ export function filterRows(rows, query) {
     .map((entry) => entry.row)
 }
 
-// Space ids to what they're called, from parsed rows, for the bar.
-export function labels(rows) {
-  const out = {}
-  for (const row of rows || []) out[row.id] = row.label
-  return out
-}
-
 // A row's right-click menu: which actions apply, and why not when one
 // doesn't. `home` has none. Icons are Nerd Font glyphs: a pencil, a cross.
 export function rowActions(row) {
@@ -266,6 +259,69 @@ export function gapLeft(text) {
   // CSS order: top, right, bottom, left; fewer values repeat as CSS repeats them.
   const left = sides.length === 4 ? sides[3] : sides.length >= 2 ? sides[1] : sides[0]
   return Math.max(0, left)
+}
+
+// A space's badge: two letters for its name, as T3 Code marks its projects.
+// The first letter, then the first digit after it in the first word, or the
+// last word's first letter, or the first word's last letter: `rencal` is RL,
+// `Tax 2026` is T2, `my notes` is MN. A one-letter name keeps its one letter.
+//
+// The shell's JavaScript has no Unicode classes (`\p{L}`), so a word is a run
+// of anything but spaces and ASCII punctuation, and a digit an ASCII one.
+export function monogram(name) {
+  const text = String(name || "")
+  const words = (text.normalize ? text.normalize("NFKC") : text).trim().match(/[^\s!-/:-@[-`{-~]+/g) || []
+  if (words.length === 0) return "?"
+  const glyphs = Array.from(words[0])
+  const first = glyphs[0]
+  const digit = glyphs.slice(1).find((glyph) => /[0-9]/.test(glyph))
+  let second = digit
+  if (!second && words.length > 1) second = Array.from(words[words.length - 1])[0]
+  if (!second && glyphs.length > 1) second = glyphs[glyphs.length - 1]
+  return Array.from((first + (second || "")).toUpperCase()).slice(0, 2).join("")
+}
+
+// The colour of a space's badge, from `palette`, by its name: the same name
+// always takes the same colour.
+export function badgeColor(name, palette) {
+  if (!palette || palette.length === 0) return ""
+  const text = String(name || "")
+  const seed = (text.normalize ? text.normalize("NFKC") : text).trim().toLowerCase() || "space"
+  let index = 0
+  for (const glyph of seed) index = (index * 31 + glyph.codePointAt(0)) % palette.length
+  return palette[index]
+}
+
+// What badges are coloured with when the theme doesn't say.
+export const DEFAULT_PALETTE = ["#f87171", "#fb923c", "#facc15", "#4ade80", "#2dd4bf", "#60a5fa", "#a78bfa", "#f472b6"]
+
+// The colours for badges from an Omarchy theme's colors.toml: its hues, each
+// once, in a fixed order, or the default palette when it names too few.
+export function themePalette(text) {
+  const colors = {}
+  for (const line of String(text || "").split("\n")) {
+    const match = line.match(/^\s*([a-z_]+)\s*=\s*"(#[0-9a-fA-F]{6})"/)
+    if (match) colors[match[1]] = match[2].toLowerCase()
+  }
+  const palette = []
+  for (const hue of ["red", "orange", "yellow", "green", "cyan", "blue", "magenta"]) {
+    if (colors[hue] && !palette.includes(colors[hue])) palette.push(colors[hue])
+  }
+  return palette.length >= 3 ? palette : DEFAULT_PALETTE
+}
+
+// The widest any tab may be for `widths` (each tab's own) to fit in `room`:
+// tabs narrower than an equal share keep their width, and the rest split
+// what is left. Infinity when they all fit.
+export function fairCap(widths, room) {
+  const sorted = widths.slice().sort((a, b) => a - b)
+  let left = room
+  for (let i = 0; i < sorted.length; i++) {
+    const share = left / (sorted.length - i)
+    if (sorted[i] > share) return share
+    left -= sorted[i]
+  }
+  return Infinity
 }
 
 // How far along a cubic Bézier easing is at `x` (0 to 1) of its time, as

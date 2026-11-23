@@ -29,8 +29,8 @@ PanelWindow {
   readonly property int itemHeight: Math.max(Style.spacing.popupRowHeight, Style.font.body + Style.spacing.controlPaddingY * 2)
   readonly property int edge: Style.spacing.md
 
-  visible: actions.length > 0 && !!sidebar && !!sidebar.screen
-  screen: sidebar ? sidebar.screen : null
+  visible: actions.length > 0 && !!sidebar && !!sidebar.menuScreen
+  screen: sidebar ? sidebar.menuScreen : null
   anchors { top: true; bottom: true; left: true; right: true }
   exclusionMode: ExclusionMode.Ignore
   color: "transparent"
