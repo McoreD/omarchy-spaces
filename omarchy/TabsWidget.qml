@@ -86,8 +86,9 @@ BarWidget {
   }
   onPartsChanged: root.placeLater()
 
-  // Where the tabs start: just inside the space's part of the bar.
-  readonly property real tabsX: Math.max(root.padding, root.edge - root.origin.x + Style.spacing.xs)
+  // Where the tabs start: at the space's part of the bar, so a tab's hover
+  // background stands as far from the space's side as from its top.
+  readonly property real tabsX: Math.max(root.padding, root.edge - root.origin.x)
 
   // Where the bar's centre starts, its clock, as the bar window keeps it. Past
   // the sidebar the tabs have less room before it, so when they would reach
@@ -229,7 +230,7 @@ BarWidget {
 
     Rectangle {
       anchors.fill: parent
-      anchors.margins: Style.spacing.xxs
+      anchors.margins: Style.spacing.xs
       radius: Style.cornerRadius
       color: mouse.containsMouse && !button.current ? root.hover : "transparent"
     }
@@ -249,17 +250,6 @@ BarWidget {
       font.family: root.fontFamily
       font.pixelSize: root.fontSize
       font.bold: button.current
-    }
-
-    // The current tab is underlined, like a browser's; on a vertical bar,
-    // marked on its inner side.
-    Rectangle {
-      visible: button.current
-      x: root.vertical ? (root.bar && root.bar.position === "left" ? parent.width - width : 0) : Style.spacing.sm
-      y: root.vertical ? Style.spacing.xs : parent.height - height
-      width: root.vertical ? Math.max(2, Style.space(2)) : parent.width - Style.spacing.sm * 2
-      height: root.vertical ? parent.height - Style.spacing.xs * 2 : Math.max(2, Style.space(2))
-      color: root.accent
     }
 
     MouseArea {
