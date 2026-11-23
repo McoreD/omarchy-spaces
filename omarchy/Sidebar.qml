@@ -2,22 +2,25 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell
+import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Commons as Commons
-import qs.Ui
 import "Spaces.mjs" as Spaces
 
-// A column on the left edge listing every space. Summoned and dismissed like
-// Omarchy's other overlays; picking a space runs `space go`, which stays the
-// only thing that knows how spaces map to workspaces.
+// The spaces list, part of the frame around the workspaces: the left edge,
+// below the tab strip, in the same colour as the strip and the bar. Opening
+// it takes room from the windows rather than covering them; Hyprland re-tiles
+// them into what's left and animates the move, while the list slides in
+// beside them. Picking a space runs `space go`, which stays the only thing
+// that knows how spaces map to workspaces.
 Item {
   id: root
 
-  property string omarchyPath: Quickshell.env("OMARCHY_PATH")
-  property var shell: null
-  property var manifest: null
+  // Emitted when the sidebar closes itself (a pick, Escape, focus moving to a
+  // window), so the service can tell the shell.
+  signal closed()
 
   property bool opened: false
   property string filterText: ""
@@ -25,44 +28,32 @@ Item {
   property var rows: []
   property var shownRows: []
   property string error: ""
+  property double openedAt: 0
   readonly property string home: Quickshell.env("HOME") || ""
 
-  // The menu surface tokens, so themes that style Omarchy's menus style this.
-  property color background: Commons.Color.menu.background
-  property color foreground: Commons.Color.menu.text
-  property color border: Commons.Color.menu.border
-  property var borderSpec: Border.surfaceSpec("menu", "border", border, Math.max(1, Style.space(2)))
-  property color scrim: Commons.Color.menu.scrim
-  property color selectedBackground: Commons.Color.menu.selectedBackground
-  property color selectedText: Commons.Color.menu.selectedText
-  property string fontFamily: Style.font.menuFamily
-  readonly property int cornerRadius: Style.cornerRadius
-  readonly property int contentMargin: Style.spacing.panelPadding
-  readonly property int headerHeight: Math.max(Style.space(34), Style.font.heading + Style.spacing.controlPaddingY * 2)
+  readonly property int panelWidth: Style.space(260)
+  readonly property color background: Commons.Color.bar.background
+  readonly property color foreground: Commons.Color.bar.text
+  readonly property color accent: Commons.Color.accent
+  readonly property color selectedBackground: Commons.Color.menu.selectedBackground
+  readonly property string fontFamily: Style.font.family
   readonly property int rowHeight: Math.round((Style.font.title + Style.font.bodySmall) * 1.35) + Style.spacing.controlPaddingY * 2
-  readonly property int cardWidth: Math.min(Style.space(300), panel.width - Style.gapsOut * 2)
+  readonly property int headerHeight: Math.max(Style.space(30), Style.font.subtitle + Style.spacing.controlPaddingY * 2)
 
-  function open(payloadJson) {
-    root.opened = true
+  function open() {
+    if (root.opened) return
     root.filterText = ""
     root.error = ""
+    root.openedAt = Date.now()
+    root.opened = true
     root.refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   function close() {
+    if (!root.opened) return
     root.opened = false
-  }
-
-  function dismiss() {
-    root.opened = false
-    if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "org.ren.renspace")
-  }
-
-  function toggle() {
-    if (root.opened) root.dismiss()
-    else root.open("{}")
+    root.closed()
   }
 
   function refresh() {
@@ -108,13 +99,22 @@ Item {
   function activate(index) {
     if (index < 0 || index >= root.shownRows.length) return
     var name = root.shownRows[index].name
-    root.dismiss()
+    root.close()
     Quickshell.execDetached(["space", "go", name])
   }
 
   function subtitle(row) {
     if (row.dir) return Spaces.displayDir(row.dir, root.home)
     return row.name === "home" ? "Plain workspaces" : "Folder not found"
+  }
+
+  function focusedScreen() {
+    var monitor = Hyprland.focusedMonitor
+    var name = monitor ? String(monitor.name || "") : ""
+    for (var i = 0; i < Quickshell.screens.length; i++) {
+      if (Quickshell.screens[i].name === name) return Quickshell.screens[i]
+    }
+    return Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
   }
 
   Process {
@@ -130,34 +130,41 @@ Item {
     }
   }
 
-  OverlayWindow {
+  // A click on a window moves focus there; take that as done with the list.
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      if (!root.opened || Date.now() - root.openedAt < 300) return
+      if (event.name === "activewindowv2" || event.name === "workspacev2") root.close()
+    }
+  }
+
+  PanelWindow {
     id: panel
-    shown: root.opened
+
+    // Mapped for good and parked just past the screen edge while closed, so
+    // opening is a margin change and an animation rather than a new surface.
+    screen: root.focusedScreen()
+    anchors { left: true; top: true; bottom: true }
+    implicitWidth: root.panelWidth
+    margins.left: root.opened || slide.running ? 0 : -root.panelWidth
+    exclusionMode: ExclusionMode.Normal
+    exclusiveZone: root.opened ? root.panelWidth : 0
+    color: "transparent"
     WlrLayershell.namespace: "renspace-sidebar"
+    WlrLayershell.layer: WlrLayer.Top
+    WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
     Rectangle {
-      anchors.fill: parent
-      color: root.scrim
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      onClicked: root.dismiss()
-    }
-
-    BorderSurface {
-      id: card
-      width: root.cardWidth
-      anchors.left: parent.left
-      anchors.top: parent.top
-      anchors.bottom: parent.bottom
-      anchors.margins: Style.gapsOut
-      radius: root.cornerRadius
+      id: content
+      width: parent.width
+      height: parent.height
+      x: root.opened ? 0 : -width
       color: root.background
-      borderSpec: root.borderSpec
-      padding: root.contentMargin
 
-      MouseArea { anchors.fill: parent; onClicked: {} }
+      Behavior on x {
+        NumberAnimation { id: slide; duration: 180; easing.type: Easing.OutCubic }
+      }
 
       Item {
         id: keyCatcher
@@ -169,7 +176,7 @@ Item {
           var ctrl = event.modifiers & Qt.ControlModifier
           if (event.key === Qt.Key_Escape) {
             if (root.filterText) root.setFilter("")
-            else root.dismiss()
+            else root.close()
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
           } else if (event.key === Qt.Key_Up || (ctrl && event.key === Qt.Key_P) || event.key === Qt.Key_Backtab) {
@@ -190,22 +197,20 @@ Item {
 
       Column {
         anchors.fill: parent
-        anchors.topMargin: card.contentTopInset
-        anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
-        anchors.leftMargin: card.contentLeftInset
-        spacing: Style.spacing.md
+        anchors.margins: Style.spacing.md
+        spacing: Style.spacing.sm
 
         Text {
           width: parent.width
           height: root.headerHeight
+          leftPadding: Style.spacing.rowPaddingX
           verticalAlignment: Text.AlignVCenter
           textFormat: Text.PlainText
           text: root.filterText || "Spaces"
           color: root.foreground
-          opacity: root.filterText ? 1 : 0.58
+          opacity: root.filterText ? 1 : 0.5
           font.family: root.fontFamily
-          font.pixelSize: Style.font.heading
+          font.pixelSize: Style.font.subtitle
           elide: Text.ElideRight
         }
 
@@ -229,7 +234,7 @@ Item {
 
               width: ListView.view.width
               height: root.rowHeight
-              radius: root.cornerRadius
+              radius: Style.cornerRadius
               color: selected ? root.selectedBackground : "transparent"
 
               // The space you're in.
@@ -240,7 +245,7 @@ Item {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 radius: width / 2
-                color: root.selectedText
+                color: root.accent
               }
 
               Column {
@@ -255,7 +260,7 @@ Item {
                   width: parent.width
                   textFormat: Text.PlainText
                   text: rowItem.modelData.name
-                  color: rowItem.selected ? root.selectedText : root.foreground
+                  color: rowItem.selected ? root.accent : root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.title
                   font.bold: rowItem.modelData.active
@@ -267,7 +272,7 @@ Item {
                   textFormat: Text.PlainText
                   text: root.subtitle(rowItem.modelData)
                   color: root.foreground
-                  opacity: 0.55
+                  opacity: 0.5
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
                   elide: Text.ElideMiddle

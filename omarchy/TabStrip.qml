@@ -9,15 +9,11 @@ import qs.Commons as Commons
 import "Spaces.mjs" as Spaces
 
 // A strip along the top edge with the active space's tabs, which are its
-// workspaces. Read live from Hyprland, so it needs no `space` call to stay
+// workspaces. Clicking the space's name opens the sidebar. Read live from Hyprland, so it needs no `space` call to stay
 // current; clicks run `space ws`, which stays the only thing that changes
 // workspaces.
 Item {
   id: root
-
-  property string omarchyPath: ""
-  property var shell: null
-  property var manifest: null
 
   // Bumped after Hyprland has answered a refresh, for anything bindings miss.
   property int revision: 0

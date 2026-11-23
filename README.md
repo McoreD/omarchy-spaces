@@ -38,11 +38,13 @@ The strip shows the space's name, then a tab for each of its workspaces: its num
 
 ### The sidebar
 
-`super+p` opens a column on the left edge: `home` first, then every space by name, each with its folder and window count. The space you're in has a mark beside it. Rows keep their place from one opening to the next, so you can learn where each space is. The cursor starts on the space you left most recently, so `super+p` then Enter goes back to it.
+The tab strip, the sidebar and Omarchy's bar (on the right) form a frame, in one colour, with the workspaces inside it. `super+p` slides the sidebar in from the left, below the tab strip. It takes its width from the windows rather than covering them: Hyprland re-tiles them into the space that's left and animates the move. Closing it gives the room back.
 
-Type to filter. A prefix match beats a match at a word start, which beats letters in order: `spc` finds `renspace`. Up/down, Tab or `ctrl+n`/`ctrl+p` move the cursor. Enter or a click jumps there. Esc clears the filter, then closes. A click outside also closes.
+The sidebar lists `home` first, then every space by name, each with its folder and window count. The space you're in has a mark beside it. Rows keep their place from one opening to the next, so you can learn where each space is. The cursor starts on the space you left most recently, so `super+p` then Enter goes back to it.
 
-The sidebar only reads `space ls --json` and runs `space go <name>`, so the `space` binary stays the only thing that knows about spaces. `space go` with no name still opens the centered vicinae or walker picker from a terminal.
+Type to filter. A prefix match beats a match at a word start, which beats letters in order: `spc` finds `renspace`. Up/down, Tab or `ctrl+n`/`ctrl+p` move the cursor. Enter or a click jumps there and closes the sidebar. Esc clears the filter, then closes. While it's open, the sidebar has the keyboard.
+
+The sidebar stays mapped just off the screen's edge while closed, so opening it is a slide rather than a new window. It lives in the plugin's service (`omarchy/Service.qml`) next to the tab strip. `omarchy/Toggle.qml` is the overlay entry the shell summons and hides, and only forwards to it. The sidebar reads `space ls --json` and runs `space go <name>`, so the `space` binary stays the only thing that knows about spaces. `space go` with no name still opens the centered vicinae or walker picker from a terminal.
 
 ## Use
 
@@ -103,7 +105,7 @@ Everything under `~/.local/state/renspace/` is disposable cache and can be delet
 
 **Fast keypresses.** `space` talks to Hyprland's IPC socket directly rather than shelling out to `hyprctl`. Hyprland 0.56 takes Lua for `dispatch`, so for example `space ws 2` in `ren` sends `dispatch hl.dsp.focus({ workspace = "name:ren:2" })`. On the target laptop `space ws` takes about 0.5 ms from spawn to exit, against 3 ms for a single `hyprctl -j activeworkspace`. `space ws` and `space move` don't read config or scan roots, and the optional workspace keys skip the binary altogether. Scanning `~/Projects` for `space ls` takes about 2 ms.
 
-The code is small. The sidebar is `omarchy/Sidebar.qml` plus `omarchy/Spaces.mjs`. On the Rust side: `name.rs` (names, the `name:n` format, typo suggestions), `hypr.rs` (socket client), `spaces.rs` (`.renspace.toml`, scanning, index), `state.rs` (`last`), `commands.rs` (the five commands), `main.rs` (CLI).
+The code is small. The shell plugin is `omarchy/Service.qml` (the frame), `TabStrip.qml`, `Sidebar.qml` and `Toggle.qml`, with their logic in `Spaces.mjs`. On the Rust side: `name.rs` (names, the `name:n` format, typo suggestions), `hypr.rs` (socket client), `spaces.rs` (`.renspace.toml`, scanning, index), `state.rs` (`last`), `commands.rs` (the five commands), `main.rs` (CLI).
 
 ## Spike findings (step 0)
 
