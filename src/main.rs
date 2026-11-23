@@ -22,6 +22,10 @@ enum Cmd {
         name: Option<String>,
         /// Defaults to the current folder. Created if it doesn't exist.
         dir: Option<PathBuf>,
+        /// Instead of a folder, use the one of that name in your roots, or
+        /// make one in the first root (~/Projects by default).
+        #[arg(long, requires = "name", conflicts_with = "dir")]
+        in_roots: bool,
     },
     /// Go to a space where you left it. With no name, pick one.
     Go {
@@ -34,6 +38,18 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Rename a space, the active one unless you name it. Its windows stay.
+    #[command(override_usage = "space rename [OLD] <NEW>")]
+    Rename {
+        #[arg(value_name = "OLD")]
+        first: String,
+        #[arg(value_name = "NEW")]
+        second: Option<String>,
+    },
+    /// Close every window of a space, the active one unless you name it.
+    Close { name: Option<String> },
+    /// Stop a folder being a space: removes its .renspace.toml, not the folder.
+    Rm { name: String },
     /// Go to a workspace (tab) of the active space: 1-10, new, next or prev.
     Ws {
         #[arg(value_parser = target)]
@@ -71,14 +87,29 @@ fn target(raw: &str) -> Result<commands::Target, String> {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    // Run from a keybind, nobody sees stderr, so say it in a notification.
-    let from_keybind = matches!(
-        cli.command,
-        Cmd::Go { .. } | Cmd::Ws { .. } | Cmd::Move { .. }
-    ) && !std::io::stderr().is_terminal();
+    // Run from a keybind or the sidebar, nobody sees stderr, so say it in a
+    // notification.
+    let unseen = !matches!(cli.command, Cmd::Ls { .. }) && !std::io::stderr().is_terminal();
 
     let result = match cli.command {
-        Cmd::New { name, dir } => commands::new(name, dir),
+        Cmd::New {
+            name,
+            dir,
+            in_roots,
+        } => commands::new(
+            name,
+            if in_roots {
+                commands::NewDir::InRoots
+            } else {
+                commands::NewDir::Path(dir)
+            },
+        ),
+        Cmd::Rename { first, second } => match second {
+            Some(new) => commands::rename(Some(first), new),
+            None => commands::rename(None, first),
+        },
+        Cmd::Close { name } => commands::close(name),
+        Cmd::Rm { name } => commands::remove(name),
         Cmd::Go { name } => commands::go(name),
         Cmd::Ls { json } => commands::ls(json),
         Cmd::Ws { target } => commands::ws(target),
@@ -100,7 +131,7 @@ fn main() -> ExitCode {
         Err(e) => {
             let message = format!("{e:#}");
             eprintln!("space: {message}");
-            if from_keybind {
+            if unseen {
                 notify(&message);
             }
             ExitCode::FAILURE

@@ -4,7 +4,7 @@ Spaces for Hyprland on Omarchy: switch projects, not workspaces.
 
 A **space** is a project: a name and a folder. Each space has its own **tabs**, and each tab is a Hyprland workspace (`ren:1`, `ren:2`, …) holding whatever windows you tile there. The plain numbered workspaces are the `home` space.
 
-The active space's name and tabs sit on Omarchy's bar, in place of its workspaces. Click the name, or press `super+b`, to show or hide the spaces sidebar: it sits on the base under the workspaces, and showing it slides the windows aside to reveal it. It keeps up as you switch spaces and tabs, and leaves the keyboard with your windows. Press `super+p` to search it. It takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
+The active space's name and tabs sit on Omarchy's bar, in place of its workspaces. Click the name, or press `super+b`, to show or hide the spaces sidebar: it sits on the base under the workspaces, and showing it slides the windows aside to reveal it. It keeps up as you switch spaces and tabs, and leaves the keyboard with your windows. Press `super+p` to search it; type a name no space has to make a new one, with a folder of that name in your first root (or an existing folder there). Right-click a space to rename it, close its windows, or remove it. It takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
 
 ## Install
 
@@ -29,12 +29,18 @@ In `home`, the tab keys behave exactly as Omarchy's workspace keys.
 ## CLI
 
 ```sh
-space new [name] [dir]   # make a folder a space (writes .renspace.toml) and go to it
-space go [name]          # go to a space where you left it
-space ls [--json]        # list spaces with window counts
+space new [name] [dir]       # make a folder a space (writes .renspace.toml) and go to it
+space new <name> --in-roots  # the same, in a folder of that name in your roots
+space go [name]              # go to a space where you left it
+space ls [--json]            # list spaces with window counts
+space rename [old] <new>     # rename a space, the active one by default; its windows stay
+space close [name]           # close a space's windows, the active one by default
+space rm <name>              # stop a folder being a space; the folder stays
 space ws <n|new|next|prev>
 space move <n> [--silent]
 ```
+
+`space close` asks each app to close, as `super+w` does, so an app can still stop to save. `space rm` only removes the `.renspace.toml`, and refuses while the space has windows open.
 
 ## How it fits together
 

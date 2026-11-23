@@ -65,6 +65,59 @@ export function filterRows(rows, query) {
     .map((entry) => entry.row)
 }
 
+// A valid space name made from what you type: `My Trip` is `my-trip`. The
+// same rule as `space` (src/name.rs).
+export function slugify(raw) {
+  let out = ""
+  for (const c of String(raw || "").toLowerCase()) {
+    if ((c >= "a" && c <= "z") || (c >= "0" && c <= "9")) out += c
+    else if (out && !out.endsWith("-")) out += "-"
+  }
+  return out.replace(/-+$/, "").slice(0, 64)
+}
+
+// The filtered rows, and after them a row offering to make a space of the
+// query's name when no space has it: `{ name, create: true }`. Activating it
+// runs `space new <name> --in-roots`.
+export function withNewRow(shown, rows, query) {
+  const name = slugify(String(query || "").trim())
+  if (!name || name === "home" || rows.some((row) => row.name === name)) return shown
+  return shown.concat([{ name, dir: "", active: false, windows: -1, leftAt: 0, create: true }])
+}
+
+// Which of a row's actions (its right-click menu) apply, and why not when
+// one doesn't. `home` and the new-space row have none.
+export function rowActions(row) {
+  if (!row || row.create || row.name === "home") return []
+  const windows = row.windows > 0 ? row.windows : 0
+  return [
+    { id: "rename", label: "Rename", enabled: true, hint: "" },
+    {
+      id: "close",
+      label: windows === 1 ? "Close 1 window" : "Close " + (windows || "its") + " windows",
+      enabled: windows > 0,
+      hint: windows > 0 ? "" : "None open",
+    },
+    {
+      id: "remove",
+      label: "Remove space",
+      enabled: windows === 0 && !!row.dir,
+      hint: !row.dir ? "No folder" : windows > 0 ? "Close windows first" : "Keeps the folder",
+    },
+  ]
+}
+
+// The new name while renaming, after typing `text`: only what a space name
+// takes, uppercase lowered and spaces or `_` as `-`, never leading.
+export function renameInput(name, text) {
+  let out = name
+  for (const c of String(text || "").toLowerCase()) {
+    const ch = c === " " || c === "_" ? "-" : c
+    if ((ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || (ch === "-" && out)) out += ch
+  }
+  return out.slice(0, 64)
+}
+
 // Where the cursor starts: on the space you left most recently, so opening
 // the sidebar and pressing Enter goes back. Failing that, the active one.
 export function initialIndex(rows) {

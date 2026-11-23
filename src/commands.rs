@@ -1,5 +1,5 @@
-//! The five commands. None of them keeps state about windows: each asks
-//! Hyprland where things are, then dispatches.
+//! The commands. None of them keeps state about windows: each asks Hyprland
+//! where things are, then dispatches.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -137,11 +137,35 @@ pub fn move_window(slot: u8, silent: bool) -> Result<()> {
     Ok(())
 }
 
+/// Where `space new` puts the space.
+pub enum NewDir {
+    /// A folder, relative to the current one; the current one when `None`.
+    Path(Option<PathBuf>),
+    /// A folder of the space's name in the roots (`spaces::folder_in_roots`),
+    /// for the sidebar, which has no current folder worth using.
+    InRoots,
+}
+
 /// `space new [name] [dir]`: makes `dir` a space and goes to it.
-pub fn new(space_name: Option<String>, dir: Option<PathBuf>) -> Result<()> {
+pub fn new(space_name: Option<String>, dir: NewDir) -> Result<()> {
     let config = Config::load()?;
+    let dir = match dir {
+        NewDir::Path(dir) => dir.unwrap_or_default(),
+        NewDir::InRoots => {
+            let Some(space_name) = &space_name else {
+                bail!("--in-roots needs a name: space new <name> --in-roots");
+            };
+            check_new_name(space_name)?;
+            spaces::folder_in_roots(&config.root_dirs(), space_name).with_context(|| {
+                format!(
+                    "no roots to put it in: set `roots` in {}",
+                    paths::tilde(&paths::config_file())
+                )
+            })?
+        }
+    };
     let cwd = std::env::current_dir().context("can't read the current folder")?;
-    let mut dir = cwd.join(dir.unwrap_or_default());
+    let mut dir = cwd.join(dir);
     if dir.exists() {
         dir = std::fs::canonicalize(&dir)?;
         if !dir.is_dir() {
@@ -209,6 +233,219 @@ fn check_new_name(space_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// The error for a space nobody knows, suggesting a close name.
+fn unknown_space<'a>(target: &str, known: impl IntoIterator<Item = &'a str>) -> anyhow::Error {
+    let mut message = format!("no space called '{target}'");
+    if let Some(close) = name::suggest(target, known) {
+        message.push_str(&format!(". Did you mean {close}?"));
+    }
+    anyhow::anyhow!(message)
+}
+
+/// `space rename [old] <new>`: gives a space, the active one by default, a
+/// new name. Its windows stay where they are: its workspaces are renamed
+/// with it.
+pub fn rename(old: Option<String>, new: String) -> Result<()> {
+    check_new_name(&new)?;
+    let hypr = Hypr::from_env();
+    let old = match old {
+        Some(old) => old,
+        None => {
+            let hypr = hypr.as_ref().map_err(|e| anyhow::anyhow!("{e:#}"))?;
+            let active = hypr.active_workspace()?;
+            name::locate(active.id, &active.name).space().to_string()
+        }
+    };
+    if old == HOME {
+        bail!("'home' is the plain workspaces; it can't be renamed");
+    }
+    if old == new {
+        return Ok(());
+    }
+
+    let config = Config::load()?;
+    let registry = Registry::load(&config, true)?;
+    let live = match &hypr {
+        Ok(hypr) => hypr_spaces(hypr)?,
+        Err(_) => BTreeSet::new(),
+    };
+    if let Some(existing) = registry.get(&new) {
+        bail!(
+            "the space '{new}' already exists in {}",
+            paths::tilde(&existing.dir)
+        );
+    }
+    if live.contains(&new) {
+        bail!("the space '{new}' already has windows open");
+    }
+    let space = registry.get(&old);
+    if space.is_none() && !live.contains(&old) {
+        let mut names: BTreeSet<&str> = registry.names().collect();
+        names.extend(live.iter().map(String::as_str));
+        return Err(unknown_space(&old, names));
+    }
+
+    // The folder first: it is the source of truth, and a space whose folder
+    // is gone (only windows left) has none to change.
+    if let Some(space) = space {
+        spaces::set_name(&space.dir, &new)?;
+    }
+    if let Ok(hypr) = &hypr {
+        for ws in hypr.workspaces()? {
+            if let Location::Space { name, slot } = name::locate(ws.id, &ws.name)
+                && name == old
+            {
+                hypr.dispatch(&hypr::rename_workspace(
+                    &selector(&old, slot),
+                    &name::workspace_name(&new, slot),
+                ))?;
+            }
+        }
+    }
+    match Last::load(&paths::state_dir()) {
+        Ok(mut last) => {
+            last.rename(&old, &new);
+            save(&last);
+        }
+        Err(e) => eprintln!("space: warning: {e:#}"),
+    }
+    println!("Renamed '{old}' to '{new}'");
+    Ok(())
+}
+
+/// `space close [name]`: closes every window of a space, the active one by
+/// default, leaving it first if you are in it. Each app is asked, as
+/// `super+w` asks it, so it can still stop to save.
+pub fn close(target: Option<String>) -> Result<()> {
+    let hypr = Hypr::from_env()?;
+    let active = hypr.active_workspace()?;
+    let here = name::locate(active.id, &active.name);
+    let target = target.unwrap_or_else(|| here.space().to_string());
+    if target == HOME {
+        bail!("'home' is the plain workspaces; close its windows one by one");
+    }
+
+    let config = Config::load()?;
+    let registry = Registry::load(&config, false)?;
+    let live = hypr_spaces(&hypr)?;
+    if registry.get(&target).is_none() && !live.contains(&target) {
+        let registry = Registry::load(&config, true)?;
+        if registry.get(&target).is_none() {
+            let mut names: BTreeSet<&str> = registry.names().collect();
+            names.extend(live.iter().map(String::as_str));
+            return Err(unknown_space(&target, names));
+        }
+    }
+
+    let windows: Vec<String> = hypr
+        .clients()?
+        .into_iter()
+        .filter(|c| {
+            matches!(name::locate(c.workspace.id, &c.workspace.name),
+                Location::Space { name, .. } if name == target)
+        })
+        .map(|c| c.address)
+        .collect();
+
+    if here.space() == target {
+        leave(&hypr, &target, &registry, &live)?;
+    }
+    for address in &windows {
+        hypr.dispatch(&hypr::close_window(address))?;
+    }
+    // Closed, so nothing to go back to: next time it opens on its first tab,
+    // and the sidebar no longer offers it as where you just were.
+    if let Ok(mut last) = Last::load(&paths::state_dir()) {
+        last.remove(&target);
+        save(&last);
+    }
+    match windows.len() {
+        0 => println!("No windows open in '{target}'"),
+        1 => println!("Closed 1 window in '{target}'"),
+        n => println!("Closed {n} windows in '{target}'"),
+    }
+    Ok(())
+}
+
+/// Goes from `space`, which you are in, to the space you were in before it,
+/// or `home`.
+fn leave(hypr: &Hypr, space: &str, registry: &Registry, live: &BTreeSet<String>) -> Result<()> {
+    let last = Last::load(&paths::state_dir())?;
+    let to = last
+        .latest_except(space, |s| {
+            s == HOME || registry.get(s).is_some() || live.contains(s)
+        })
+        .unwrap_or(HOME)
+        .to_string();
+    switch(hypr, &to)
+}
+
+/// `space rm <name>`: stops a folder being a space, by removing its
+/// `.renspace.toml`. The folder itself stays. A space with windows open has
+/// to be closed first.
+pub fn remove(target: String) -> Result<()> {
+    if target == HOME {
+        bail!("'home' is the plain workspaces; it can't be removed");
+    }
+    let config = Config::load()?;
+    let registry = Registry::load(&config, true)?;
+    let hypr = Hypr::from_env().ok();
+    let live = match &hypr {
+        Some(hypr) => live(hypr).ok(),
+        None => None,
+    };
+    let Some(space) = registry.get(&target) else {
+        let mut names: BTreeSet<&str> = registry.names().collect();
+        if let Some(live) = &live {
+            names.extend(live.windows.keys().map(String::as_str));
+        }
+        names.remove(HOME);
+        if live
+            .as_ref()
+            .is_some_and(|l| l.windows.contains_key(&target))
+        {
+            bail!(
+                "the space '{target}' has no folder any more, only windows: close them with space close {target}"
+            );
+        }
+        return Err(unknown_space(&target, names));
+    };
+    match live
+        .as_ref()
+        .map(|l| l.windows.get(&target).copied().unwrap_or(0))
+    {
+        Some(0) => {}
+        Some(n) => bail!(
+            "'{target}' still has {n} window{} open; close {} first: space close {target}",
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "it" } else { "them" },
+        ),
+        None => {}
+    }
+
+    spaces::remove_space(&space.dir)?;
+    // Standing on its empty tab: go back to where you were before.
+    if let (Some(hypr), Some(live)) = (&hypr, &live)
+        && live.active.as_deref() == Some(target.as_str())
+    {
+        let spaces: BTreeSet<String> = live.workspaces.keys().cloned().collect();
+        if let Err(e) = leave(hypr, &target, &registry, &spaces) {
+            eprintln!("space: couldn't leave '{target}': {e:#}");
+        }
+    }
+    if let Ok(mut last) = Last::load(&paths::state_dir()) {
+        last.remove(&target);
+        save(&last);
+    }
+    // Reading the index prunes the folder from it.
+    Registry::load(&config, false)?;
+    println!(
+        "Removed the space '{target}'. Its folder {} is untouched.",
+        paths::tilde(&space.dir)
+    );
+    Ok(())
+}
+
 /// `space go [name]`: the space's last-focused workspace, or its first. With
 /// no name, a picker.
 pub fn go(target: Option<String>) -> Result<()> {
@@ -234,13 +471,10 @@ pub fn go(target: Option<String>) -> Result<()> {
             let mut names: BTreeSet<&str> = registry.names().collect();
             names.extend(live.iter().map(String::as_str));
             names.insert(HOME);
-            let mut message = format!("no space called '{target}'");
-            if let Some(close) = name::suggest(&target, names) {
-                message.push_str(&format!(". Did you mean {close}?"));
-            } else {
-                message.push_str(". Create it with: space new");
+            if name::suggest(&target, names.iter().copied()).is_some() {
+                return Err(unknown_space(&target, names));
             }
-            bail!(message);
+            bail!("no space called '{target}'. Create it with: space new");
         }
     }
 

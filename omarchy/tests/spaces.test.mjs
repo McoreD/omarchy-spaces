@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, barLook, displayDir, filterRows, freshen, initialIndex, locate, parseRows, score, tabsFor, windowMotion } from "../Spaces.mjs"
+import { appName, barLook, displayDir, filterRows, freshen, initialIndex, locate, parseRows, renameInput, rowActions, score, slugify, tabsFor, windowMotion, withNewRow } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { name: "home", dir: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -152,4 +152,49 @@ test("freshens the last rows for the space you are in now", () => {
   assert.equal(rows[initialIndex(fresh)].name, "ren", "the cursor starts on the space you came from")
   assert.equal(rows[initialIndex(rows)].name, "renspace", "the stale rows would start on the space you are in")
   assert.deepEqual(freshen(rows, "ren", 9000), rows, "nothing changed while it was closed")
+})
+
+test("slugifies like space does", () => {
+  assert.equal(slugify("renspace"), "renspace")
+  assert.equal(slugify("My Project"), "my-project")
+  assert.equal(slugify("  Tax_Return 2026!! "), "tax-return-2026")
+  assert.equal(slugify("--x--"), "x")
+  assert.equal(slugify("日本"), "")
+})
+
+test("offers a new space when no space has the name typed", () => {
+  const rows = parseRows(json)
+  const names = (query) => withNewRow(filterRows(rows, query), rows, query).map((row) => (row.create ? "+" : "") + row.name)
+  assert.deepEqual(names(""), ["home", "ren", "renspace", "tax-2026"])
+  assert.deepEqual(names("ren"), ["ren", "renspace"], "ren exists")
+  assert.deepEqual(names("re"), ["ren", "renspace", "+re"])
+  assert.deepEqual(names("My Trip"), ["+my-trip"])
+  assert.deepEqual(names("home"), ["home"])
+  assert.deepEqual(names("!!"), [])
+})
+
+test("lists a row's actions with why one doesn't apply", () => {
+  const rows = parseRows(json)
+  const actions = (row) => rowActions(row).map((a) => [a.id, a.enabled, a.label, a.hint])
+  assert.deepEqual(rowActions(rows[0]), [], "home has none")
+  assert.deepEqual(rowActions({ name: "x", create: true }), [])
+  assert.deepEqual(actions(rows[1]), [
+    ["rename", true, "Rename", ""],
+    ["close", true, "Close 3 windows", ""],
+    ["remove", false, "Remove space", "Close windows first"],
+  ])
+  assert.deepEqual(actions(rows[2]).slice(1), [
+    ["close", false, "Close its windows", "None open"],
+    ["remove", true, "Remove space", "Keeps the folder"],
+  ])
+  assert.equal(rowActions({ name: "a", dir: "/a", windows: 1 })[1].label, "Close 1 window")
+  assert.equal(rowActions({ name: "old", dir: "", windows: 0 })[2].hint, "No folder")
+  assert.equal(rowActions(rows[3])[1].enabled, false, "no count without Hyprland")
+})
+
+test("takes only what a space name takes while renaming", () => {
+  assert.equal(renameInput("ren", "Space"), "renspace")
+  assert.equal(renameInput("ren", " 2"), "ren-2")
+  assert.equal(renameInput("", "-a_b!"), "a-b")
+  assert.equal(renameInput("x".repeat(64), "y"), "x".repeat(64))
 })

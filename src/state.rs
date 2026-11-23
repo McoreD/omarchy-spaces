@@ -81,6 +81,28 @@ impl Last {
         self.visits.insert(space.to_string(), Visit { slot, at });
     }
 
+    /// Forgets a space, as if it was never visited.
+    pub fn remove(&mut self, space: &str) {
+        self.visits.remove(space);
+    }
+
+    /// Moves a space's visit to its new name.
+    pub fn rename(&mut self, from: &str, to: &str) {
+        if let Some(visit) = self.visits.remove(from) {
+            self.visits.insert(to.to_string(), visit);
+        }
+    }
+
+    /// The most recently left space other than `except`, among those `known`
+    /// accepts.
+    pub fn latest_except(&self, except: &str, known: impl Fn(&str) -> bool) -> Option<&str> {
+        self.visits
+            .iter()
+            .filter(|(space, _)| *space != except && known(space))
+            .max_by_key(|(_, visit)| visit.at)
+            .map(|(space, _)| space.as_str())
+    }
+
     pub fn save(&self) -> Result<()> {
         let mut out = String::new();
         for (space, visit) in &self.visits {
@@ -123,6 +145,25 @@ mod tests {
         assert_eq!(last.get("ren").unwrap().slot, 5);
         assert!(last.get("ren").unwrap().at > 100);
         assert!(last.get("tax").unwrap().at > last.get("ren").unwrap().at);
+    }
+
+    #[test]
+    fn last_renames_removes_and_finds_the_latest() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("last"), "a\t1\t100\nb\t2\t300\nc\t3\t200\n").unwrap();
+        let mut last = Last::load(dir.path()).unwrap();
+        assert_eq!(last.latest_except("x", |_| true), Some("b"));
+        assert_eq!(last.latest_except("b", |_| true), Some("c"));
+        assert_eq!(last.latest_except("b", |s| s != "c"), Some("a"));
+
+        last.rename("b", "z");
+        assert_eq!(last.get("b"), None);
+        assert_eq!(last.get("z"), Some(Visit { slot: 2, at: 300 }));
+        last.rename("nothing", "y");
+        assert_eq!(last.get("y"), None);
+
+        last.remove("z");
+        assert_eq!(last.latest_except("x", |_| true), Some("c"));
     }
 
     #[test]

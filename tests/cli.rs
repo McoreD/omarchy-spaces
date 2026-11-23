@@ -19,6 +19,9 @@ struct Hyprland {
     workspaces: Vec<(i64, String)>,
     /// Windows, by the name of the workspace each is on.
     windows: Vec<String>,
+    /// Each window's address, alongside `windows`.
+    addresses: Vec<u32>,
+    next_address: u32,
     /// Whether Omarchy's `o.workspaces` Lua module is loaded.
     omarchy: bool,
     /// Every dispatch received.
@@ -67,13 +70,14 @@ impl Hyprland {
             }
             "j/clients" => {
                 let windows = self.windows.clone();
+                let addresses = self.addresses.clone();
                 Value::Array(
                     windows
                         .iter()
-                        .enumerate()
-                        .map(|(i, ws)| {
+                        .zip(addresses)
+                        .map(|(ws, address)| {
                             let id = self.ensure(ws);
-                            json!({ "address": format!("0x{i}"), "workspace": { "id": id, "name": ws } })
+                            json!({ "address": format!("0x{address:x}"), "workspace": { "id": id, "name": ws } })
                         })
                         .collect(),
                 )
@@ -115,6 +119,12 @@ impl Hyprland {
                 .ok()
         };
 
+        let field = |e: &str, key: &str| {
+            let start = e.find(&format!("{key} = \""))? + key.len() + 4;
+            let end = start + e[start..].find('"')?;
+            Some(e[start..end].to_string())
+        };
+
         if expression.starts_with("o.workspaces.") && !self.omarchy {
             return "error: attempt to index a nil value (global 'o')".into();
         }
@@ -122,6 +132,28 @@ impl Hyprland {
             let target = selector(quoted(expression).unwrap());
             self.ensure(&target);
             self.active = target;
+        } else if expression.starts_with("hl.dsp.window.close(") {
+            let address = field(expression, "window").unwrap();
+            let address = address.strip_prefix("address:0x").unwrap();
+            let address = u32::from_str_radix(address, 16).unwrap();
+            let Some(index) = self.addresses.iter().position(|a| *a == address) else {
+                return "error: no such window".into();
+            };
+            self.windows.remove(index);
+            self.addresses.remove(index);
+        } else if expression.starts_with("hl.dsp.workspace.rename(") {
+            let from = selector(field(expression, "workspace").unwrap());
+            let to = field(expression, "name").unwrap();
+            let Some(entry) = self.workspaces.iter_mut().find(|(_, n)| *n == from) else {
+                return "error: hl.workspace.rename: no such workspace".into();
+            };
+            entry.1 = to.clone();
+            for window in self.windows.iter_mut().filter(|w| **w == from) {
+                *window = to.clone();
+            }
+            if self.active == from {
+                self.active = to;
+            }
         } else if expression.starts_with("o.workspaces.focus(") {
             let target = number(expression).unwrap().to_string();
             self.ensure(&target);
@@ -246,6 +278,26 @@ impl Env {
         let mut hypr = self.hypr.lock().unwrap();
         hypr.ensure(workspace);
         hypr.windows.push(workspace.into());
+        hypr.next_address += 1;
+        let address = hypr.next_address;
+        hypr.addresses.push(address);
+    }
+
+    fn workspaces(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .hypr
+            .lock()
+            .unwrap()
+            .workspaces
+            .iter()
+            .map(|(_, n)| n.clone())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn space_file(&self, dir: &str) -> String {
+        fs::read_to_string(self.home().join(dir).join(".renspace.toml")).unwrap()
     }
 
     fn windows(&self) -> Vec<String> {
@@ -602,4 +654,169 @@ fn ws_new_in_home_uses_omarchys_next_free_workspace() {
     let env = Env::new();
     env.ok(&["ws", "next"]);
     assert!(env.dispatched().is_empty());
+}
+
+#[test]
+fn rename_keeps_the_windows_and_the_rest_of_the_file() {
+    let env = Env::new();
+    env.make_space(
+        &env.home().join("Projects/ren"),
+        "# notes\nname = \"ren\"\n[apps]\nbrowser = true\n",
+    );
+    env.make_space(&env.home().join("Projects/tax"), "");
+    env.add_window("ren:1");
+    env.add_window("ren:3");
+    env.set_active("ren:3");
+    env.ok(&["go", "tax"]);
+    env.ok(&["go", "ren"]);
+
+    let out = env.ok(&["rename", "renspace"]);
+    assert_eq!(out, "Renamed 'ren' to 'renspace'\n");
+    assert_eq!(
+        env.space_file("Projects/ren"),
+        "# notes\nname = \"renspace\"\n[apps]\nbrowser = true\n"
+    );
+    assert_eq!(env.windows(), ["renspace:1", "renspace:3"]);
+    assert_eq!(env.active(), "renspace:3");
+    let last = fs::read_to_string(env.state().join("last")).unwrap();
+    assert!(!last.contains("ren\t"), "{last}");
+
+    // By name, from elsewhere; a folder named after the space gets a name.
+    env.ok(&["rename", "tax", "taxes"]);
+    assert_eq!(env.space_file("Projects/tax"), "name = \"taxes\"\n");
+    let ls = env.ok(&["ls"]);
+    assert!(
+        ls.contains("taxes") && ls.contains("renspace") && !ls.contains(" ren "),
+        "{ls}"
+    );
+}
+
+#[test]
+fn rename_refuses_taken_reserved_and_unknown_names() {
+    let env = Env::new();
+    env.make_space(&env.home().join("Projects/ren"), "");
+    env.make_space(&env.home().join("Projects/tax"), "");
+    env.add_window("old:1");
+
+    let err = env.fails(&["rename", "ren", "tax"]);
+    assert!(err.contains("already exists"), "{err}");
+    let err = env.fails(&["rename", "ren", "old"]);
+    assert!(err.contains("already has windows"), "{err}");
+    let err = env.fails(&["rename", "ren", "Bad"]);
+    assert!(err.contains("can't contain"), "{err}");
+    let err = env.fails(&["rename", "home", "x"]);
+    assert!(err.contains("can't be renamed"), "{err}");
+    let err = env.fails(&["rename", "rne", "x"]);
+    assert!(err.contains("Did you mean ren?"), "{err}");
+    // In home, there's no active space to rename.
+    let err = env.fails(&["rename", "x"]);
+    assert!(err.contains("can't be renamed"), "{err}");
+    assert_eq!(env.space_file("Projects/ren"), "");
+
+    // A space whose folder is gone still has its windows renamed.
+    env.ok(&["rename", "old", "older"]);
+    assert_eq!(env.windows(), ["older:1"]);
+}
+
+#[test]
+fn close_closes_the_spaces_windows_and_leaves_it() {
+    let env = Env::new();
+    env.make_space(&env.home().join("Projects/ren"), "");
+    env.make_space(&env.home().join("Projects/tax"), "");
+    env.add_window("1");
+    env.add_window("tax:1");
+    env.add_window("ren:1");
+    env.add_window("ren:2");
+    env.ok(&["go", "tax"]);
+    env.ok(&["go", "ren"]);
+    env.ok(&["ws", "2"]);
+
+    let out = env.ok(&["close"]);
+    assert_eq!(out, "Closed 2 windows in 'ren'\n");
+    assert_eq!(env.windows(), ["1", "tax:1"]);
+    assert_eq!(env.active(), "tax:1", "back to the space before");
+    // Opening it again starts on its first tab.
+    env.ok(&["go", "ren"]);
+    assert_eq!(env.active(), "ren:1");
+
+    // By name, from elsewhere, and then there's nothing left to close.
+    env.ok(&["close", "tax"]);
+    assert_eq!(env.windows(), ["1"]);
+    assert_eq!(env.ok(&["close", "tax"]), "No windows open in 'tax'\n");
+
+    let err = env.fails(&["close", "home"]);
+    assert!(err.contains("one by one"), "{err}");
+    let err = env.fails(&["close", "nope"]);
+    assert!(err.contains("no space called 'nope'"), "{err}");
+}
+
+#[test]
+fn close_leaves_for_home_when_there_is_nowhere_else() {
+    let env = Env::new();
+    env.add_window("old:1");
+    env.set_active("old:1");
+    env.ok(&["close"]);
+    assert!(env.windows().is_empty());
+    assert_eq!(env.active(), "1");
+}
+
+#[test]
+fn rm_removes_the_space_but_not_the_folder() {
+    let env = Env::new();
+    let dir = env.home().join("Projects/ren");
+    env.make_space(&dir, "");
+    fs::write(dir.join("notes.txt"), "keep me").unwrap();
+    env.add_window("ren:1");
+
+    let err = env.fails(&["rm", "ren"]);
+    assert!(
+        err.contains("still has 1 window open; close it first"),
+        "{err}"
+    );
+    assert!(dir.join(".renspace.toml").exists());
+
+    env.ok(&["close", "ren"]);
+    let out = env.ok(&["rm", "ren"]);
+    assert!(out.contains("Removed the space 'ren'"), "{out}");
+    assert!(!dir.join(".renspace.toml").exists());
+    assert!(dir.join("notes.txt").exists());
+    assert_eq!(env.ok(&["ls"]), "* home  0 windows\n");
+    let index = fs::read_to_string(env.state().join("index")).unwrap();
+    assert!(!index.contains("Projects/ren"), "{index}");
+
+    let err = env.fails(&["rm", "ren"]);
+    assert!(err.contains("no space called 'ren'"), "{err}");
+    let err = env.fails(&["rm", "home"]);
+    assert!(err.contains("can't be removed"), "{err}");
+}
+
+#[test]
+fn rm_leaves_the_empty_space_you_are_in() {
+    let env = Env::new();
+    env.make_space(&env.home().join("Projects/ren"), "");
+    env.set_active("3");
+    env.ok(&["go", "ren"]);
+    env.ok(&["rm", "ren"]);
+    assert_eq!(env.active(), "3");
+    assert_eq!(env.workspaces(), ["3"]);
+}
+
+#[test]
+fn new_in_roots_reuses_a_folder_there_or_makes_one() {
+    let env = Env::new();
+    fs::create_dir_all(env.home().join("Projects/My Trip")).unwrap();
+
+    env.ok(&["new", "my-trip", "--in-roots"]);
+    assert!(env.home().join("Projects/My Trip/.renspace.toml").exists());
+    assert_eq!(env.active(), "my-trip:1");
+
+    env.ok(&["new", "tax", "--in-roots"]);
+    assert_eq!(env.space_file("Projects/tax"), "name = \"tax\"\n");
+
+    let err = env.fails(&["new", "--in-roots"]);
+    assert!(err.contains("--in-roots"), "{err}");
+    env.fails(&["new", "x", "dir", "--in-roots"]);
+    let err = env.fails(&["new", "Bad", "--in-roots"]);
+    assert!(err.contains("can't contain"), "{err}");
+    assert!(!env.home().join("Projects/Bad").exists());
 }

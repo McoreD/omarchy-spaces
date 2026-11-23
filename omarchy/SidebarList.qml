@@ -3,11 +3,13 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Commons
 import qs.Commons as Commons
+import "Spaces.mjs" as Spaces
 
 // The spaces list, drawn on the base by the left edge, with its search field
-// at the bottom. The sidebar (Sidebar.qml) holds the rows, the search and the
-// cursor; the keyboard reaches it through the sidebar's panel, so the field
-// draws its own caret.
+// at the bottom. The sidebar (Sidebar.qml) holds the rows, the search, the
+// cursor and the rename; the keyboard reaches it through the sidebar's panel,
+// so the field and a name being renamed draw their own caret. A right-click
+// opens a space's menu in place under it.
 Item {
   id: root
 
@@ -62,80 +64,179 @@ Item {
         spacing: Style.spacing.xxs
         boundsBehavior: Flickable.StopAtBounds
 
-        delegate: Rectangle {
+        delegate: Column {
           id: rowItem
           required property var modelData
           required property int index
           readonly property bool selected: index === root.sidebar.selectedIndex
+          readonly property bool renaming: root.sidebar.renaming !== "" && root.sidebar.renaming === modelData.name
+          readonly property bool menuOpen: root.sidebar.menuFor !== "" && root.sidebar.menuFor === modelData.name && !modelData.create
 
           width: ListView.view.width
-          height: root.rowHeight
-          radius: Style.cornerRadius
-          // The cursor shows while searching; otherwise only under the pointer.
-          color: selected && (root.sidebar.searching || rowMouse.containsMouse) ? root.selectedBackground : "transparent"
+          spacing: Style.spacing.xxs
 
-          // The space you're in.
           Rectangle {
-            visible: rowItem.modelData.active
-            width: Math.max(2, Style.space(3))
-            height: parent.height - Style.spacing.md * 2
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            radius: width / 2
-            color: root.accent
-          }
+            width: parent.width
+            height: root.rowHeight
+            radius: Style.cornerRadius
+            // The cursor shows while searching; otherwise only under the
+            // pointer, or while the row is being renamed or has its menu open.
+            color: rowItem.renaming || rowItem.menuOpen
+                || (rowItem.selected && (root.sidebar.searching || rowMouse.containsMouse))
+              ? root.selectedBackground : "transparent"
+            border.width: rowItem.renaming ? 1 : 0
+            border.color: root.accent
 
-          Column {
-            anchors.left: parent.left
-            anchors.right: windowCount.left
-            anchors.leftMargin: Style.spacing.rowPaddingX
-            anchors.rightMargin: Style.spacing.controlGap
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.spacing.xxs
+            // The space you're in.
+            Rectangle {
+              visible: rowItem.modelData.active
+              width: Math.max(2, Style.space(3))
+              height: parent.height - Style.spacing.md * 2
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              radius: width / 2
+              color: root.accent
+            }
 
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: rowItem.modelData.name
-              color: rowItem.selected ? root.accent : root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.title
-              font.bold: rowItem.modelData.active
-              elide: Text.ElideRight
+            Column {
+              anchors.left: parent.left
+              anchors.right: windowCount.left
+              anchors.leftMargin: Style.spacing.rowPaddingX
+              anchors.rightMargin: Style.spacing.controlGap
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.spacing.xxs
+
+              Text {
+                id: nameText
+                width: parent.width
+                textFormat: Text.PlainText
+                text: rowItem.renaming ? root.sidebar.renameText
+                  : rowItem.modelData.create ? "New space “" + rowItem.modelData.name + "”"
+                  : rowItem.modelData.name
+                color: rowItem.selected || rowItem.modelData.create ? root.accent : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+                font.bold: rowItem.modelData.active
+                elide: rowItem.renaming ? Text.ElideLeft : Text.ElideRight
+
+                // The keyboard reaches the rename through the sidebar's
+                // panel, so the name draws its own caret.
+                Rectangle {
+                  visible: rowItem.renaming
+                  x: Math.min(nameText.contentWidth, nameText.width) + 1
+                  width: Math.max(1, Style.space(2))
+                  height: Style.font.title + Style.spacing.xxs
+                  anchors.verticalCenter: parent.verticalCenter
+                  color: root.accent
+
+                  SequentialAnimation on opacity {
+                    running: rowItem.renaming
+                    loops: Animation.Infinite
+                    alwaysRunToEnd: false
+                    NumberAnimation { to: 1; duration: 0 }
+                    PauseAnimation { duration: 530 }
+                    NumberAnimation { to: 0; duration: 0 }
+                    PauseAnimation { duration: 530 }
+                  }
+                }
+              }
+
+              Text {
+                width: parent.width
+                textFormat: Text.PlainText
+                text: root.sidebar.subtitle(rowItem.modelData)
+                color: root.foreground
+                opacity: 0.5
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                elide: Text.ElideMiddle
+              }
             }
 
             Text {
-              width: parent.width
+              id: windowCount
+              anchors.right: parent.right
+              anchors.rightMargin: Style.spacing.rowPaddingX
+              anchors.verticalCenter: parent.verticalCenter
               textFormat: Text.PlainText
-              text: root.sidebar.subtitle(rowItem.modelData)
+              text: rowItem.modelData.windows >= 0 ? String(rowItem.modelData.windows) : ""
               color: root.foreground
-              opacity: 0.5
+              opacity: rowItem.modelData.windows > 0 ? 0.7 : 0.35
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
-              elide: Text.ElideMiddle
+            }
+
+            // Click to go there, right-click for the space's menu.
+            MouseArea {
+              id: rowMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              acceptedButtons: Qt.LeftButton | Qt.RightButton
+              cursorShape: rowItem.renaming ? Qt.IBeamCursor : Qt.PointingHandCursor
+              onContainsMouseChanged: if (containsMouse) root.sidebar.select(rowItem.index)
+              onClicked: function(mouse) {
+                if (rowItem.renaming) return
+                if (mouse.button === Qt.RightButton) {
+                  if (Spaces.rowActions(rowItem.modelData).length > 0) root.sidebar.openMenu(rowItem.modelData.name)
+                } else if (root.sidebar.menuFor !== "") {
+                  root.sidebar.closeMenu()
+                } else {
+                  root.sidebar.activate(rowItem.index)
+                }
+              }
             }
           }
 
-          Text {
-            id: windowCount
-            anchors.right: parent.right
-            anchors.rightMargin: Style.spacing.rowPaddingX
-            anchors.verticalCenter: parent.verticalCenter
-            textFormat: Text.PlainText
-            text: rowItem.modelData.windows >= 0 ? String(rowItem.modelData.windows) : ""
-            color: root.foreground
-            opacity: rowItem.modelData.windows > 0 ? 0.7 : 0.35
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
+          // The space's menu, opened in place under it.
+          Repeater {
+            model: rowItem.menuOpen ? Spaces.rowActions(rowItem.modelData) : []
 
-          MouseArea {
-            id: rowMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onContainsMouseChanged: if (containsMouse) root.sidebar.select(rowItem.index)
-            onClicked: root.sidebar.activate(rowItem.index)
+            delegate: Rectangle {
+              id: action
+              required property var modelData
+
+              width: rowItem.width
+              height: Style.font.body + Style.spacing.controlPaddingY * 2
+              radius: Style.cornerRadius
+              color: actionMouse.containsMouse && action.modelData.enabled ? root.selectedBackground : "transparent"
+
+              Text {
+                anchors.left: parent.left
+                anchors.right: actionHint.left
+                anchors.leftMargin: Style.spacing.rowPaddingX * 2
+                anchors.rightMargin: Style.spacing.controlGap
+                anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
+                text: action.modelData.label
+                color: actionMouse.containsMouse && action.modelData.enabled ? root.accent : root.foreground
+                opacity: action.modelData.enabled ? 1 : 0.4
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                elide: Text.ElideRight
+              }
+
+              Text {
+                id: actionHint
+                anchors.right: parent.right
+                anchors.rightMargin: Style.spacing.rowPaddingX
+                anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
+                text: action.modelData.hint
+                color: root.foreground
+                opacity: 0.35
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              MouseArea {
+                id: actionMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                enabled: action.modelData.enabled
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.sidebar.act(action.modelData.id, rowItem.modelData)
+              }
+            }
           }
         }
       }

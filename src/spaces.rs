@@ -88,6 +88,77 @@ pub fn write_space(dir: &Path, space_name: &str) -> Result<Space> {
     })
 }
 
+/// Gives the space in `dir` a new name, rewriting the `name` line of its
+/// `.renspace.toml` (or adding one) and keeping the rest of the file as it
+/// is, comments included.
+pub fn set_name(dir: &Path, space_name: &str) -> Result<()> {
+    let file = dir.join(SPACE_FILE);
+    let text =
+        fs::read_to_string(&file).with_context(|| format!("can't read {}", paths::tilde(&file)))?;
+    let line = format!("name = {}", toml::Value::String(space_name.to_string()));
+
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    // Only a top-level `name`, before the first `[table]`.
+    let top_level = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with('['))
+        .unwrap_or(lines.len());
+    let existing = lines[..top_level].iter().position(|l| {
+        l.trim_start()
+            .strip_prefix("name")
+            .is_some_and(|rest| rest.trim_start().starts_with('='))
+    });
+    match existing {
+        Some(i) => lines[i] = line,
+        None => lines.insert(0, line),
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+
+    // A `name` written some way the lines above don't catch would leave the
+    // old one in place; better to say so than to half-rename.
+    let parsed: SpaceFile =
+        toml::from_str(&out).with_context(|| format!("can't rename in {}", paths::tilde(&file)))?;
+    if parsed.name.as_deref() != Some(space_name) {
+        bail!(
+            "can't find the `name` line in {}; change it by hand",
+            paths::tilde(&file)
+        );
+    }
+    state::write_atomic(&file, &out)
+}
+
+/// Removes the `.renspace.toml` that makes `dir` a space. The folder and the
+/// rest of its contents stay.
+pub fn remove_space(dir: &Path) -> Result<()> {
+    let file = dir.join(SPACE_FILE);
+    fs::remove_file(&file).with_context(|| format!("can't remove {}", paths::tilde(&file)))
+}
+
+/// The folder a new space called `space_name` gets when made from the
+/// sidebar: an existing folder directly in one of the roots whose name
+/// slugifies to it and that isn't a space yet (`~/Projects/My Trip` for
+/// `my-trip`), or else a new one of that name in the first root.
+pub fn folder_in_roots(roots: &[PathBuf], space_name: &str) -> Option<PathBuf> {
+    for root in roots {
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
+        let mut matches: Vec<PathBuf> = entries
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .filter(|e| name::slugify(&e.file_name().to_string_lossy()) == space_name)
+            .map(|e| e.path())
+            .filter(|dir| !dir.join(SPACE_FILE).exists())
+            .collect();
+        matches.sort();
+        if let Some(dir) = matches.into_iter().next() {
+            return Some(dir);
+        }
+    }
+    roots.first().map(|root| root.join(space_name))
+}
+
 /// Every folder at most `depth` levels below `root` (the root included) that
 /// holds a `.renspace.toml`. Hidden folders, build output and symlinks are
 /// skipped.
@@ -274,6 +345,51 @@ mod tests {
             "name = \"ren\"\n"
         );
         assert!(write_space(tmp.path(), "ren").is_err());
+    }
+
+    #[test]
+    fn sets_the_name_keeping_the_rest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let read = || fs::read_to_string(dir.join(SPACE_FILE)).unwrap();
+
+        make_space(
+            dir,
+            "# my project\nname = \"ren\"  # short\n\n[apps]\nname = \"x\"\n",
+        );
+        set_name(dir, "ren-2").unwrap();
+        assert_eq!(
+            read(),
+            "# my project\nname = \"ren-2\"\n\n[apps]\nname = \"x\"\n"
+        );
+
+        // No name yet: it went by the folder's.
+        make_space(dir, "[apps]\nname = \"x\"\n");
+        set_name(dir, "tax").unwrap();
+        assert_eq!(read(), "name = \"tax\"\n[apps]\nname = \"x\"\n");
+        make_space(dir, "");
+        set_name(dir, "tax").unwrap();
+        assert_eq!(read(), "name = \"tax\"\n");
+
+        // Written a way the line match misses: refuse rather than half-rename.
+        make_space(dir, "\"name\" = \"ren\"\n");
+        assert!(set_name(dir, "other").is_err());
+        assert_eq!(read(), "\"name\" = \"ren\"\n");
+    }
+
+    #[test]
+    fn finds_a_folder_in_the_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = (tmp.path().join("a"), tmp.path().join("b"));
+        fs::create_dir_all(b.join("My Trip")).unwrap();
+        make_space(&a.join("taken"), "name = \"other\"\n");
+        let roots = [a.clone(), b.clone()];
+
+        assert_eq!(folder_in_roots(&roots, "my-trip"), Some(b.join("My Trip")));
+        assert_eq!(folder_in_roots(&roots, "new"), Some(a.join("new")));
+        // Already a space, so not reused.
+        assert_eq!(folder_in_roots(&roots, "taken"), Some(a.join("taken")));
+        assert_eq!(folder_in_roots(&[], "x"), None);
     }
 
     #[test]
