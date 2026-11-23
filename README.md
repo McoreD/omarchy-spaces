@@ -38,6 +38,7 @@ space ls [--json]            # list spaces with window counts
 space rename [space] <name>  # name a space, the active one by default; "" for its folder's name
 space close [space]          # close a space's windows, the active one by default
 space terminal               # a terminal in the folder you are in, or the space's
+space watch                  # print the spaces as ls --json does, a line each time they change
 space ws <n|new|next|prev>
 space move <n> [--silent]
 ```
@@ -47,7 +48,7 @@ A space can be given by what it's called or by its id (`s1`, as `space ls` shows
 ## How it fits together
 
 - `src/` is the `space` CLI, in Rust. It keeps no state about windows: it asks Hyprland over its socket, then dispatches. It finds a terminal's folder from its shell, in `/proc`, as Omarchy's `omarchy-cmd-terminal-cwd` does.
-- `omarchy/` is the Omarchy shell plugin (QML): the tabs as a bar widget (`TabsWidget.qml`), and the sidebar, which `Base.qml` draws under the windows. Their logic is in `Tabs.qml`, `Sidebar.qml` and `Spaces.mjs`.
+- `omarchy/` is the Omarchy shell plugin (QML): the tabs as a bar widget (`TabsWidget.qml`), and the sidebar, which `Base.qml` draws under the windows. Their logic is in `Tabs.qml`, `Sidebar.qml` and `Spaces.mjs`. Both read the spaces from one `space watch` that the plugin's service runs (`Watch.qml`) and restarts when it ends, as it does when Hyprland restarts or `space` is reinstalled. It reads Hyprland again only when Hyprland's events say something changed. A shell changing folder sends no event, so it reads the active space's terminals' folders five times a second, the rest every two seconds, and all of them when a window's title changes, as terminals retitle themselves on `cd`.
 - `hypr/renspace.lua` holds the keybindings, and the blur behind a glassy sidebar and bar.
 - `~/.local/state/renspace/spaces.json` holds what Hyprland can't about each live space: the name you gave it, the terminal it follows and that terminal's last folder. `~/.config/renspace/config.toml` can set `terminal`, the command that opens one (default: Omarchy's, `xdg-terminal-exec`), and `picker`, for `space go` with no space named.
 

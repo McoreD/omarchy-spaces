@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Arc, Mutex};
@@ -179,6 +179,8 @@ impl Hyprland {
 struct Env {
     root: tempfile::TempDir,
     hypr: Arc<Mutex<Hyprland>>,
+    /// Whoever listens to Hyprland's events, as `space watch` does.
+    listeners: Arc<Mutex<Vec<UnixStream>>>,
 }
 
 impl Env {
@@ -207,8 +209,21 @@ impl Env {
                 let _ = stream.write_all(reply.as_bytes());
             }
         });
+        let events = UnixListener::bind(socket_dir.join(".socket2.sock")).unwrap();
+        let listeners = Arc::new(Mutex::new(Vec::new()));
+        let joined = Arc::clone(&listeners);
+        thread::spawn(move || {
+            for stream in events.incoming() {
+                let Ok(stream) = stream else { break };
+                joined.lock().unwrap().push(stream);
+            }
+        });
         fs::create_dir_all(root.path().join("cwds")).unwrap();
-        let env = Self { root, hypr };
+        let env = Self {
+            root,
+            hypr,
+            listeners,
+        };
         env.write_config("");
         env
     }
@@ -233,6 +248,20 @@ impl Env {
             .env("HYPRLAND_INSTANCE_SIGNATURE", "test")
             .env("RENSPACE_FAKE_CWDS", self.cwds());
         command
+    }
+
+    /// Sends a Hyprland event (`openwindow>>...`) to whoever listens.
+    fn event(&self, line: &str) {
+        for stream in self.listeners.lock().unwrap().iter_mut() {
+            let _ = writeln!(stream, "{line}");
+        }
+    }
+
+    /// Hyprland goes away: its event socket closes.
+    fn end_events(&self) {
+        for stream in self.listeners.lock().unwrap().drain(..) {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
     }
 
     /// Where each fake terminal's folder is: a symlink per pid.
@@ -760,4 +789,142 @@ fn go_without_a_space_opens_the_picker() {
     env.write_config("picker = \"exit 130\"\n");
     env.ok(&["go"]);
     assert_eq!(env.active(), "s2:1");
+}
+
+/// A running `space watch`, its lines read on a thread.
+struct Watch {
+    child: std::process::Child,
+    lines: std::sync::mpsc::Receiver<String>,
+}
+
+impl Watch {
+    fn start(env: &Env) -> Self {
+        let mut child = env
+            .command(&["watch"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (send, lines) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                if send.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        Self { child, lines }
+    }
+
+    /// The labels in the next list it prints within `within`.
+    #[track_caller]
+    fn next(&self, within: std::time::Duration) -> Vec<String> {
+        let line = self
+            .lines
+            .recv_timeout(within)
+            .expect("space watch printed nothing new in time");
+        let rows: Vec<Value> = serde_json::from_str(&line).unwrap();
+        rows.iter()
+            .map(|r| r["label"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// Waits for its listener to join, so events reach it.
+    fn joined(&self, env: &Env) {
+        for _ in 0..100 {
+            if !env.listeners.lock().unwrap().is_empty() {
+                return;
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("space watch never listened to events");
+    }
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[test]
+fn watch_prints_the_spaces_again_as_they_change() {
+    use std::time::Duration;
+    let env = Env::new();
+    let (notes, japanese, mail, inbox) = (
+        env.dir("notes"),
+        env.dir("japanese"),
+        env.dir("mail"),
+        env.dir("inbox"),
+    );
+    let watch = Watch::start(&env);
+    assert_eq!(watch.next(Duration::from_secs(2)), ["home"]);
+    watch.joined(&env);
+
+    // A window opens: Hyprland says so.
+    let first = env.add_terminal("s1:1", &notes);
+    env.event("openwindow>>1,s1:1,kitty,zsh");
+    assert_eq!(watch.next(Duration::from_secs(1)), ["home", "notes"]);
+
+    // In the space you're in, a `cd` shows within a fraction of a second,
+    // though nothing says so.
+    env.set_active("s1:1");
+    env.event("workspacev2>>-1,s1:1");
+    let _ = watch.next(Duration::from_secs(1));
+    env.cd(&first, &japanese);
+    assert_eq!(watch.next(Duration::from_millis(800)), ["home", "japanese"]);
+
+    // Elsewhere, a terminal's new title is enough, well before the slow
+    // round would read it.
+    let other = env.add_terminal("s2:1", &mail);
+    env.event("openwindow>>2,s2:1,kitty,zsh");
+    assert_eq!(
+        watch.next(Duration::from_secs(1)),
+        ["home", "japanese", "mail"]
+    );
+    env.cd(&other, &inbox);
+    env.event("windowtitlev2>>2,~/inbox");
+    assert_eq!(
+        watch.next(Duration::from_millis(1500)),
+        ["home", "japanese", "inbox"]
+    );
+
+    // A name given by another `space` command.
+    env.ok(&["rename", "s2", "Inbox"]);
+    assert_eq!(
+        watch.next(Duration::from_secs(1)),
+        ["home", "japanese", "Inbox"]
+    );
+
+    // Nothing changed: nothing printed.
+    assert!(
+        watch
+            .lines
+            .recv_timeout(Duration::from_millis(500))
+            .is_err()
+    );
+}
+
+#[test]
+fn watch_ends_with_hyprland() {
+    let env = Env::new();
+    let mut watch = Watch::start(&env);
+    let _ = watch.next(std::time::Duration::from_secs(2));
+    watch.joined(&env);
+    env.end_events();
+    for _ in 0..100 {
+        if let Some(status) = watch.child.try_wait().unwrap() {
+            assert!(
+                !status.success(),
+                "it ends with an error, to be started again"
+            );
+            return;
+        }
+        thread::sleep(std::time::Duration::from_millis(20));
+    }
+    panic!("space watch kept running without Hyprland");
 }

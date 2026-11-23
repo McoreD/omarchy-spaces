@@ -68,16 +68,11 @@ export function filterRows(rows, query) {
     .map((entry) => entry.row)
 }
 
-// The id-to-label map from `space ls --json` text, for the bar: `{}` when
-// it can't be read, so the bar falls back to ids.
-export function labels(text) {
-  try {
-    const out = {}
-    for (const row of parseRows(text)) out[row.id] = row.label
-    return out
-  } catch (e) {
-    return {}
-  }
+// Space ids to what they're called, from parsed rows, for the bar.
+export function labels(rows) {
+  const out = {}
+  for (const row of rows || []) out[row.id] = row.label
+  return out
 }
 
 // A row's right-click menu: which actions apply, and why not when one

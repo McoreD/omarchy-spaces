@@ -36,6 +36,13 @@ BarWidget {
 
   Tabs {
     id: tabs
+    // One `space watch` for the bar and the sidebar: the service's.
+    watch: {
+      var shell = root.bar ? root.bar.shell : null
+      if (shell && shell.services !== undefined) shell.services
+      var service = shell && typeof shell.serviceFor === "function" ? shell.serviceFor("org.ren.renspace") : null
+      return service && service.watch ? service.watch : null
+    }
   }
 
   Row {

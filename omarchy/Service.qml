@@ -13,6 +13,7 @@ Item {
   property var manifest: null
 
   readonly property bool searching: sidebar.searching
+  readonly property var watch: watchItem
 
   function search() { sidebar.search() }
   function endSearch() { sidebar.endSearch() }
@@ -28,8 +29,15 @@ Item {
     sidebar: sidebar
   }
 
+  // The spaces, kept current by `space watch`: the sidebar's list, and what
+  // the bar calls each space (TabsWidget.qml reaches it through the shell).
+  Watch {
+    id: watchItem
+  }
+
   Sidebar {
     id: sidebar
+    watch: watchItem
     // Ended from inside (a pick, Escape), so the shell stops counting the
     // overlay as open and the next toggle searches again.
     onSearchEnded: {

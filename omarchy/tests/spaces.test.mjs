@@ -158,8 +158,9 @@ test("freshens the last rows for the space you are in now", () => {
 })
 
 test("maps ids to labels for the bar", () => {
-  assert.deepEqual(labels(json), { home: "home", s1: "ren", s2: "renspace", s3: "Tax 2026" })
-  assert.deepEqual(labels("space: error"), {})
+  assert.deepEqual(labels(parseRows(json)), { home: "home", s1: "ren", s2: "renspace", s3: "Tax 2026" })
+  assert.deepEqual(labels([]), {})
+  assert.deepEqual(labels(null), {})
 })
 
 test("offers rename and close, saying why close doesn't apply", () => {

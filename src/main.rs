@@ -4,7 +4,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 use clap::{Parser, Subcommand};
 
-use renspace::{commands, name};
+use renspace::{commands, name, watch};
 
 /// Spaces for Hyprland: a set of tabs for each thing you work on.
 #[derive(Parser)]
@@ -47,6 +47,8 @@ enum Cmd {
     Close { space: Option<String> },
     /// Open a terminal in the folder you are in, or the active space's.
     Terminal,
+    /// Print the spaces as `ls --json` does, a line each time they change.
+    Watch,
     /// Go to a workspace (tab) of the active space: 1-10, new, next or prev.
     Ws {
         #[arg(value_parser = target)]
@@ -86,7 +88,10 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     // Run from a keybind or the sidebar, nobody sees stderr, so say it in a
     // notification.
-    let unseen = !matches!(cli.command, Cmd::Ls { .. }) && !std::io::stderr().is_terminal();
+    // `watch` ends whenever Hyprland restarts, and the plugin restarts it: not
+    // worth a notification.
+    let unseen =
+        !matches!(cli.command, Cmd::Ls { .. } | Cmd::Watch) && !std::io::stderr().is_terminal();
 
     let result = match cli.command {
         Cmd::New { dir } => commands::new(dir),
@@ -98,6 +103,7 @@ fn main() -> ExitCode {
         },
         Cmd::Close { space } => commands::close(space),
         Cmd::Terminal => commands::open_terminal(),
+        Cmd::Watch => watch::watch(),
         Cmd::Ws { target } => commands::ws(target),
         Cmd::Move { n, silent } => commands::move_window(n, silent),
     };

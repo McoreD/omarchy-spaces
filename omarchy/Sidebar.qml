@@ -36,6 +36,9 @@ Item {
   // window), so the service can tell the shell.
   signal searchEnded()
 
+  // The spaces as `space watch` keeps them (Watch.qml).
+  property var watch: null
+
   // Whether the sidebar shows, and whether you are searching it, which holds
   // the keyboard. `searchOnly` marks a sidebar shown only for the search.
   property bool opened: false
@@ -94,8 +97,7 @@ Item {
     } else {
       slideIn.restart()
     }
-    root.freshen()
-    root.refresh()
+    root.take()
   }
 
   function hide() {
@@ -131,8 +133,7 @@ Item {
     root.touched = false
     root.pending = false
     root.searching = true
-    root.freshen()
-    root.refresh()
+    root.take()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -155,34 +156,25 @@ Item {
     if (root.filterText) root.setFilter("")
   }
 
-  // Until `space ls` answers, show the last list, updated for the space you
-  // are in now: Enter can come first, and must not pick that space.
-  function freshen() {
+  // The list `space watch` last printed, put in place as the sidebar shows:
+  // the cursor starts on the space you left last. Switching only just now,
+  // the watch may not have printed it yet, so the active space comes from
+  // Hyprland: Enter can come first, and must not pick the space you're in.
+  function take() {
+    root.rows = root.watch ? root.watch.rows : []
+    root.error = root.watch && root.rows.length === 0 ? root.watch.error : ""
     var workspace = Hyprland.focusedWorkspace
-    if (!workspace) return
-    root.rows = Spaces.freshen(root.rows, Spaces.locate(workspace.id, workspace.name).space, Date.now())
+    if (workspace) root.rows = Spaces.freshen(root.rows, Spaces.locate(workspace.id, workspace.name).space, Date.now())
     root.applyFilter(true)
   }
 
-  function refresh() {
-    if (lsProc.running) {
-      lsProc.again = true
-      return
-    }
-    lsProc.running = true
-  }
-
-  function loaded(text, exitCode, stderr) {
+  // A new list while it shows: keep the cursor on the space it was on if you
+  // moved it, and act on an Enter pressed before there was a list.
+  function update() {
     var selected = root.shownRows[root.selectedIndex]
     var keep = root.touched && selected ? selected.id : ""
-    try {
-      if (exitCode !== 0) throw new Error(stderr.trim() || "space ls exited with " + exitCode)
-      root.rows = Spaces.parseRows(text)
-      root.error = ""
-    } catch (e) {
-      root.rows = []
-      root.error = String(e.message || e)
-    }
+    root.rows = root.watch.rows
+    root.error = root.rows.length === 0 ? root.watch.error : ""
     root.applyFilter(!keep)
     if (keep) {
       var index = root.shownRows.findIndex(function(row) { return row.id === keep })
@@ -192,6 +184,12 @@ Item {
       root.pending = false
       root.activate(root.selectedIndex)
     }
+  }
+
+  Connections {
+    target: root.watch
+    function onRowsChanged() { if (root.opened) root.update() }
+    function onErrorChanged() { if (root.opened && root.rows.length === 0) root.error = root.watch.error }
   }
 
   function applyFilter(resetCursor) {
@@ -220,7 +218,7 @@ Item {
   }
 
   function activate(index) {
-    if (root.searching && root.shownRows.length === 0 && lsProc.running) {
+    if (root.searching && root.shownRows.length === 0 && !(root.watch && root.watch.ready)) {
       root.pending = true
       return
     }
@@ -302,8 +300,7 @@ Item {
     root.run(["space", "rename", id, to])
   }
 
-  // Runs a `space` command that changes the spaces, then lists them again:
-  // a renamed space changes no window, so nothing else would.
+  // Runs a `space` command that changes the spaces.
   function run(args) {
     if (actionProc.running) return
     actionProc.command = args
@@ -331,33 +328,12 @@ Item {
     return Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
   }
 
-  Process {
-    id: lsProc
-    command: ["space", "ls", "--json"]
-    property string out: ""
-    property string err: ""
-    // Asked again while running, for a change it may have missed.
-    property bool again: false
-    stdout: StdioCollector { onStreamFinished: lsProc.out = text }
-    stderr: StdioCollector { onStreamFinished: lsProc.err = text }
-    onExited: function(exitCode) {
-      // The collectors can finish just after the exit is reported.
-      Qt.callLater(function() {
-        root.loaded(lsProc.out, exitCode, lsProc.err)
-        if (lsProc.again) {
-          lsProc.again = false
-          root.refresh()
-        }
-      })
-    }
-  }
-
+  // `space watch` sees what these change, and prints the list again.
   Process {
     id: actionProc
     // Collected only so `space` has somewhere to print.
     stdout: StdioCollector {}
     stderr: StdioCollector {}
-    onExited: Qt.callLater(root.refresh)
   }
 
   // Hide the list once the windows have slid back over it.
@@ -404,37 +380,17 @@ Item {
 
   Component.onCompleted: motionProc.running = true
 
-  // While it shows, the list follows what changes: the active space and the
-  // window counts. A click on a window or a switch of tab during a search
-  // moves the keyboard there, which ends the search.
+  // A click on a window or a switch of tab during a search or a rename moves
+  // the keyboard there, which ends it.
   Connections {
     target: Hyprland
     function onRawEvent(event) {
       if (event.name === "configreloaded" && !motionProc.running) motionProc.running = true
       if (!root.opened) return
-      switch (event.name) {
-      case "workspacev2": case "openwindow": case "closewindow": case "movewindowv2":
-        relist.restart()
-      }
       if (event.name !== "activewindowv2" && event.name !== "workspacev2") return
       if (root.naming && Date.now() - root.renamedAt >= 300) root.endNaming(false)
       if (root.searching && Date.now() - root.searchedAt >= 300) root.endSearch()
     }
-  }
-
-  Timer {
-    id: relist
-    interval: 150
-    onTriggered: if (root.opened) root.refresh()
-  }
-
-  // A terminal changing folder renames its space, and tells Hyprland nothing,
-  // so look again now and then while the list shows.
-  Timer {
-    interval: 2000
-    repeat: true
-    running: root.opened
-    onTriggered: root.refresh()
   }
 
   // A one-pixel-wide panel on a top layer, drawing nothing and taking no

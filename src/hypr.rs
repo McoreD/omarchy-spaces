@@ -6,9 +6,10 @@
 //! `hl.dispatch(...)`.
 
 use std::env;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -58,6 +59,24 @@ impl Hypr {
         Ok(Self {
             socket: runtime.join("hypr").join(signature).join(".socket.sock"),
         })
+    }
+
+    /// Hyprland's events (`openwindow>>...`), one line each, read on a
+    /// thread of their own. The channel closes when Hyprland does.
+    pub fn events(&self) -> Result<mpsc::Receiver<String>> {
+        let path = self.socket.with_file_name(".socket2.sock");
+        let stream = UnixStream::connect(&path)
+            .with_context(|| format!("can't reach Hyprland's events at {}", path.display()))?;
+        let (send, receive) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stream).lines() {
+                let Ok(line) = line else { break };
+                if send.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(receive)
     }
 
     /// Sends one request and returns Hyprland's reply.

@@ -2,20 +2,27 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell.Hyprland
-import Quickshell.Io
 import "Spaces.mjs" as Spaces
 
 // The active space's tabs, which are its workspaces, read live from Hyprland,
 // and what the space is called. Its workspaces are named after its id (`s1`);
 // what to call it, the name you gave it or its terminal's folder, comes from
-// `space ls`, asked after workspace changes and every couple of seconds, as a
-// terminal changing folder tells Hyprland nothing.
+// `space watch` (Watch.qml): the service's, or one of its own when the
+// service can't be reached.
 Item {
   id: root
 
-  // Space ids to what they're called.
-  property var labels: ({})
+  // The service's watch, when the bar can reach it.
+  property var watch: null
+  readonly property var rows: root.watch ? root.watch.rows : (own.item ? own.item.rows : [])
+  readonly property var labels: Spaces.labels(root.rows)
   readonly property string label: root.labels[root.model.space] || root.model.space
+
+  Loader {
+    id: own
+    active: !root.watch
+    sourceComponent: Watch {}
+  }
 
   // Bumped after Hyprland has answered a refresh, for anything bindings miss.
   property int revision: 0
@@ -66,32 +73,7 @@ Item {
   Timer {
     id: settle
     interval: 120
-    onTriggered: {
-      root.revision++
-      root.relabel()
-    }
-  }
-
-  function relabel() {
-    if (!lsProc.running) lsProc.running = true
-  }
-
-  Process {
-    id: lsProc
-    command: ["space", "ls", "--json"]
-    stdout: StdioCollector {
-      onStreamFinished: {
-        var labels = Spaces.labels(text)
-        if (Object.keys(labels).length > 0) root.labels = labels
-      }
-    }
-  }
-
-  Timer {
-    interval: 2000
-    repeat: true
-    running: true
-    onTriggered: root.relabel()
+    onTriggered: root.revision++
   }
 
   Component.onCompleted: refresh.restart()

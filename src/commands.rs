@@ -143,17 +143,36 @@ pub fn move_window(slot: u8, silent: bool) -> Result<()> {
 
 /// A terminal window in a space, and the folder its shell is in.
 #[derive(Debug, Clone)]
-struct Terminal {
+pub(crate) struct Terminal {
     address: String,
     slot: u8,
     pid: u32,
     cwd: PathBuf,
 }
 
-/// What Hyprland says about every space: the active one, and the windows,
-/// workspaces and terminals each holds.
+/// A window on one of a space's workspaces, which may be a terminal.
+#[derive(Debug, Clone)]
+pub(crate) struct SpaceWindow {
+    pub address: String,
+    pub pid: u32,
+    pub space: String,
+    pub slot: u8,
+}
+
+/// What Hyprland says about every space, before any terminal's folder is
+/// read: the active one, and the windows and workspaces each holds.
+#[derive(Debug, Default)]
+pub(crate) struct Snapshot {
+    pub active: Option<String>,
+    windows: BTreeMap<String, u32>,
+    workspaces: BTreeMap<String, BTreeSet<u8>>,
+    /// The windows on spaces' workspaces, `home` aside.
+    pub space_windows: Vec<SpaceWindow>,
+}
+
+/// The snapshot, and which of its windows are terminals and where.
 #[derive(Default)]
-struct Live {
+pub(crate) struct Live {
     active: Option<String>,
     windows: BTreeMap<String, u32>,
     workspaces: BTreeMap<String, BTreeSet<u8>>,
@@ -172,17 +191,17 @@ impl Live {
     }
 }
 
-fn live(hypr: &Hypr) -> Result<Live> {
-    let mut live = Live::default();
+pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
+    let mut snapshot = Snapshot::default();
     let active = hypr.active_workspace()?;
-    live.active = Some(name::locate(active.id, &active.name).space().to_string());
+    snapshot.active = Some(name::locate(active.id, &active.name).space().to_string());
     for ws in hypr.workspaces()? {
         // Special workspaces (scratchpad and the like) belong to no space.
         if ws.name.starts_with("special:") {
             continue;
         }
         let location = name::locate(ws.id, &ws.name);
-        let entry = live
+        let entry = snapshot
             .workspaces
             .entry(location.space().to_string())
             .or_default();
@@ -196,27 +215,60 @@ fn live(hypr: &Hypr) -> Result<Live> {
             continue;
         }
         let location = name::locate(client.workspace.id, &client.workspace.name);
-        *live
+        *snapshot
             .windows
             .entry(location.space().to_string())
             .or_default() += 1;
         if let Location::Space { name: space, slot } = location
             && let Ok(pid) = u32::try_from(client.pid)
-            && let Some(cwd) = terminal::shell_cwd(pid)
         {
-            live.terminals.entry(space).or_default().push(Terminal {
+            snapshot.space_windows.push(SpaceWindow {
                 address: client.address,
-                slot,
                 pid,
-                cwd,
+                space,
+                slot,
             });
         }
     }
-    // Oldest first, as far as Hyprland lets us tell: by tab, then process.
-    for terminals in live.terminals.values_mut() {
-        terminals.sort_by_key(|t| (t.slot, t.pid));
+    Ok(snapshot)
+}
+
+/// Makes the live view from a snapshot, with `cwd` saying which windows are
+/// terminals and which folder each one's shell is in.
+pub(crate) fn live_from(
+    snapshot: &Snapshot,
+    mut cwd: impl FnMut(&SpaceWindow) -> Option<PathBuf>,
+) -> Live {
+    let mut terminals: BTreeMap<String, Vec<Terminal>> = BTreeMap::new();
+    for window in &snapshot.space_windows {
+        if let Some(cwd) = cwd(window) {
+            terminals
+                .entry(window.space.clone())
+                .or_default()
+                .push(Terminal {
+                    address: window.address.clone(),
+                    slot: window.slot,
+                    pid: window.pid,
+                    cwd,
+                });
+        }
     }
-    Ok(live)
+    // Oldest first, as far as Hyprland lets us tell: by tab, then process.
+    for list in terminals.values_mut() {
+        list.sort_by_key(|t| (t.slot, t.pid));
+    }
+    Live {
+        active: snapshot.active.clone(),
+        windows: snapshot.windows.clone(),
+        workspaces: snapshot.workspaces.clone(),
+        terminals,
+    }
+}
+
+fn live(hypr: &Hypr) -> Result<Live> {
+    Ok(live_from(&snapshot(hypr)?, |window| {
+        terminal::shell_cwd(window.pid)
+    }))
 }
 
 /// One space, as `space ls` and the sidebar show it.
@@ -275,7 +327,7 @@ fn describe(
 /// Every space: `home` first, then the rest in the order they were made.
 /// Without `live` (no Hyprland), the spaces the store remembers. Updates the
 /// store: new spaces, the terminals they follow, and gone ones pruned.
-fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<Row> {
+pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<Row> {
     let ids: Vec<String> = match live {
         Some(live) => {
             let spaces = live.spaces();

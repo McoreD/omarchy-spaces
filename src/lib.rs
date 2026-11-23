@@ -10,3 +10,4 @@ pub mod paths;
 pub mod spaces;
 pub mod state;
 pub mod terminal;
+pub mod watch;
