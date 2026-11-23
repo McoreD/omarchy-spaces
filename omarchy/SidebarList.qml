@@ -368,18 +368,27 @@ Item {
       }
     }
 
-    // Click it, or press super+p, to search. A control, like the `+`: its
-    // icon alone until you point at it or search, when its box and its words
-    // show.
+    // Click it, or press super+p, to search. Its magnifier alone until you
+    // point at it or search; then it is one input, a control's box that
+    // starts where the other controls' do and stretches to as far short of
+    // the cut, with the magnifier in it: a square on the rail, the whole row
+    // when expanded.
     Item {
       id: searchRow
       readonly property bool open: searchMouse.containsMouse || root.sidebar.searching
+      readonly property real boxInset: (root.slot - root.sidebar.controlSize) / 2
       width: parent.width
       height: root.searchHeight
 
-      ControlBox {
-        lit: searchMouse.containsMouse
-        held: root.sidebar.searching
+      Rectangle {
+        id: searchField
+        x: searchRow.boxInset
+        y: searchRow.boxInset
+        width: Math.min(parent.width, root.highlightWidth) - searchRow.boxInset * 2
+        height: root.sidebar.controlSize
+        radius: root.sidebar.badgeRadius
+        color: root.sidebar.searching ? root.selectedBackground
+          : searchMouse.containsMouse ? root.hoverBackground : "transparent"
       }
 
       SlotIcon {
@@ -389,9 +398,11 @@ Item {
         font.pixelSize: root.sidebar.searchIconSize
       }
 
+      // What you type follows the magnifier as in any input, rather than
+      // lining up with the spaces' names above.
       Item {
-        x: root.textX
-        width: Math.min(parent.width, root.highlightWidth) - x
+        x: Math.round(root.slot / 2 + root.sidebar.searchIconSize / 2 + Style.spacing.md)
+        width: searchField.x + searchField.width - x - Style.spacing.rowPaddingX
         height: parent.height
         clip: true
         opacity: searchRow.open ? 1 : 0
@@ -399,8 +410,7 @@ Item {
 
         Row {
           anchors.left: parent.left
-          anchors.right: hint.left
-          anchors.rightMargin: Style.spacing.xs
+          anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
           spacing: 0
           clip: true
@@ -436,31 +446,16 @@ Item {
             }
           }
 
-          // Pointed at, it says what it does, as the `+` does; searching,
-          // it waits for what you type.
           Text {
             visible: root.sidebar.filterText === ""
             leftPadding: root.sidebar.searching ? Style.spacing.xxs : 0
             textFormat: Text.PlainText
             text: "Search"
-            color: root.sidebar.searching ? root.foreground : root.accent
-            opacity: root.sidebar.searching ? 0.4 : 1
+            color: root.foreground
+            opacity: 0.4
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
           }
-        }
-
-        Text {
-          id: hint
-          anchors.right: parent.right
-          anchors.rightMargin: Style.spacing.rowPaddingX
-          anchors.verticalCenter: parent.verticalCenter
-          textFormat: Text.PlainText
-          text: root.sidebar.searching ? "esc" : "super+p"
-          color: root.foreground
-          opacity: 0.35
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
         }
       }
 
@@ -468,7 +463,7 @@ Item {
         id: searchMouse
         anchors.fill: parent
         hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
+        cursorShape: Qt.IBeamCursor
         onClicked: root.sidebar.search()
       }
     }

@@ -95,7 +95,8 @@ Item {
   //     list in from the sidebar's, and a row's highlight short of the cut.
   //  4. A space's row highlights its whole cell; a control (the toggle, the
   //     `+`, the search) highlights a smaller box, `controlSize`, between a
-  //     badge and a cell, centred in its cell.
+  //     badge and a cell, centred in its cell. The search's box stretches
+  //     from there with the sidebar, as far short of the cut as it starts in.
   readonly property real axis: Style.space(8) + Style.bar.iconSlot / 2
   readonly property int railWidth: Math.round(axis * 2)
   readonly property int inset: Style.spacing.sm
