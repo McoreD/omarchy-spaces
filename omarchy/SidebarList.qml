@@ -277,9 +277,20 @@ Item {
               elide: rowItem.renaming ? Text.ElideLeft : Text.ElideRight
 
               // The keyboard reaches the rename through the sidebar's
-              // panel, so the name draws its own caret.
+              // panel, so the name draws its own selection, under the text,
+              // and its own caret, which a selection hides.
               Rectangle {
-                visible: rowItem.renaming
+                visible: rowItem.renaming && root.sidebar.nameSelected
+                z: -1
+                width: Math.min(nameText.contentWidth, nameText.width)
+                height: Style.font.subtitle + Style.spacing.xxs
+                anchors.verticalCenter: parent.verticalCenter
+                radius: Math.max(1, Style.space(2))
+                color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.3)
+              }
+
+              Rectangle {
+                visible: rowItem.renaming && !root.sidebar.nameSelected
                 x: Math.min(nameText.contentWidth, nameText.width) + 1
                 width: Math.max(1, Style.space(2))
                 height: Style.font.subtitle + Style.spacing.xxs

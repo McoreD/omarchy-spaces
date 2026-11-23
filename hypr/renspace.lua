@@ -13,6 +13,10 @@
 -- is.
 o.rebind("SUPER + P", "Find a space", { panel = "org.ren.renspace" })
 o.rebind("SUPER + B", "Show or hide spaces", "omarchy-shell shell call org.ren.renspace showOrHide ''")
+-- Super + Shift + R renames the space you are in, typing over its name in the
+-- sidebar as its right-click menu's Rename does: Enter keeps it, Escape drops
+-- it, and an empty name has it called after its folder again.
+o.rebind("SUPER + SHIFT + R", "Rename space", "omarchy-shell shell call org.ren.renspace rename ''")
 
 -- Spaces, down and up the sidebar, as herdr's prefix + j/k and n move
 -- between and make sessions, with Super as the prefix. They wrap around, and

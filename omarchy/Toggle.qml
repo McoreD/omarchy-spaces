@@ -25,4 +25,11 @@ Item {
   function showOrHide(arg) {
     if (service) service.showOrHide()
   }
+
+  // Rename the space you are in, typing over its name in the sidebar:
+  // `super+shift+r`. Called through `omarchy-shell shell call
+  // org.ren.renspace rename`.
+  function rename(arg) {
+    if (service) service.rename()
+  }
 }

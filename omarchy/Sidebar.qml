@@ -30,7 +30,8 @@ import "Spaces.mjs" as Spaces
 // Right-clicking a space opens its menu (SpaceMenu.qml), floating where you
 // clicked: rename it or close it. Renaming takes the keyboard as the search
 // does, to type the name in place; an empty name has the space called after
-// its folder again. Each runs `space`, which says why in a notification if it
+// its folder again. `super+shift+r` renames the space you are in the same way,
+// expanding the sidebar for it if it's collapsed, as the search does. Each runs `space`, which says why in a notification if it
 // can't.
 Item {
   id: root
@@ -47,10 +48,14 @@ Item {
   property bool opened: false
   property bool searching: false
   property bool searchOnly: false
-  // The id of the space being renamed, and the name typed so far.
+  // The id of the space being renamed, the name typed so far, and whether
+  // all of it is selected, as it starts, for typing to replace.
   property string renaming: ""
   property string nameText: ""
+  property bool nameSelected: false
   property double renamedAt: 0
+  // Whether it was expanded only for the rename, to collapse once it ends.
+  property bool renameOnly: false
   readonly property bool naming: renaming !== ""
   // Whatever holds the keyboard: the search or a name being typed.
   readonly property bool typing: searching || naming
@@ -357,14 +362,37 @@ Item {
       root.searchEnded()
     }
     root.renamedAt = Date.now()
+    root.renameOnly = false
     root.renaming = row.id
     root.nameText = row.label
+    root.nameSelected = true
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  // Renames the space you are in, from the keyboard. `home` has no name to
+  // change. A sidebar collapsed, or expanded just for a search, is expanded
+  // just for the rename.
+  function renameActive() {
+    var workspace = Hyprland.focusedWorkspace
+    var id = workspace ? Spaces.locate(workspace.id, workspace.name).space : ""
+    if (!id || id === "home" || root.renaming === id) return
+    var only = !root.opened || (root.searching && root.searchOnly)
+    if (root.opened) root.take()
+    else root.show()
+    var row = root.rows.find(function(r) { return r.id === id })
+    if (!row) {
+      if (only) root.hide()
+      return
+    }
+    root.closeMenu()
+    root.startRename(row)
+    root.renameOnly = only
   }
 
   // Enter commits the name typed, Escape (`commit` false) drops it. Leaving
   // an unnamed space's folder name as it was changes nothing; an empty name
-  // has a named space called after its folder again.
+  // has a named space called after its folder again. A sidebar expanded just
+  // for the rename collapses again.
   function endNaming(commit) {
     if (!root.naming) return
     var id = root.renaming
@@ -372,9 +400,13 @@ Item {
     var to = root.nameText.trim()
     root.renaming = ""
     root.nameText = ""
-    if (!commit || !row) return
-    if (row.named ? to === row.label : (to === row.label || to === "")) return
-    root.run(["space", "rename", id, to])
+    root.nameSelected = false
+    var changed = commit && row && !(row.named ? to === row.label : (to === row.label || to === ""))
+    if (changed) root.run(["space", "rename", id, to])
+    if (root.renameOnly) {
+      root.renameOnly = false
+      root.hide()
+    }
   }
 
   // Runs a `space` command that changes the spaces.
@@ -523,11 +555,22 @@ Item {
         var printable = event.text && event.text.length === 1 && !ctrl
             && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127
         if (root.naming) {
+          // With the whole name selected, typing replaces it and deleting
+          // clears it; Right or End puts the caret after it, to add to it.
+          // Ctrl+A selects it again.
+          var selected = root.nameSelected
+          var deletes = event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete
+              || (ctrl && event.key === Qt.Key_U)
           if (event.key === Qt.Key_Escape) root.endNaming(false)
           else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) root.endNaming(true)
+          else if (ctrl && event.key === Qt.Key_A) root.nameSelected = root.nameText !== ""
+          else if (selected && deletes) root.nameText = ""
+          else if (selected && (event.key === Qt.Key_Right || event.key === Qt.Key_End)) {}
+          else if (selected && printable) root.nameText = Spaces.nameInput("", event.text)
           else if (Util.editsFilter(event, root.nameText)) root.nameText = Util.editedFilter(event, root.nameText)
           else if (printable) root.nameText = Spaces.nameInput(root.nameText, event.text)
           else return
+          if (!(ctrl && event.key === Qt.Key_A)) root.nameSelected = false
           event.accepted = true
           return
         }

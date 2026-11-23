@@ -12,7 +12,7 @@ A tab is named after its most recently focused window: a terminal by what it's r
 
 A dot shows which spaces need you. An agent in a terminal says what it's doing, and its tab and its space's badge show it: red when it's waiting for you (a permission prompt, a question, an error), green when it finished while you were elsewhere, and a breathing dot in the text's colour while it works. A space shows whichever of its agents most needs you, and green clears once you focus the agent's window. A sound plays when an agent starts waiting for you, and when one finishes while you aren't looking at its window: Herdr's own (`assets/sounds/`), unless `[sounds]` in the config names others or sets `enabled = false`. This needs [herdr-core](https://github.com/herdrdev/herdr-core) (`hc`): the terminals renSpace opens then run in it, and any agent that reports its status through OSC 7501, as Claude Code, opencode, pi and Kimi do, shows here. Without it, terminals are plain and have no dots.
 
-Click `+` at the end of the list to open a new space with a terminal in the folder you are in, or home if you aren't in one: you go there once the terminal is up, so you never see the space empty. A new tab, from `super+t` or the `+` after the tabs, opens the same way, with a terminal in the space's folder. Right-click a space to rename or close it. The sidebar takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
+Click `+` at the end of the list to open a new space with a terminal in the folder you are in, or home if you aren't in one: you go there once the terminal is up, so you never see the space empty. A new tab, from `super+t` or the `+` after the tabs, opens the same way, with a terminal in the space's folder. Right-click a space to rename or close it, or press `super+shift+r` to rename the one you are in. The sidebar takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
 
 ## Install
 
@@ -30,6 +30,7 @@ For agents' status, install herdr-core as its README says, so `hc` is on your PA
 | `super+b` | Expand or collapse the spaces sidebar |
 | `super+j` / `super+k` | Next / previous space, down and up the sidebar. They wrap around, with `home` at the top |
 | `super+n` | New space, with a terminal in the folder you are in |
+| `super+shift+r` | Rename the space you are in: type over its name in the sidebar, Enter to keep it, Escape to stop. An empty name has it called after its folder again |
 | `super+p` | Find a space: type to filter, Enter to switch, Escape to stop. Expands the sidebar for the search if it's collapsed |
 | `super+enter` | Terminal in the folder you are in; on an empty tab, the space's folder |
 | `super+t` | New tab, with a terminal in the space's folder |

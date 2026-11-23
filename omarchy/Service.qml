@@ -20,6 +20,7 @@ Item {
   function search() { sidebarItem.search() }
   function endSearch() { sidebarItem.endSearch() }
   function showOrHide(screen) { sidebarItem.showOrHide(screen) }
+  function rename() { sidebarItem.renameActive() }
 
   Base {
     sidebar: sidebarItem
