@@ -12,10 +12,14 @@ Item {
   property var shell: null
   property var manifest: null
 
-  readonly property bool sidebarOpen: sidebar.opened
+  readonly property bool sidebarFocused: sidebar.focused
 
   function openSidebar() { sidebar.open() }
   function closeSidebar() { sidebar.close() }
+  function showOrHideSidebar() {
+    if (sidebar.opened) sidebar.close()
+    else sidebar.open()
+  }
 
   Base {
     sidebar: sidebar
@@ -25,8 +29,8 @@ Item {
 
   Sidebar {
     id: sidebar
-    // Closed from inside (a pick, Escape), so the shell stops counting the
-    // overlay as open and the next toggle opens it again.
+    // Closed from inside (Escape), so the shell stops counting the overlay as
+    // open and the next toggle opens it again.
     onClosed: {
       if (root.shell && typeof root.shell.hide === "function")
         root.shell.hide((root.manifest && root.manifest.id) || "org.ren.renspace")

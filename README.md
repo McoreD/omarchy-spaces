@@ -4,7 +4,7 @@ Spaces for Hyprland on Omarchy: switch projects, not workspaces.
 
 A **space** is a project: a name and a folder. Each space has its own **tabs**, and each tab is a Hyprland workspace (`ren:1`, `ren:2`, …) holding whatever windows you tile there. The plain numbered workspaces are the `home` space.
 
-The active space's name and tabs sit on Omarchy's bar, in place of its workspaces. Click the name, or press `super+p`, for the spaces sidebar: it sits on the base under the workspaces, and opening it slides the windows aside to reveal it. It takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
+The active space's name and tabs sit on Omarchy's bar, in place of its workspaces. Click the name, or press `super+p`, for the spaces sidebar: it sits on the base under the workspaces, and opening it slides the windows aside to reveal it. It stays open until you close it, keeping up as you switch spaces and tabs. It takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
 
 ## Install
 
@@ -17,7 +17,7 @@ just setup     # add the tabs to the bar, the sidebar and the keys
 
 | Keys | Does |
 |---|---|
-| `super+p` | Open the spaces sidebar: type to filter, Enter to switch |
+| `super+p` | Open the spaces sidebar: type to filter, Enter to switch. Press it again to close it, or, after you've gone back to your windows, to type in it again |
 | `super+t` | New tab |
 | `super+1..0` | Go to tab N |
 | `super+tab` / `super+shift+tab` | Next / previous tab |

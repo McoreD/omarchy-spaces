@@ -45,11 +45,11 @@ BarWidget {
     height: root.barSize
     spacing: Style.spacing.xs
 
-    // The space's name; click it to switch space.
+    // The space's name; click it to show or hide the sidebar.
     TabButton {
       text: root.model.space
       bold: true
-      onClicked: root.run(["omarchy-shell", "shell", "toggle", "org.ren.renspace", ""])
+      onClicked: root.run(["omarchy-shell", "shell", "call", "org.ren.renspace", "showOrHide", ""])
     }
 
     Rectangle {

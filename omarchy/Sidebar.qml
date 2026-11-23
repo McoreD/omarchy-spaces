@@ -14,15 +14,22 @@ import "Spaces.mjs" as Spaces
 // slides them back over it. With no windows to uncover it, it slides in and
 // out by itself. Picking a space runs `space go`, which stays the only thing
 // that knows how spaces map to workspaces.
+//
+// It stays open until you close it: picking a space, switching tab or
+// clicking a window only hands the keyboard back to the windows, and the
+// list keeps up with the spaces while it shows.
 Item {
   id: root
 
-  // Emitted when the sidebar closes itself (a pick, Escape, focus moving to a
-  // window), so the service can tell the shell.
+  // Emitted when the sidebar closes itself (Escape), so the service can tell
+  // the shell.
   signal closed()
 
-  // Whether the sidebar is open, as the shell's toggle sees it.
+  // Whether the sidebar shows, and whether it holds the keyboard. The shell's
+  // toggle sees it open only while it holds the keyboard, so `super+p` takes
+  // the keyboard back first and closes it the next time.
   property bool opened: false
+  property bool focused: false
   // `zoned` claims the width, which makes Hyprland move the windows; `shown`
   // draws the list, which stays drawn until the windows have covered it.
   property bool zoned: false
@@ -49,24 +56,28 @@ Item {
 
   readonly property int panelWidth: Style.space(260)
 
+  // Opens the sidebar, or takes the keyboard back if it is open already.
   function open() {
-    if (root.opened) return
+    if (root.focused) return
     root.filterText = ""
     root.error = ""
     root.openedAt = Date.now()
     root.touched = false
     root.pending = false
-    root.screen = root.focusedScreen()
-    root.opened = true
-    root.zoned = true
-    root.shown = true
-    hideTimer.stop()
-    slideOut.stop()
-    if (root.windowsToMove()) {
-      slideIn.stop()
-      root.offset = 0
-    } else {
-      slideIn.restart()
+    root.focused = true
+    if (!root.opened) {
+      root.screen = root.focusedScreen()
+      root.opened = true
+      root.zoned = true
+      root.shown = true
+      hideTimer.stop()
+      slideOut.stop()
+      if (root.windowsToMove()) {
+        slideIn.stop()
+        root.offset = 0
+      } else {
+        slideIn.restart()
+      }
     }
     // Until `space ls` answers, show the last list, updated for the space
     // you are in now: Enter can come first, and must not pick that space.
@@ -79,10 +90,18 @@ Item {
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
+  // Hands the keyboard back to the windows and leaves the list showing.
+  function release() {
+    if (!root.focused) return
+    root.focused = false
+    root.pending = false
+    if (root.filterText) root.setFilter("")
+  }
+
   function close() {
     if (!root.opened) return
+    root.release()
     root.opened = false
-    root.pending = false
     root.zoned = false
     slideIn.stop()
     if (root.windowsToMove()) hideTimer.restart()
@@ -91,7 +110,10 @@ Item {
   }
 
   function refresh() {
-    if (lsProc.running) return
+    if (lsProc.running) {
+      lsProc.again = true
+      return
+    }
     lsProc.running = true
   }
 
@@ -143,13 +165,13 @@ Item {
   }
 
   function activate(index) {
-    if (root.opened && root.shownRows.length === 0 && lsProc.running) {
+    if (root.focused && root.shownRows.length === 0 && lsProc.running) {
       root.pending = true
       return
     }
     if (index < 0 || index >= root.shownRows.length) return
     var name = root.shownRows[index].name
-    root.close()
+    root.release()
     // It says why in a notification if it can't switch.
     Quickshell.execDetached(["space", "go", name])
   }
@@ -185,11 +207,19 @@ Item {
     command: ["space", "ls", "--json"]
     property string out: ""
     property string err: ""
+    // Asked again while running, for a change it may have missed.
+    property bool again: false
     stdout: StdioCollector { onStreamFinished: lsProc.out = text }
     stderr: StdioCollector { onStreamFinished: lsProc.err = text }
     onExited: function(exitCode) {
       // The collectors can finish just after the exit is reported.
-      Qt.callLater(function() { root.loaded(lsProc.out, exitCode, lsProc.err) })
+      Qt.callLater(function() {
+        root.loaded(lsProc.out, exitCode, lsProc.err)
+        if (lsProc.again) {
+          lsProc.again = false
+          root.refresh()
+        }
+      })
     }
   }
 
@@ -237,14 +267,26 @@ Item {
 
   Component.onCompleted: motionProc.running = true
 
-  // A click on a window moves focus there; take that as done with the list.
+  // A click on a window or a switch of tab moves the keyboard there; the list
+  // stays, and follows what changed: the active space and window counts.
   Connections {
     target: Hyprland
     function onRawEvent(event) {
       if (event.name === "configreloaded" && !motionProc.running) motionProc.running = true
-      if (!root.opened || Date.now() - root.openedAt < 300) return
-      if (event.name === "activewindowv2" || event.name === "workspacev2") root.close()
+      if (!root.opened) return
+      switch (event.name) {
+      case "workspacev2": case "openwindow": case "closewindow": case "movewindowv2":
+        relist.restart()
+      }
+      if (!root.focused || Date.now() - root.openedAt < 300) return
+      if (event.name === "activewindowv2" || event.name === "workspacev2") root.release()
     }
+  }
+
+  Timer {
+    id: relist
+    interval: 150
+    onTriggered: if (root.opened) root.refresh()
   }
 
   // A one-pixel-wide panel on a top layer, drawing nothing and taking no
@@ -263,7 +305,7 @@ Item {
     color: "transparent"
     WlrLayershell.namespace: "renspace-sidebar-keys"
     WlrLayershell.layer: WlrLayer.Top
-    WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: root.focused ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
     Item {
       id: keyCatcher
