@@ -9,6 +9,7 @@ pub mod hypr;
 pub mod name;
 pub mod paths;
 pub mod shell;
+pub mod sound;
 pub mod spaces;
 pub mod state;
 pub mod status;

@@ -21,7 +21,8 @@ Item {
 
   Process {
     id: proc
-    command: ["space", "watch"]
+    // With the sounds when an agent needs you: this is the watch you hear.
+    command: ["space", "watch", "--sounds"]
     running: true
     stdout: SplitParser {
       onRead: function(line) {

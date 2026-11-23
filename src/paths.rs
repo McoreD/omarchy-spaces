@@ -26,6 +26,15 @@ pub fn state_dir() -> PathBuf {
     xdg("XDG_STATE_HOME", ".local/state").join("renspace")
 }
 
+/// A path as written in the config, `~/` meaning the home folder.
+pub fn expand(path: &str) -> PathBuf {
+    match path.strip_prefix("~/") {
+        Some(rest) => home().join(rest),
+        None if path == "~" => home(),
+        None => PathBuf::from(path),
+    }
+}
+
 /// Shortens a path under the home directory to `~/...` for display.
 pub fn tilde(path: &Path) -> String {
     let home = home();
@@ -43,6 +52,14 @@ pub fn tilde(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expands_home_in_config_paths() {
+        assert_eq!(expand("~/a.oga"), home().join("a.oga"));
+        assert_eq!(expand("~"), home());
+        assert_eq!(expand("/s/a.oga"), PathBuf::from("/s/a.oga"));
+        assert_eq!(expand("~x/a"), PathBuf::from("~x/a"));
+    }
 
     #[test]
     fn shortens_home() {

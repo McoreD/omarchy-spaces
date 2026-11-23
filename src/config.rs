@@ -44,6 +44,29 @@ pub struct Config {
     /// How to open a terminal: a command for `sh -c`, run in the folder with
     /// `RENSPACE_DIR` set to it.
     pub terminal: Option<String>,
+    /// The sounds when an agent needs you (`sound.rs`).
+    pub sounds: Option<Sounds>,
+}
+
+/// `[sounds]`: whether to play them, and files in place of the defaults.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Sounds {
+    pub enabled: bool,
+    /// When an agent finishes while you aren't looking.
+    pub done: Option<String>,
+    /// When an agent starts waiting for you.
+    pub waiting: Option<String>,
+}
+
+impl Default for Sounds {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            done: None,
+            waiting: None,
+        }
+    }
 }
 
 impl Config {
@@ -113,6 +136,20 @@ mod tests {
         let config = Config::load_from(&path).unwrap();
         assert_eq!(config.picker(), Some("vicinae dmenu".into()));
         assert!(config.terminal().contains("xdg-terminal-exec"));
+    }
+
+    #[test]
+    fn reads_sounds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[sounds]\ndone = \"~/ding.oga\"\n").unwrap();
+        let sounds = Config::load_from(&path).unwrap().sounds.unwrap();
+        assert!(sounds.enabled);
+        assert_eq!(sounds.done.as_deref(), Some("~/ding.oga"));
+        fs::write(&path, "[sounds]\nenabled = false\n").unwrap();
+        assert!(!Config::load_from(&path).unwrap().sounds.unwrap().enabled);
+        fs::write(&path, "[sounds]\nbell = \"x\"\n").unwrap();
+        assert!(Config::load_from(&path).is_err());
     }
 
     #[test]

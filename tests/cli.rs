@@ -1187,6 +1187,88 @@ fn watch_shows_what_core_reports_and_clears_done_once_seen() {
 }
 
 #[test]
+fn watch_rings_when_an_agent_needs_you_or_finishes_unseen() {
+    use std::time::Duration;
+    let env = Env::new();
+    let core = Core::start(&env);
+    // A player that notes what it was asked to play.
+    let bin = env.root.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let played = env.root.path().join("played");
+    fs::write(
+        bin.join("pw-play"),
+        format!("#!/bin/sh\necho \"$1\" >> '{}'\n", played.display()),
+    )
+    .unwrap();
+    fs::set_permissions(
+        bin.join("pw-play"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    // Its own sound for done; Herdr's, built in, for waiting.
+    env.write_config("[sounds]\ndone = \"/s/done.oga\"\n");
+    let heard = || {
+        thread::sleep(Duration::from_millis(300));
+        fs::read_to_string(&played)
+            .unwrap_or_default()
+            .lines()
+            .map(String::from)
+            .collect::<Vec<_>>()
+    };
+
+    let ren = env.dir("ren");
+    let agent = env.add_window("s1:1");
+    let t = core.add(&agent, &ren);
+    // Waiting for you since before the watch started: no sound for that.
+    core.event(
+        &t,
+        "status",
+        json!({ "status": { "state": "blocked" }, "records": {}, "reported": true }),
+    );
+    env.add_window("1");
+    env.set_active("1");
+
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let mut command = env.command(&["watch", "--sounds"]);
+    command.env("PATH", path);
+    let watch = Watch::run(command);
+    // Once it has core's terminals, it shows the agent waiting.
+    while watch.next_rows(Duration::from_secs(3))[1]["status"] != "waiting" {}
+    watch.joined(&env);
+    assert!(heard().is_empty());
+
+    let status = |state: &str| {
+        core.event(
+            &t,
+            "status",
+            json!({ "status": { "state": state }, "records": {}, "reported": true }),
+        );
+        let _ = watch.next_rows(Duration::from_secs(1));
+    };
+    status("working");
+    status("blocked");
+    let request = env.root.path().join("run/renspace/request.mp3");
+    assert_eq!(heard(), [request.display().to_string()]);
+    assert_eq!(
+        fs::read(&request).unwrap(),
+        fs::read("assets/sounds/request.mp3").unwrap()
+    );
+    status("working");
+    status("done");
+    assert_eq!(heard().len(), 2);
+    assert_eq!(heard()[1], "/s/done.oga");
+
+    // Finishing in the window you're looking at: nothing to tell you.
+    env.event(&format!(
+        "activewindowv2>>{}",
+        agent.trim_start_matches("0x")
+    ));
+    status("working");
+    status("done");
+    assert_eq!(heard().len(), 2);
+}
+
+#[test]
 fn shell_runs_in_core_and_ends_with_its_window() {
     // It attaches with the real `hc`.
     let on_path = std::env::split_paths(&std::env::var_os("PATH").unwrap())
@@ -1294,8 +1376,11 @@ struct Watch {
 
 impl Watch {
     fn start(env: &Env) -> Self {
-        let mut child = env
-            .command(&["watch"])
+        Self::run(env.command(&["watch"]))
+    }
+
+    fn run(mut command: Command) -> Self {
+        let mut child = command
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()

@@ -48,7 +48,11 @@ enum Cmd {
     /// Open a terminal in the folder you are in, or the active space's.
     Terminal,
     /// Print the spaces as `ls --json` does, a line each time they change.
-    Watch,
+    Watch {
+        /// Play a sound when an agent needs you or finishes unseen.
+        #[arg(long)]
+        sounds: bool,
+    },
     /// Run as a terminal window's program: a shell in herdr-core, attached
     /// here and ended with the window, else your own shell.
     #[command(hide = true)]
@@ -98,7 +102,7 @@ fn main() -> ExitCode {
     // notification.
     // `watch` ends whenever Hyprland restarts, and the plugin restarts it: not
     // worth a notification.
-    let unseen = !matches!(cli.command, Cmd::Ls { .. } | Cmd::Watch | Cmd::Shell)
+    let unseen = !matches!(cli.command, Cmd::Ls { .. } | Cmd::Watch { .. } | Cmd::Shell)
         && !std::io::stderr().is_terminal();
 
     let result = match cli.command {
@@ -111,7 +115,7 @@ fn main() -> ExitCode {
         },
         Cmd::Close { space } => commands::close(space),
         Cmd::Terminal => commands::open_terminal(),
-        Cmd::Watch => watch::watch(),
+        Cmd::Watch { sounds } => watch::watch(sounds),
         Cmd::Shell => shell::shell(),
         Cmd::Emptied { workspace } => commands::emptied(&workspace),
         Cmd::Ws { target } => commands::ws(target),

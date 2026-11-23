@@ -12,7 +12,9 @@
 //! terminals retitle themselves on `cd` and when a command starts.
 //!
 //! An agent's `done` shows until you focus its window: then its turn is
-//! seen. Without core it subscribes again every `SLOW`, so starting core
+//! seen. With `--sounds`, as the plugin runs it, it plays a sound when an
+//! agent starts needing you or finishes while you aren't looking
+//! (`sound.rs`). Without core it subscribes again every `SLOW`, so starting core
 //! later is noticed.
 //!
 //! It exits when Hyprland's event socket closes, when nobody reads what it
@@ -28,12 +30,13 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::{Result, bail};
 
 use crate::commands;
+use crate::config::Config;
 use crate::core;
 use crate::hypr::Hypr;
 use crate::paths;
 use crate::spaces::Store;
 use crate::state::Last;
-use crate::terminal;
+use crate::{sound, terminal};
 
 /// How often the active space's terminals' shells are read.
 const FAST: Duration = Duration::from_millis(200);
@@ -51,7 +54,7 @@ enum Message {
     Core(core::Update),
 }
 
-pub fn watch() -> Result<()> {
+pub fn watch(sounds: bool) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (send, messages) = mpsc::channel();
     let events = hypr.events()?;
@@ -79,6 +82,10 @@ pub fn watch() -> Result<()> {
     let mut subscribed = false;
     // The turn each core terminal was on when you last saw it done.
     let mut seen: HashMap<String, u64> = HashMap::new();
+    // What each core terminal's agent last reported, to ring on a change.
+    let mut words: HashMap<String, String> = HashMap::new();
+    let mut config = Config::load().unwrap_or_default();
+    let mut config_seen = stamp(&paths::config_file());
     let mut focused = hypr.active_window_address()?;
     let mut read_all = true;
     let mut slow_at = Instant::now();
@@ -119,6 +126,11 @@ pub fn watch() -> Result<()> {
             last = Last::load(&state_dir)?;
             last_seen = visited;
         }
+        let configured = stamp(&paths::config_file());
+        if configured != config_seen {
+            config = Config::load().unwrap_or_default();
+            config_seen = configured;
+        }
 
         let mut live = commands::live_from(&snapshot, |window| {
             shells.get(&window.pid).cloned().flatten()
@@ -131,8 +143,21 @@ pub fn watch() -> Result<()> {
                 }
             }
         }
+        // A change in what an agent reports may call for a sound. One seen
+        // for the first time doesn't: it may have been waiting since before.
+        for (window, agent) in live.agents() {
+            let before = words.insert(agent.address.clone(), agent.word.clone());
+            let looking = focused.as_deref() == Some(window);
+            if let Some(before) = before
+                && sounds
+                && let Some(alert) = sound::alert(&before, &agent.word, looking)
+            {
+                sound::play(&config, alert);
+            }
+        }
         if let Some(core) = &core {
             seen.retain(|address, _| core.get(address).is_some());
+            words.retain(|address, _| core.get(address).is_some());
         }
         live.set_statuses(|agent| seen.get(&agent.address) == Some(&agent.turn));
 
