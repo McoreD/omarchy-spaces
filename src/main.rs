@@ -71,6 +71,16 @@ fn main() -> ExitCode {
 
     match result {
         Ok(()) => ExitCode::SUCCESS,
+        // `space ls | head` closing the pipe early isn't an error.
+        Err(e)
+            if e.chain().any(|cause| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::BrokenPipe)
+            }) =>
+        {
+            ExitCode::SUCCESS
+        }
         Err(e) => {
             let message = format!("{e:#}");
             eprintln!("space: {message}");

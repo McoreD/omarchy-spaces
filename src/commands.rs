@@ -250,8 +250,9 @@ pub struct Row {
     pub workspaces: Option<Vec<u8>>,
     /// The workspace `space go` returns to.
     pub last: u8,
-    #[serde(skip)]
-    left_at: u64,
+    /// When the space was last left, in Unix milliseconds, or 0 if never.
+    /// Larger is more recent; the sidebar starts on the most recent one.
+    pub left_at: u64,
 }
 
 /// What Hyprland says about every space: the active one, and the windows and

@@ -510,6 +510,7 @@ fn ls_lists_spaces_with_counts() {
     assert_eq!(json[1]["windows"], 2);
     assert_eq!(json[1]["workspaces"], json!([1, 2]));
     assert!(json[1]["dir"].as_str().unwrap().ends_with("/Projects/ren"));
+    assert_eq!(json[2]["left_at"], 0, "never left");
 }
 
 #[test]

@@ -1,4 +1,5 @@
--- renSpace: one key to fuzzy-find a space and jump to it. Super + 1..0 stay
+-- renSpace: one key to fuzzy-find a space and jump to it, in the sidebar
+-- (the org.ren.renspace shell plugin in ../omarchy). Super + 1..0 stay
 -- Omarchy's; for keys that stay inside the active space, see
 -- renspace-workspaces.lua.
 --
@@ -7,9 +8,9 @@
 -- at the end of ~/.config/hypr/bindings.lua, which loads after Omarchy's
 -- defaults. Remove that line to undo it.
 
--- Super + P is Omarchy's pseudo window and Super + Shift + P its Google Photos
--- web app, so the switcher goes on Super + Alt + P (for project).
-o.bind("SUPER + ALT + P", "Switch space", "space go")
+-- Super + P (for project) replaces Omarchy's pseudo window toggle. Without the
+-- plugin, bind "space go" here instead for the centered picker.
+o.rebind("SUPER + P", "Switch space", { panel = "org.ren.renspace" })
 
 -- On a config reload, Omarchy's per-monitor workspace logic
 -- (default/hypr/monitor-workspaces.lua) puts every monitor back on a numbered

@@ -8,20 +8,22 @@ This is the proof of concept from the renSpace plan (`~/Projects/ren/products/re
 
 ## Install
 
-Build and install the `space` binary into `~/.cargo/bin`, which is on Hyprland's `PATH`:
-
 ```sh
-cargo install --path ~/dev/ren/renspace
+just install   # build the space binary into ~/.cargo/bin, which is on Hyprland's PATH
+just setup     # add the sidebar to the Omarchy shell and bind it to super+p
 ```
 
-Add the picker key, `super+alt+p`, which fuzzy-finds a space and jumps to it. It adds one binding and changes none of Omarchy's:
+`just setup` links `omarchy/` into `~/.config/omarchy/plugins/` as `org.ren.renspace` and enables it (`omarchy plugin enable` asks you to confirm). It also links `hypr/renspace.lua` into `~/.config/hypr/` and loads it from `bindings.lua`. That adds one binding and changes none of Omarchy's. It's safe to run again.
 
-```sh
-ln -s ~/dev/ren/renspace/hypr/renspace.lua ~/.config/hypr/renspace.lua
-echo 'require("hypr.renspace")' >> ~/.config/hypr/bindings.lua
-```
+Hyprland reloads the config by itself. To undo it, delete that line from `bindings.lua`. `super+p` replaces Omarchy's pseudo window toggle, which keeps a tiled window at its own size inside its tile.
 
-Hyprland reloads the config by itself. To undo it, delete that line from `bindings.lua`. `super+p` (the plan's placeholder) is Omarchy's pseudo window and `super+shift+p` its Google Photos web app, hence `super+alt+p`.
+### The sidebar
+
+`super+p` opens a column on the left edge: `home` first, then every space by name, each with its folder and window count. The space you're in has a mark beside it. Rows keep their place from one opening to the next, so you can learn where each space is. The cursor starts on the space you left most recently, so `super+p` then Enter goes back to it.
+
+Type to filter. A prefix match beats a match at a word start, which beats letters in order: `spc` finds `renspace`. Up/down, Tab or `ctrl+n`/`ctrl+p` move the cursor. Enter or a click jumps there. Esc clears the filter, then closes. A click outside also closes.
+
+The sidebar only reads `space ls --json` and runs `space go <name>`, so the `space` binary stays the only thing that knows about spaces. `space go` with no name still opens the centered vicinae or walker picker from a terminal.
 
 With only the picker, `super+1..0` are still Omarchy's, so pressing one inside a space takes you back to a plain workspace. Each space then lives on its first workspace, `name:1`.
 
@@ -40,7 +42,7 @@ echo 'require("hypr.renspace-workspaces")' >> ~/.config/hypr/bindings.lua
 | `super+shift+1..0` | Move the window there and follow it | Omarchy's move |
 | `super+shift+alt+1..0` | Move it there silently | Omarchy's silent move |
 
-These keys are plain Lua running inside Hyprland, not calls to `space`, so they can't leave you stuck. Outside a space they call Omarchy's own functions, the ones Omarchy binds to the same keys, and they keep working even if `space` is missing or broken. Inside a space, `super+alt+p` or `space go home` leads back to the plain workspaces. The `space ws` and `space move` commands do the same from a shell or a script.
+These keys are plain Lua running inside Hyprland, not calls to `space`, so they can't leave you stuck. Outside a space they call Omarchy's own functions, the ones Omarchy binds to the same keys, and they keep working even if `space` is missing or broken. Inside a space, `super+p` or `space go home` leads back to the plain workspaces. The `space ws` and `space move` commands do the same from a shell or a script.
 
 ## Use
 
@@ -63,7 +65,7 @@ $ space ls
   tax-2026   0 windows    ~/Spaces/tax
 ```
 
-`space go rn` fails with `no space called 'rn'. Did you mean ren?` instead of creating a space. The picker lists the space you left most recently first and the current space last, so `super+alt+p` then Enter goes back to the previous space.
+`space go rn` fails with `no space called 'rn'. Did you mean ren?` instead of creating a space. The picker lists the space you left most recently first and the current space last, so Enter goes back to the previous space.
 
 Space names are lowercase letters, digits and `-`. There's no `:`, since that separates the space from the workspace number.
 
@@ -100,7 +102,7 @@ Everything under `~/.local/state/renspace/` is disposable cache and can be delet
 
 **Fast keypresses.** `space` talks to Hyprland's IPC socket directly rather than shelling out to `hyprctl`. Hyprland 0.56 takes Lua for `dispatch`, so for example `space ws 2` in `ren` sends `dispatch hl.dsp.focus({ workspace = "name:ren:2" })`. On the target laptop `space ws` takes about 0.5 ms from spawn to exit, against 3 ms for a single `hyprctl -j activeworkspace`. `space ws` and `space move` don't read config or scan roots, and the optional workspace keys skip the binary altogether. Scanning `~/Projects` for `space ls` takes about 2 ms.
 
-The code is small: `name.rs` (names, the `name:n` format, typo suggestions), `hypr.rs` (socket client), `spaces.rs` (`.renspace.toml`, scanning, index), `state.rs` (`last`), `commands.rs` (the five commands), `main.rs` (CLI).
+The code is small. The sidebar is `omarchy/Sidebar.qml` plus `omarchy/Spaces.mjs`. On the Rust side: `name.rs` (names, the `name:n` format, typo suggestions), `hypr.rs` (socket client), `spaces.rs` (`.renspace.toml`, scanning, index), `state.rs` (`last`), `commands.rs` (the five commands), `main.rs` (CLI).
 
 ## Spike findings (step 0)
 
@@ -116,9 +118,10 @@ Checked on Hyprland 0.56.2 and the Omarchy of 2026-11-23:
 
 ```sh
 cargo test
+node --test omarchy/tests/*.test.mjs
 ```
 
-The unit tests cover names, parsing, scanning, the index and the state files. `tests/cli.rs` runs the real `space` binary against a fake Hyprland that speaks the socket protocol, with its own home, config and state directories. It covers every command, the Omarchy fallback outside Omarchy, the picker ordering, and running without Hyprland.
+The unit tests cover names, parsing, scanning, the index and the state files. `tests/cli.rs` runs the real `space` binary against a fake Hyprland that speaks the socket protocol, with its own home, config and state directories. It covers every command, the Omarchy fallback outside Omarchy, the picker ordering, and running without Hyprland. The sidebar's filtering and cursor logic lives in `omarchy/Spaces.mjs`, outside QML, so Node can test it.
 
 ## Known gaps
 
@@ -126,7 +129,7 @@ The unit tests cover names, parsing, scanning, the index and the state files. `t
 - Windows opened while the wrong workspace is focused land in the wrong space. `space move` fixes them by hand.
 - Anything that renames a workspace breaks the mapping. Keep the `name:n` format strict: anything else counts as `home`.
 - The bar doesn't show a space's workspaces (see above).
-- Not yet tried live: the reload workaround in `hypr/renspace.lua`, and the vicinae picker, which needs a person to pick something.
+- Not yet tried live: the sidebar in the running Omarchy shell (it passes qmllint, and its logic runs in both Node and Qt's JS engine), the reload workaround in `hypr/renspace.lua`, and the vicinae picker.
 - One monitor. A second monitor's numbered workspaces count as `home` too, but a space's workspaces don't follow monitors.
 
 ## What to note while living in it

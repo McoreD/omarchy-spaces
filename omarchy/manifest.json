@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "org.ren.renspace",
+  "name": "renSpace",
+  "version": "0.1.0",
+  "author": "T4T5",
+  "description": "A sidebar for switching between renSpace spaces",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Sidebar.qml"
+  }
+}
