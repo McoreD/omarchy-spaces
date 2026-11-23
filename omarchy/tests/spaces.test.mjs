@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, badgeColor, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, statusColors, tabsFor, terminalsByAddress, moreUrgent, windowMotion } from "../Spaces.mjs"
+import { appName, badgeColor, barToggle, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, statusColors, tabsFor, terminalsByAddress, moreUrgent, windowMotion } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -287,6 +287,17 @@ test("reads the bar's background look", () => {
   assert.equal(barLook({ background: "opaque", transparent: true }), "opaque")
   assert.equal(barLook({ background: "neon" }), "opaque")
   assert.equal(barLook(null), "opaque")
+})
+
+test("reads whether the sidebar's header is on the bar", () => {
+  const id = "org.ren.renspace"
+  assert.equal(barToggle({ layout: { left: [{ id: "omarchy.menu" }, { id }] } }, id), false)
+  assert.equal(barToggle({ layout: { left: [{ id, toggle: true }] } }, id), true)
+  assert.equal(barToggle({ position: "bottom", layout: { left: [{ id, toggle: true }] } }, id), true)
+  assert.equal(barToggle({ position: "left", layout: { left: [{ id, toggle: true }] } }, id), false, "a vertical bar")
+  assert.equal(barToggle({ layout: { right: [{ id, toggle: true }] } }, id), false, "only the left section lines up")
+  assert.equal(barToggle({ layout: { left: [null, { id, toggle: "yes" }] } }, id), false)
+  assert.equal(barToggle(null, id), false)
 })
 
 test("freshens the last rows for the space you are in now", () => {

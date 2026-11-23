@@ -95,6 +95,9 @@ Item {
   property var palette: Spaces.DEFAULT_PALETTE
   // The colours of agents' statuses, from it too (StatusDot.qml).
   property var statusColors: null
+  // Whether its header, the toggle and title, is on the bar in place of the
+  // menu (TabsWidget.qml), so the list starts without one.
+  property bool headerOnBar: false
 
   readonly property int panelWidth: Style.space(200)
 
@@ -123,6 +126,9 @@ Item {
   readonly property int badgeSize: Math.round(cell * badgeScale)
   readonly property int badgeRadius: Math.round(badgeSize / 4)
   readonly property int controlSize: Math.round((badgeSize + cell) / 2)
+  // From the icon column to a row's text: the spaces' names, and the title
+  // in the header. None: the badge's own margin in its cell is the gap.
+  readonly property int textGap: 0
 
   // The search's magnifier, drawn larger than the rail's other icons.
   readonly property int searchIconSize: Math.round(badgeSize * 0.72)

@@ -416,6 +416,16 @@ export function recessAlpha(r, g, b) {
   return luminance > 0.5 ? 0.07 : 0.3
 }
 
+// Whether the sidebar's header, its toggle and title, sits on the bar in
+// place of Omarchy's menu: `"toggle": true` on the entry for the widget `id`
+// in the bar's left section, on a bar along the top or bottom, where the
+// widget lines up with the sidebar.
+export function barToggle(config, id) {
+  if (!config || config.position === "left" || config.position === "right") return false
+  const left = config.layout && config.layout.left
+  return Array.isArray(left) && left.some((entry) => !!entry && entry.id === id && entry.toggle === true)
+}
+
 // The bar's background, as Omarchy's shell config holds it: opaque, glassy
 // (see-through, blurred behind) or none (clear). Double-clicking the bar steps
 // through them. A config from before `background` says `transparent` instead.

@@ -50,10 +50,17 @@ Item {
     (root.shownWidth - root.sidebar.railWidth) / Math.max(1, root.sidebar.panelWidth - root.sidebar.railWidth)))
   // Every row is a cell tall, so collapsed, each icon's box is square.
   readonly property int rowHeight: root.slot
-  readonly property int headerHeight: root.slot
+  // None when the header is on the bar (TabsWidget.qml).
+  readonly property int headerHeight: root.sidebar.headerOnBar ? 0 : root.slot
   readonly property int searchHeight: root.slot
+  // How much its text shows: all of it while the sidebar is expanded on this
+  // screen, none of it otherwise, fading quickly between, so the rail is
+  // icons alone.
+  property real textShown: root.sidebar.opened && !!root.sidebar.screen && !!root.screen
+    && root.sidebar.screen.name === root.screen.name ? 1 : 0
+  Behavior on textShown { NumberAnimation { duration: Style.duration(120) } }
   // Where a row's text starts, past its icon.
-  readonly property int textX: root.slot + Style.spacing.controlGap
+  readonly property int textX: root.slot + root.sidebar.textGap
 
   function reveal() {
     if (root.sidebar.shownRows.length > 0) list.positionViewAtIndex(root.sidebar.selectedIndex, ListView.Contain)
@@ -132,48 +139,68 @@ Item {
     anchors.margins: root.margin
     spacing: root.margin
 
-    // The toggle, then the title.
+    // The title, then the toggle. On the rail the toggle takes the icon
+    // column; as the sidebar expands it rides the cut to the right, where a
+    // row's highlight ends, and the title shows in the room it leaves,
+    // starting in line with the badges.
     Item {
+      visible: !root.sidebar.headerOnBar
       width: parent.width
       height: root.headerHeight
 
-      ControlBox {
-        lit: toggleMouse.containsMouse
-      }
-
-      SlotIcon {
-        // The sidebar, docked on the left (nf-cod-layout_sidebar_left).
-        text: "\u{ebf3}"
-        lit: toggleMouse.containsMouse
-      }
-
-      Text {
-        x: root.textX
-        width: parent.width - x
+      Item {
+        readonly property real start: (root.slot - root.badgeSize) / 2
+        x: start
+        width: Math.max(0, toggle.x - start)
         height: parent.height
-        verticalAlignment: Text.AlignVCenter
-        textFormat: Text.PlainText
-        text: "Spaces"
-        color: root.foreground
-        opacity: 0.5
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.subtitle
-        elide: Text.ElideRight
+        clip: true
+
+        // As wide as the room it has once expanded, so while the sidebar
+        // slides it is uncovered rather than cut short.
+        Text {
+          width: root.width - root.margin * 2 - root.slot - parent.x
+          height: parent.height
+          verticalAlignment: Text.AlignVCenter
+          textFormat: Text.PlainText
+          text: "Spaces"
+          color: root.foreground
+          opacity: 0.5 * root.textShown
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.subtitle
+          elide: Text.ElideRight
+        }
       }
 
-      MouseArea {
-        id: toggleMouse
+      Item {
+        id: toggle
+        x: root.highlightWidth - root.slot
         width: root.slot
         height: parent.height
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onClicked: root.sidebar.showOrHide(root.screen)
+
+        ControlBox {
+          lit: toggleMouse.containsMouse
+        }
+
+        SlotIcon {
+          // The sidebar, docked on the left (nf-cod-layout_sidebar_left).
+          text: "\u{ebf3}"
+          lit: toggleMouse.containsMouse
+        }
+
+        MouseArea {
+          id: toggleMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.sidebar.showOrHide(root.screen)
+        }
       }
     }
 
     Item {
       width: parent.width
-      height: parent.height - root.headerHeight - root.searchHeight - parent.spacing * 2
+      // The column spaces only the rows it shows.
+      height: parent.height - root.headerHeight - root.searchHeight - parent.spacing * (root.sidebar.headerOnBar ? 1 : 2)
 
       ListView {
         id: list
@@ -263,6 +290,7 @@ Item {
             anchors.rightMargin: Style.spacing.rowPaddingX
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.spacing.xxs
+            opacity: root.textShown
 
             Text {
               id: nameText
@@ -360,7 +388,7 @@ Item {
               textFormat: Text.PlainText
               text: "New space"
               color: plusMouse.containsMouse ? root.accent : root.foreground
-              opacity: plusMouse.containsMouse ? 1 : 0.6
+              opacity: (plusMouse.containsMouse ? 1 : 0.6) * root.textShown
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
               elide: Text.ElideRight

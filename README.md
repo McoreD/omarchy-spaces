@@ -23,6 +23,18 @@ just setup     # add the tabs to the bar, the sidebar and the keys
 
 For agents' status, install herdr-core as its README says, so `hc` is on your PATH. renSpace starts its core when it isn't running.
 
+### Toggle in place of the menu
+
+To save the rail a row, the sidebar's header can move up onto the bar, where Omarchy's menu is: the Omarchy logo sits over the rail and expands or collapses the sidebar, and when the sidebar expands, its title shows beside the logo with a toggle at its right edge. A right-click on the logo opens the Omarchy menu, as its key (`super+space` by default) still does. Take `omarchy.menu` off the bar and set `toggle` on the tabs' entry in `~/.config/omarchy/shell.json`:
+
+```json
+"left": [
+  { "id": "org.ren.renspace", "toggle": true }
+]
+```
+
+It needs the bar along the top or bottom of the screen, with the tabs first in its left section.
+
 ## Keys
 
 | Keys | Does |

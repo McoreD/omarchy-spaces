@@ -24,6 +24,12 @@ import "Spaces.mjs" as Spaces
 // a widget whose left edge stays put as it grows can do this, as one in the
 // bar's left section does: anywhere else, growing would move it out from
 // under the line.
+//
+// With `"toggle": true` on its entry (Spaces.barToggle), the sidebar's
+// header moves up onto the bar, in place of Omarchy's menu, which you take
+// off it: the logo over the rail, which shows or hides the sidebar, and once
+// it expands, its title and a toggle riding the windows' edge to the right.
+// A right-click on the logo opens the menu.
 BarWidget {
   id: root
   moduleName: "org.ren.renspace"
@@ -171,6 +177,155 @@ BarWidget {
         }
         PathLine { x: 0; y: 0 }
       }
+    }
+  }
+
+  // The sidebar's header, laid out as the list lays it out under the bar
+  // (SidebarList.qml), on the screen's coordinates: Omarchy's logo in the
+  // rail's icon column, and once the sidebar expands, its title in line with
+  // the spaces' names and the toggle where a row's highlight ends. The toggle
+  // rides the cut, coming out from behind the logo as the sidebar slides
+  // open, and the title is uncovered in the room it leaves.
+  Loader {
+    active: root.parts && root.sidebar.headerOnBar
+    x: -root.origin.x
+    y: -root.origin.y
+    width: root.edge
+    height: root.barSize
+
+    sourceComponent: Item {
+      id: header
+      readonly property var sidebar: root.sidebar
+      readonly property int inset: header.sidebar.inset
+      readonly property int cell: header.sidebar.cell
+      // How much of the sidebar shows on this screen.
+      readonly property real shown: {
+        var here = !!header.sidebar.screen && header.sidebar.screen.name === root.screenName
+        return here ? header.sidebar.revealed : header.sidebar.railWidth
+      }
+      readonly property real highlightWidth: Math.max(header.cell, header.shown - header.inset * 2)
+      // How much the title and the toggle show, as the list's text
+      // (SidebarList.qml): only while the sidebar is expanded on this screen,
+      // fading quickly. The logo stays, to expand it again.
+      property real textShown: header.sidebar.opened && !!header.sidebar.screen
+        && header.sidebar.screen.name === root.screenName ? 1 : 0
+      Behavior on textShown { NumberAnimation { duration: Style.duration(120) } }
+      // Where the toggle is, and where the title starts, past the logo.
+      readonly property real toggleX: header.inset + header.highlightWidth - header.cell
+      readonly property real afterLogo: header.inset + header.cell
+      readonly property real titleX: header.afterLogo + header.sidebar.textGap
+
+      function showOrHide() {
+        var window = root.QsWindow.window
+        header.sidebar.showOrHide(window ? window.screen : null)
+      }
+
+      // The logo, as the menu draws it, for the sidebar; a right-click
+      // opens the menu.
+      HeaderButton {
+        x: header.inset
+        width: header.cell
+        text: "\ue900"
+        fontFamily: "omarchy"
+        fontSize: Style.bar.iconFont
+        restingOpacity: 1
+        onClicked: function(button) {
+          if (button === Qt.RightButton) root.run(["omarchy-shell", "shell", "toggle", "omarchy.menu", "{\"menu\":\"root\"}"])
+          else header.showOrHide()
+        }
+      }
+
+      Item {
+        x: header.titleX
+        width: Math.max(0, header.toggleX - header.titleX)
+        height: parent.height
+        clip: true
+
+        // As wide as its room once expanded, so while the sidebar slides
+        // it is uncovered rather than cut short.
+        Text {
+          width: header.sidebar.panelWidth - header.inset - header.cell - header.titleX
+          height: parent.height
+          verticalAlignment: Text.AlignVCenter
+          textFormat: Text.PlainText
+          text: "Spaces"
+          color: root.foreground
+          opacity: 0.5 * header.textShown
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+          elide: Text.ElideRight
+        }
+      }
+
+      // Past the logo, so the toggle shows only once it has come out from
+      // behind it.
+      Item {
+        opacity: header.textShown
+        x: header.afterLogo
+        width: Math.max(0, header.toggleX + header.cell - header.afterLogo)
+        height: parent.height
+        clip: true
+
+        HeaderButton {
+          x: header.toggleX - header.afterLogo
+          width: header.cell
+          enabled: x >= 0
+          // The sidebar, docked on the left (nf-cod-layout_sidebar_left).
+          text: "\u{ebf3}"
+          onClicked: header.showOrHide()
+        }
+      }
+    }
+  }
+
+  // A button in the sidebar's header on the bar, drawn as the list draws its
+  // controls: an icon centred by the ink it draws, lit under the pointer, on
+  // a control's box, unless the bar is too thin for one: then as far in from
+  // the bar's edges as a tab's.
+  component HeaderButton: Item {
+    id: button
+    property alias text: icon.text
+    property string fontFamily: Style.font.family
+    property int fontSize: Style.font.icon
+    property real restingOpacity: 0.6
+    readonly property bool lit: mouse.containsMouse
+    signal clicked(int button)
+
+    height: root.barSize
+
+    Rectangle {
+      readonly property real size: Math.min(root.sidebar ? root.sidebar.controlSize : 0, root.barSize - Style.spacing.xs * 2)
+      anchors.centerIn: parent
+      width: size
+      height: size
+      radius: root.sidebar ? root.sidebar.badgeRadius : 0
+      color: button.lit ? Qt.rgba(root.hover.r, root.hover.g, root.hover.b, root.hover.a * 0.6) : "transparent"
+    }
+
+    Text {
+      id: icon
+      x: Math.round((button.width - ink.tightBoundingRect.width) / 2 - ink.tightBoundingRect.x)
+      y: Math.round((button.height - ink.tightBoundingRect.height) / 2 - (icon.baselineOffset + ink.tightBoundingRect.y))
+      textFormat: Text.PlainText
+      color: button.lit ? root.accent : root.foreground
+      opacity: button.lit ? 1 : button.restingOpacity
+      font.family: button.fontFamily
+      font.pixelSize: button.fontSize
+    }
+
+    TextMetrics {
+      id: ink
+      font: icon.font
+      text: icon.text
+    }
+
+    MouseArea {
+      id: mouse
+      anchors.fill: parent
+      acceptedButtons: Qt.LeftButton | Qt.RightButton
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: function(event) { button.clicked(event.button) }
     }
   }
 

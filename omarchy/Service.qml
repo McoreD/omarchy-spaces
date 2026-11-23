@@ -50,6 +50,7 @@ Item {
     id: sidebarItem
     watch: watchItem
     tabs: tabsItem
+    headerOnBar: Spaces.barToggle(root.shell ? root.shell.barConfig : null, (root.manifest && root.manifest.id) || "org.ren.renspace")
     // Ended from inside (a pick, Escape), so the shell stops counting the
     // overlay as open and the next toggle searches again.
     onSearchEnded: {
