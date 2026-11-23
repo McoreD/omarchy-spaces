@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, barLook, displayDir, filterRows, initialIndex, locate, parseRows, score, tabsFor, windowMotion } from "../Spaces.mjs"
+import { appName, barLook, displayDir, filterRows, freshen, initialIndex, locate, parseRows, score, tabsFor, windowMotion } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { name: "home", dir: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -140,4 +140,16 @@ test("reads the bar's background look", () => {
   assert.equal(barLook({ background: "opaque", transparent: true }), "opaque")
   assert.equal(barLook({ background: "neon" }), "opaque")
   assert.equal(barLook(null), "opaque")
+})
+
+test("freshens the last rows for the space you are in now", () => {
+  const rows = parseRows(json)
+  // The last list was taken in ren; since then you went to renspace.
+  const fresh = freshen(rows, "renspace", 9000)
+  assert.deepEqual(fresh.map((row) => row.active), [false, false, true, false])
+  assert.equal(fresh[1].leftAt, 9000, "ren was left just now")
+  assert.equal(fresh[0].leftAt, 1000)
+  assert.equal(rows[initialIndex(fresh)].name, "ren", "the cursor starts on the space you came from")
+  assert.equal(rows[initialIndex(rows)].name, "renspace", "the stale rows would start on the space you are in")
+  assert.deepEqual(freshen(rows, "ren", 9000), rows, "nothing changed while it was closed")
 })

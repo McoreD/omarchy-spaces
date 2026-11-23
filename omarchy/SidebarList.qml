@@ -129,7 +129,7 @@ Item {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onContainsMouseChanged: if (containsMouse) root.sidebar.selectedIndex = rowItem.index
+            onContainsMouseChanged: if (containsMouse) root.sidebar.select(rowItem.index)
             onClicked: root.sidebar.activate(rowItem.index)
           }
         }

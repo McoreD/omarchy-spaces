@@ -210,3 +210,16 @@ export function barLook(config) {
   if (look === "opaque" || look === "glassy" || look === "none") return look
   return config && config.transparent === true ? "none" : "opaque"
 }
+
+// The rows from the last time the sidebar was open, brought up to date with
+// the space you are in now, so the cursor starts in the right place before
+// `space ls` answers: `here` is the active one, and the one that was active
+// before was left just now.
+export function freshen(rows, here, now) {
+  return rows.map((row) => {
+    const active = row.name === here
+    const leftAt = row.active && !active ? now : row.leftAt
+    // Not `{ ...row }`: QML's JavaScript has no object spread, and Node does.
+    return Object.assign({}, row, { active, leftAt })
+  })
+}

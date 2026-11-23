@@ -40,6 +40,11 @@ Item {
   property var shownRows: []
   property string error: ""
   property double openedAt: 0
+  // Whether you have moved the cursor since opening, which a fresh list then
+  // keeps where it is rather than placing it again.
+  property bool touched: false
+  // Enter pressed before there was a list, to act on once it arrives.
+  property bool pending: false
   readonly property string home: Quickshell.env("HOME") || ""
 
   readonly property int panelWidth: Style.space(260)
@@ -49,6 +54,8 @@ Item {
     root.filterText = ""
     root.error = ""
     root.openedAt = Date.now()
+    root.touched = false
+    root.pending = false
     root.screen = root.focusedScreen()
     root.opened = true
     root.zoned = true
@@ -61,6 +68,13 @@ Item {
     } else {
       slideIn.restart()
     }
+    // Until `space ls` answers, show the last list, updated for the space
+    // you are in now: Enter can come first, and must not pick that space.
+    var workspace = Hyprland.focusedWorkspace
+    if (workspace) {
+      root.rows = Spaces.freshen(root.rows, Spaces.locate(workspace.id, workspace.name).space, Date.now())
+      root.applyFilter(true)
+    }
     root.refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -68,6 +82,7 @@ Item {
   function close() {
     if (!root.opened) return
     root.opened = false
+    root.pending = false
     root.zoned = false
     slideIn.stop()
     if (root.windowsToMove()) hideTimer.restart()
@@ -81,6 +96,8 @@ Item {
   }
 
   function loaded(text, exitCode, stderr) {
+    var selected = root.shownRows[root.selectedIndex]
+    var keep = root.touched && selected ? selected.name : ""
     try {
       if (exitCode !== 0) throw new Error(stderr.trim() || "space ls exited with " + exitCode)
       root.rows = Spaces.parseRows(text)
@@ -89,7 +106,15 @@ Item {
       root.rows = []
       root.error = String(e.message || e)
     }
-    root.applyFilter(true)
+    root.applyFilter(!keep)
+    if (keep) {
+      var index = root.shownRows.findIndex(function(row) { return row.name === keep })
+      if (index >= 0) root.selectedIndex = index
+    }
+    if (root.pending) {
+      root.pending = false
+      root.activate(root.selectedIndex)
+    }
   }
 
   function applyFilter(resetCursor) {
@@ -108,13 +133,24 @@ Item {
   function move(delta) {
     var count = root.shownRows.length
     if (count === 0) return
+    root.touched = true
     root.selectedIndex = (root.selectedIndex + delta + count) % count
   }
 
+  function select(index) {
+    root.touched = true
+    root.selectedIndex = index
+  }
+
   function activate(index) {
+    if (root.opened && root.shownRows.length === 0 && lsProc.running) {
+      root.pending = true
+      return
+    }
     if (index < 0 || index >= root.shownRows.length) return
     var name = root.shownRows[index].name
     root.close()
+    // It says why in a notification if it can't switch.
     Quickshell.execDetached(["space", "go", name])
   }
 
