@@ -8,28 +8,30 @@ import Quickshell.Wayland
 import qs.Commons
 import "Spaces.mjs" as Spaces
 
-// The spaces sidebar: its rows, filter and cursor, and when it shows. The base
-// (Base.qml) draws it by the left edge, under the windows. Opening it claims
-// its width, so Hyprland slides the windows aside and they uncover it; closing
-// slides them back over it. With no windows to uncover it, it slides in and
+// The spaces sidebar: its rows, search and cursor, and when it shows. The base
+// (Base.qml) draws it by the left edge, under the windows. Showing it claims
+// its width, so Hyprland slides the windows aside and they uncover it; hiding
+// it slides them back over it. With no windows to uncover it, it slides in and
 // out by itself. Picking a space runs `space go`, which stays the only thing
 // that knows how spaces map to workspaces.
 //
-// It stays open until you close it: picking a space, switching tab or
-// clicking a window only hands the keyboard back to the windows, and the
-// list keeps up with the spaces while it shows.
+// Showing it (`super+b`, or the space's name on the bar) is only visual: the
+// keyboard stays with the windows, and the list keeps up with the spaces until
+// you hide it. Searching it (`super+p`) takes the keyboard to filter the list;
+// a pick, Escape, or focus moving to a window ends the search. A sidebar shown
+// just for the search hides again with it.
 Item {
   id: root
 
-  // Emitted when the sidebar closes itself (Escape), so the service can tell
-  // the shell.
-  signal closed()
+  // Emitted when the search ends by itself (a pick, Escape, focus moving to a
+  // window), so the service can tell the shell.
+  signal searchEnded()
 
-  // Whether the sidebar shows, and whether it holds the keyboard. The shell's
-  // toggle sees it open only while it holds the keyboard, so `super+p` takes
-  // the keyboard back first and closes it the next time.
+  // Whether the sidebar shows, and whether you are searching it, which holds
+  // the keyboard. `searchOnly` marks a sidebar shown only for the search.
   property bool opened: false
-  property bool focused: false
+  property bool searching: false
+  property bool searchOnly: false
   // `zoned` claims the width, which makes Hyprland move the windows; `shown`
   // draws the list, which stays drawn until the windows have covered it.
   property bool zoned: false
@@ -46,9 +48,9 @@ Item {
   property var rows: []
   property var shownRows: []
   property string error: ""
-  property double openedAt: 0
-  // Whether you have moved the cursor since opening, which a fresh list then
-  // keeps where it is rather than placing it again.
+  property double searchedAt: 0
+  // Whether you have moved the cursor since the search began, which a fresh
+  // list then keeps where it is rather than placing it again.
   property bool touched: false
   // Enter pressed before there was a list, to act on once it arrives.
   property bool pending: false
@@ -56,57 +58,84 @@ Item {
 
   readonly property int panelWidth: Style.space(260)
 
-  // Opens the sidebar, or takes the keyboard back if it is open already.
-  function open() {
-    if (root.focused) return
-    root.filterText = ""
-    root.error = ""
-    root.openedAt = Date.now()
-    root.touched = false
-    root.pending = false
-    root.focused = true
-    if (!root.opened) {
-      root.screen = root.focusedScreen()
-      root.opened = true
-      root.zoned = true
-      root.shown = true
-      hideTimer.stop()
-      slideOut.stop()
-      if (root.windowsToMove()) {
-        slideIn.stop()
-        root.offset = 0
-      } else {
-        slideIn.restart()
-      }
+  function show() {
+    if (root.opened) return
+    root.screen = root.focusedScreen()
+    root.opened = true
+    root.zoned = true
+    root.shown = true
+    hideTimer.stop()
+    slideOut.stop()
+    if (root.windowsToMove()) {
+      slideIn.stop()
+      root.offset = 0
+    } else {
+      slideIn.restart()
     }
-    // Until `space ls` answers, show the last list, updated for the space
-    // you are in now: Enter can come first, and must not pick that space.
-    var workspace = Hyprland.focusedWorkspace
-    if (workspace) {
-      root.rows = Spaces.freshen(root.rows, Spaces.locate(workspace.id, workspace.name).space, Date.now())
-      root.applyFilter(true)
-    }
+    root.freshen()
     root.refresh()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
-  // Hands the keyboard back to the windows and leaves the list showing.
-  function release() {
-    if (!root.focused) return
-    root.focused = false
-    root.pending = false
-    if (root.filterText) root.setFilter("")
-  }
-
-  function close() {
+  function hide() {
     if (!root.opened) return
-    root.release()
+    var wasSearching = root.searching
+    root.stopSearching()
     root.opened = false
     root.zoned = false
     slideIn.stop()
     if (root.windowsToMove()) hideTimer.restart()
     else slideOut.restart()
-    root.closed()
+    if (wasSearching) root.searchEnded()
+  }
+
+  function showOrHide() {
+    if (root.opened) root.hide()
+    else root.show()
+  }
+
+  // Takes the keyboard to search the list, showing the sidebar for it if it
+  // is hidden.
+  function search() {
+    if (root.searching) return
+    root.searchOnly = !root.opened
+    root.show()
+    root.filterText = ""
+    root.error = ""
+    root.searchedAt = Date.now()
+    root.touched = false
+    root.pending = false
+    root.searching = true
+    root.freshen()
+    root.refresh()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  // Hands the keyboard back to the windows, and hides a sidebar that was
+  // shown just for the search.
+  function endSearch() {
+    if (!root.searching) return
+    if (root.searchOnly) {
+      root.hide()
+      return
+    }
+    root.stopSearching()
+    root.searchEnded()
+  }
+
+  function stopSearching() {
+    root.searching = false
+    root.searchOnly = false
+    root.pending = false
+    if (root.filterText) root.setFilter("")
+  }
+
+  // Until `space ls` answers, show the last list, updated for the space you
+  // are in now: Enter can come first, and must not pick that space.
+  function freshen() {
+    var workspace = Hyprland.focusedWorkspace
+    if (!workspace) return
+    root.rows = Spaces.freshen(root.rows, Spaces.locate(workspace.id, workspace.name).space, Date.now())
+    root.applyFilter(true)
   }
 
   function refresh() {
@@ -165,13 +194,13 @@ Item {
   }
 
   function activate(index) {
-    if (root.focused && root.shownRows.length === 0 && lsProc.running) {
+    if (root.searching && root.shownRows.length === 0 && lsProc.running) {
       root.pending = true
       return
     }
     if (index < 0 || index >= root.shownRows.length) return
     var name = root.shownRows[index].name
-    root.release()
+    root.endSearch()
     // It says why in a notification if it can't switch.
     Quickshell.execDetached(["space", "go", name])
   }
@@ -267,8 +296,9 @@ Item {
 
   Component.onCompleted: motionProc.running = true
 
-  // A click on a window or a switch of tab moves the keyboard there; the list
-  // stays, and follows what changed: the active space and window counts.
+  // While it shows, the list follows what changes: the active space and the
+  // window counts. A click on a window or a switch of tab during a search
+  // moves the keyboard there, which ends the search.
   Connections {
     target: Hyprland
     function onRawEvent(event) {
@@ -278,8 +308,8 @@ Item {
       case "workspacev2": case "openwindow": case "closewindow": case "movewindowv2":
         relist.restart()
       }
-      if (!root.focused || Date.now() - root.openedAt < 300) return
-      if (event.name === "activewindowv2" || event.name === "workspacev2") root.release()
+      if (!root.searching || Date.now() - root.searchedAt < 300) return
+      if (event.name === "activewindowv2" || event.name === "workspacev2") root.endSearch()
     }
   }
 
@@ -290,7 +320,7 @@ Item {
   }
 
   // A one-pixel-wide panel on a top layer, drawing nothing and taking no
-  // clicks. While the sidebar is open it holds the keyboard, which the bottom
+  // clicks. During a search it holds the keyboard, which the bottom
   // layer can't do the way the top layers can, and reserves the sidebar's
   // width, which makes Hyprland move the windows. The shell makes the bar
   // first, so this reserves room below a top bar and the bar never moves.
@@ -305,7 +335,7 @@ Item {
     color: "transparent"
     WlrLayershell.namespace: "renspace-sidebar-keys"
     WlrLayershell.layer: WlrLayer.Top
-    WlrLayershell.keyboardFocus: root.focused ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: root.searching ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
     Item {
       id: keyCatcher
@@ -317,7 +347,7 @@ Item {
         var ctrl = event.modifiers & Qt.ControlModifier
         if (event.key === Qt.Key_Escape) {
           if (root.filterText) root.setFilter("")
-          else root.close()
+          else root.endSearch()
         } else if (Util.editsFilter(event, root.filterText)) {
           root.setFilter(Util.editedFilter(event, root.filterText))
         } else if (event.key === Qt.Key_Up || (ctrl && event.key === Qt.Key_P) || event.key === Qt.Key_Backtab) {

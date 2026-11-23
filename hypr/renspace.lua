@@ -6,9 +6,13 @@
 -- at the end of ~/.config/hypr/bindings.lua, which loads after Omarchy's
 -- defaults. Remove that line to undo it.
 
--- Super + P (for project) replaces Omarchy's pseudo window toggle. Without the
--- plugin, bind "space go" here instead for the centered picker.
-o.rebind("SUPER + P", "Switch space", { panel = "org.ren.renspace" })
+-- Super + P (for project) searches the spaces sidebar, taking the keyboard
+-- until you pick one or press Escape; it replaces Omarchy's pseudo window
+-- toggle. Without the plugin, bind "space go" here instead for the centered
+-- picker. Super + B shows or hides the sidebar, leaving the keyboard where it
+-- is.
+o.rebind("SUPER + P", "Find a space", { panel = "org.ren.renspace" })
+o.rebind("SUPER + B", "Show or hide spaces", "omarchy-shell shell call org.ren.renspace showOrHide ''")
 
 -- Tabs, like a browser's. Super + T was Omarchy's floating toggle; Super + Tab
 -- cycled every workspace on the monitor, leaving the space.
