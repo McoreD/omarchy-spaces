@@ -748,8 +748,20 @@ fn switch(hypr: &Hypr, target: &str) -> Result<()> {
     }
 
     let mut last = Last::load(&paths::state_dir())?;
-    // Never visited (an older renSpace's, or made by hand): its first tab.
-    let slot = match last.get(target) {
+    let slot = landing_slot(hypr, &last, target)?;
+    focus(hypr, target, slot)?;
+
+    if let Some(left_at) = here.slot() {
+        last.set(here.space(), left_at);
+        save(&last);
+    }
+    Ok(())
+}
+
+/// The tab you land on going to a space: where you left it, or, never
+/// visited (an older renSpace's, or made by hand), its first tab.
+fn landing_slot(hypr: &Hypr, last: &Last, target: &str) -> Result<u8> {
+    Ok(match last.get(target) {
         Some(visit) => visit.slot,
         None if target == HOME => 1,
         None => hypr
@@ -761,11 +773,74 @@ fn switch(hypr: &Hypr, target: &str) -> Result<()> {
             })
             .min()
             .unwrap_or(1),
-    };
-    focus(hypr, target, slot)?;
+    })
+}
 
+/// Which space `space send` sends the window to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpaceTarget {
+    /// What it's called, or its id; `home` for the plain workspaces.
+    Named(String),
+    Next,
+    Prev,
+}
+
+/// `space send <space|next|prev>`: the focused window to another space, on
+/// the tab you'd land on going there, and you with it unless `silent`. Sent
+/// silently, a tab it leaves empty gives way as closing its last window does.
+pub fn send(target: SpaceTarget, silent: bool) -> Result<()> {
+    let hypr = Hypr::from_env()?;
+    if !hypr.has_active_window()? {
+        return Ok(());
+    }
+    let (rows, _) = load_rows(Some(&hypr))?;
+    let id = match target {
+        SpaceTarget::Named(target) => resolve(&rows, &target)?,
+        SpaceTarget::Next | SpaceTarget::Prev => {
+            match neighbour(&rows, target == SpaceTarget::Next) {
+                Some(id) => id,
+                None => return Ok(()),
+            }
+        }
+    };
+    let active = hypr.active_workspace()?;
+    let here = name::locate(active.id, &active.name);
+    if here.space() == id {
+        return Ok(());
+    }
+
+    let mut last = Last::load(&paths::state_dir())?;
+    let slot = landing_slot(&hypr, &last, &id)?;
+    if id == HOME {
+        let omarchy = if silent {
+            format!("o.workspaces.move_window({slot}, false)")
+        } else {
+            format!("o.workspaces.move_window({slot})")
+        };
+        hypr.dispatch(&omarchy)
+            .or_else(|_| hypr.dispatch(&hypr::move_window(&slot.to_string(), !silent)))?;
+    } else {
+        hypr.dispatch(&hypr::move_window(&selector(&id, slot), !silent))?;
+    }
+
+    if silent {
+        return emptied(&active.name);
+    }
+    // Where you left the space, unless that was its last window and it's
+    // gone.
     if let Some(left_at) = here.slot() {
-        last.set(here.space(), left_at);
+        let left = here.space();
+        let still_there = left == HOME
+            || hypr.workspaces()?.iter().any(|ws| {
+                ws.windows > 0
+                    && matches!(name::locate(ws.id, &ws.name),
+                        Location::Space { name, .. } if name == left)
+            });
+        if still_there {
+            last.set(left, left_at);
+        } else {
+            last.remove(left);
+        }
         save(&last);
     }
     Ok(())

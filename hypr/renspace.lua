@@ -31,6 +31,10 @@ o.rebind("SUPER + COMMA", "Rename tab", "omarchy-shell shell call org.ren.renspa
 o.rebind("SUPER + J", "Next space", "space next")
 o.rebind("SUPER + K", "Previous space", "space prev")
 o.rebind("SUPER + N", "New space", "space new")
+-- Super + Shift + J/K send the focused window to the next or previous space,
+-- as Super + Shift + 1..0 send it to a tab, and you go with it.
+o.rebind("SUPER + SHIFT + J", "Send window to next space", "space send next")
+o.rebind("SUPER + SHIFT + K", "Send window to previous space", "space send prev")
 
 -- A terminal in the folder you are in: the focused terminal's, as Omarchy
 -- does, but on an empty tab of a space, the space's folder rather than home.

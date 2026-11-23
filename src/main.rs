@@ -71,6 +71,17 @@ enum Cmd {
         #[arg(value_parser = target)]
         target: commands::Target,
     },
+    /// Send the focused window to another space, on the tab you'd land on
+    /// going there, and go with it.
+    Send {
+        /// What it's called, or its id; 'home' for the plain workspaces;
+        /// next or prev for the space below or above, wrapping around.
+        #[arg(value_parser = space_target)]
+        space: commands::SpaceTarget,
+        /// Stay where you are instead of following the window.
+        #[arg(long)]
+        silent: bool,
+    },
     /// Move the focused window to workspace N of the active space.
     Move {
         #[arg(value_parser = slot)]
@@ -83,6 +94,14 @@ enum Cmd {
 
 fn slot(raw: &str) -> Result<u8, String> {
     name::parse_slot(raw).ok_or_else(|| format!("'{raw}' isn't a workspace: use 1-{}", name::SLOTS))
+}
+
+fn space_target(raw: &str) -> Result<commands::SpaceTarget, String> {
+    Ok(match raw {
+        "next" => commands::SpaceTarget::Next,
+        "prev" => commands::SpaceTarget::Prev,
+        _ => commands::SpaceTarget::Named(raw.to_string()),
+    })
 }
 
 fn target(raw: &str) -> Result<commands::Target, String> {
@@ -126,6 +145,7 @@ fn main() -> ExitCode {
         Cmd::Shell => shell::shell(),
         Cmd::Emptied { workspace } => commands::emptied(&workspace),
         Cmd::Ws { target } => commands::ws(target),
+        Cmd::Send { space, silent } => commands::send(space, silent),
         Cmd::Move { n, silent } => commands::move_window(n, silent),
     };
 

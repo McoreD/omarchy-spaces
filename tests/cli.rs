@@ -688,6 +688,87 @@ fn move_in_home_uses_omarchy_and_ignores_empty_workspaces() {
 }
 
 #[test]
+fn send_takes_the_window_to_another_space_where_you_left_it() {
+    let env = Env::new();
+    env.add_terminal("s1:1", &env.dir("ren"));
+    env.add_terminal("s2:1", &env.dir("mail"));
+    env.add_window("s2:3");
+    env.ok(&["go", "mail"]);
+    env.ok(&["ws", "3"]);
+    env.ok(&["go", "ren"]);
+    env.add_window("s1:1");
+    env.dispatched();
+
+    env.ok(&["send", "mail"]);
+    assert_eq!(
+        env.dispatched(),
+        [r#"hl.dsp.window.move({ workspace = "name:s2:3", follow = true })"#]
+    );
+    assert_eq!(env.active(), "s2:3", "the tab you left mail on");
+    let mut windows = env.windows();
+    windows.sort();
+    assert_eq!(windows, ["s1:1", "s2:1", "s2:3", "s2:3"]);
+    env.ok(&["go", "ren"]);
+    assert_eq!(env.active(), "s1:1", "ren remembers where you left it");
+
+    // Already there, or no window: nothing to do.
+    env.ok(&["send", "s1"]);
+    env.set_active("s1:5");
+    env.ok(&["send", "mail"]);
+    assert!(env.dispatched().iter().all(|d| !d.contains("window.move")));
+}
+
+#[test]
+fn send_next_and_prev_and_home() {
+    let env = Env::new();
+    env.add_terminal("s1:1", &env.dir("ren"));
+    env.add_terminal("s2:2", &env.dir("mail"));
+    env.add_window("1");
+    env.set_active("1");
+
+    env.ok(&["send", "next"]);
+    assert_eq!(env.active(), "s1:1");
+    env.ok(&["send", "prev"]);
+    assert_eq!(
+        env.dispatched().last().unwrap(),
+        "o.workspaces.move_window(1)"
+    );
+    assert_eq!(env.active(), "1");
+    env.ok(&["send", "prev", "--silent"]);
+    assert_eq!(env.active(), "1");
+    let mut windows = env.windows();
+    windows.sort();
+    assert_eq!(windows, ["s1:1", "s2:2", "s2:2"]);
+}
+
+#[test]
+fn sending_a_spaces_last_window_away_ends_it() {
+    let env = Env::new();
+    env.add_terminal("s1:1", &env.dir("ren"));
+    env.add_terminal("s2:1", &env.dir("mail"));
+    env.add_window("s2:2");
+    env.ok(&["go", "ren"]);
+    env.ok(&["go", "mail"]);
+    env.ok(&["ws", "2"]);
+
+    // Silently: the emptied tab gives way to the next one with windows.
+    env.ok(&["send", "ren", "--silent"]);
+    assert_eq!(env.active(), "s2:1");
+
+    // Following: mail is gone, and so is where you left it.
+    env.ok(&["send", "ren"]);
+    assert_eq!(env.active(), "s1:1");
+    let labels: Vec<String> = env
+        .ls_json()
+        .iter()
+        .map(|r| r["label"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(labels, ["home", "ren"]);
+    let visits = fs::read_to_string(env.state().join("last")).unwrap();
+    assert!(!visits.contains("s2\t"), "{visits}");
+}
+
+#[test]
 fn ws_new_next_and_prev_move_between_a_spaces_tabs() {
     let env = Env::new();
     env.add_window("ren:1");

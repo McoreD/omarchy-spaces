@@ -42,6 +42,7 @@ It needs the bar along the top or bottom of the screen, with the tabs first in i
 | `super+b` | Expand or collapse the spaces sidebar |
 | `super+j` / `super+k` | Next / previous space, down and up the sidebar. They wrap around, with `home` at the top |
 | `super+n` | New space, with a terminal in the folder you are in |
+| `super+shift+j` / `super+shift+k` | Send the window to the next / previous space, and go with it |
 | `super+,` | Name the tab you are on: type over its name on the bar, Enter to keep it, Escape to stop. An empty name has it called after its window again |
 | `super+shift+r` | Rename the space you are in: type over its name in the sidebar, Enter to keep it, Escape to stop. An empty name has it called after its folder again |
 | `super+p` | Find a space: type to filter, Enter to switch, Escape to stop. Expands the sidebar for the search if it's collapsed |
@@ -66,6 +67,7 @@ space rename <space>:<n> <name>  # name a tab, as s1:2 or ren:2; "" for its wind
 space close [space]          # close a space's windows, the active one by default
 space terminal               # a terminal in the folder you are in, or the space's
 space watch [--sounds]       # print the spaces as ls --json does, a line each time they change; --sounds also rings for agents
+space send <space|next|prev> [--silent]  # the window to another space, on the tab you left it on
 space ws <n|new|next|prev>
 space move <n> [--silent]
 ```
