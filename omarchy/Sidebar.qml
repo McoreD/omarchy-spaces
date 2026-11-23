@@ -9,11 +9,12 @@ import qs.Commons
 import qs.Commons as Commons
 import "Spaces.mjs" as Spaces
 
-// The spaces list, part of the frame around the workspaces: the left edge,
-// below the tab strip, in the same colour as the strip and the bar. Opening
-// it takes room from the windows rather than covering them; Hyprland re-tiles
-// them into what's left and animates the move, while the list slides in
-// beside them. Picking a space runs `space go`, which stays the only thing
+// The spaces list, part of the base the workspaces sit on: the left edge,
+// below the tab strip, in the same colour as the strip and the bar. It lives
+// on the layer under the windows, never over them. Opening it claims its
+// width, so Hyprland slides the windows aside and they uncover it; closing
+// slides them back over it. With no windows to uncover it, it slides in and
+// out by itself. Picking a space runs `space go`, which stays the only thing
 // that knows how spaces map to workspaces.
 Item {
   id: root
@@ -22,7 +23,15 @@ Item {
   // window), so the service can tell the shell.
   signal closed()
 
+  // Whether the sidebar is open, as the shell's toggle sees it.
   property bool opened: false
+  // `zoned` claims the width, which makes Hyprland move the windows; `shown`
+  // draws the list, which stays drawn until the windows have covered it.
+  property bool zoned: false
+  property bool shown: false
+  // Hyprland's window motion, read from `hyprctl animations -j`.
+  property var motion: ({ duration: 379, bezier: [0.23, 1, 0.32, 1] })
+  readonly property var curve: [motion.bezier[0], motion.bezier[1], motion.bezier[2], motion.bezier[3], 1, 1]
   property string filterText: ""
   property int selectedIndex: 0
   property var rows: []
@@ -46,6 +55,16 @@ Item {
     root.error = ""
     root.openedAt = Date.now()
     root.opened = true
+    root.zoned = true
+    root.shown = true
+    hideTimer.stop()
+    slideOut.stop()
+    if (root.windowsToMove()) {
+      slideIn.stop()
+      content.x = 0
+    } else {
+      slideIn.restart()
+    }
     root.refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -53,6 +72,10 @@ Item {
   function close() {
     if (!root.opened) return
     root.opened = false
+    root.zoned = false
+    slideIn.stop()
+    if (root.windowsToMove()) hideTimer.restart()
+    else slideOut.restart()
     root.closed()
   }
 
@@ -108,6 +131,18 @@ Item {
     return row.name === "home" ? "Plain workspaces" : "Folder not found"
   }
 
+  // Whether the focused workspace has tiled windows, which Hyprland moves
+  // when the sidebar claims or returns its width. Floating ones stay put.
+  function windowsToMove() {
+    var workspace = Hyprland.focusedWorkspace
+    var toplevels = workspace && workspace.toplevels ? workspace.toplevels.values : []
+    for (var i = 0; i < toplevels.length; i++) {
+      var ipc = toplevels[i].lastIpcObject || {}
+      if (!ipc.floating) return true
+    }
+    return false
+  }
+
   function focusedScreen() {
     var monitor = Hyprland.focusedMonitor
     var name = monitor ? String(monitor.name || "") : ""
@@ -130,10 +165,55 @@ Item {
     }
   }
 
+  // Hide the list once the windows have slid back over it.
+  Timer {
+    id: hideTimer
+    interval: root.motion.duration + 40
+    onTriggered: if (!root.opened) root.shown = false
+  }
+
+  // On an empty workspace nothing uncovers the list, so it slides itself, on
+  // the same curve the windows would move on.
+  NumberAnimation {
+    id: slideIn
+    target: content
+    property: "x"
+    from: -root.panelWidth
+    to: 0
+    duration: root.motion.duration
+    easing.type: Easing.BezierSpline
+    easing.bezierCurve: root.curve
+  }
+
+  NumberAnimation {
+    id: slideOut
+    target: content
+    property: "x"
+    to: -root.panelWidth
+    duration: root.motion.duration
+    easing.type: Easing.BezierSpline
+    easing.bezierCurve: root.curve
+    onFinished: if (!root.opened) root.shown = false
+  }
+
+  Process {
+    id: motionProc
+    command: ["hyprctl", "animations", "-j"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var motion = Spaces.windowMotion(text)
+        if (motion) root.motion = motion
+      }
+    }
+  }
+
+  Component.onCompleted: motionProc.running = true
+
   // A click on a window moves focus there; take that as done with the list.
   Connections {
     target: Hyprland
     function onRawEvent(event) {
+      if (event.name === "configreloaded" && !motionProc.running) motionProc.running = true
       if (!root.opened || Date.now() - root.openedAt < 300) return
       if (event.name === "activewindowv2" || event.name === "workspacev2") root.close()
     }
@@ -142,62 +222,37 @@ Item {
   PanelWindow {
     id: panel
 
-    // Mapped for good and parked just past the screen edge while closed, so
-    // opening is a margin change and an animation rather than a new surface.
+    // Under the windows, on the bottom layer, from the very top of the screen
+    // to the bottom. Mapped for good and never moved or resized: it reserves
+    // no room itself (the `keys` panel does), because Hyprland lays out panels
+    // that reserve room first, and switching between the two would reshape it
+    // mid-animation. While closed it draws nothing and lets every click
+    // through.
     screen: root.focusedScreen()
     anchors { left: true; top: true; bottom: true }
     implicitWidth: root.panelWidth
-    margins.left: root.opened || slide.running ? 0 : -root.panelWidth
-    exclusionMode: ExclusionMode.Normal
-    exclusiveZone: root.opened ? root.panelWidth : 0
+    mask: root.shown ? null : noInput
+    exclusionMode: ExclusionMode.Ignore
     color: "transparent"
     WlrLayershell.namespace: "renspace-sidebar"
-    WlrLayershell.layer: WlrLayer.Top
-    WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.layer: WlrLayer.Bottom
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+    Region { id: noInput }
 
     Rectangle {
       id: content
       width: parent.width
       height: parent.height
-      x: root.opened ? 0 : -width
+      x: -width
+      visible: root.shown
       color: root.background
-
-      Behavior on x {
-        NumberAnimation { id: slide; duration: 180; easing.type: Easing.OutCubic }
-      }
-
-      Item {
-        id: keyCatcher
-        anchors.fill: parent
-        focus: true
-
-        Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function(event) {
-          var ctrl = event.modifiers & Qt.ControlModifier
-          if (event.key === Qt.Key_Escape) {
-            if (root.filterText) root.setFilter("")
-            else root.close()
-          } else if (Util.editsFilter(event, root.filterText)) {
-            root.setFilter(Util.editedFilter(event, root.filterText))
-          } else if (event.key === Qt.Key_Up || (ctrl && event.key === Qt.Key_P) || event.key === Qt.Key_Backtab) {
-            root.move(-1)
-          } else if (event.key === Qt.Key_Down || (ctrl && event.key === Qt.Key_N) || event.key === Qt.Key_Tab) {
-            root.move(1)
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            root.activate(root.selectedIndex)
-          } else if (event.text && event.text.length === 1 && !ctrl
-              && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
-            root.setFilter(root.filterText + event.text)
-          } else {
-            return
-          }
-          event.accepted = true
-        }
-      }
 
       Column {
         anchors.fill: parent
         anchors.margins: Style.spacing.md
+        // The tab strip runs across the top, over this panel.
+        anchors.topMargin: Style.bar.sizeHorizontal + Style.spacing.md
         spacing: Style.spacing.sm
 
         Text {
@@ -316,6 +371,54 @@ Item {
             font.pixelSize: Style.font.body
           }
         }
+      }
+    }
+  }
+
+  // A one-pixel-wide panel on a top layer, drawing nothing and taking no
+  // clicks. While the sidebar is open it holds the keyboard, which the bottom
+  // layer can't do the way the top layers can, and reserves the sidebar's
+  // width, which makes Hyprland move the windows. Created after the tab strip,
+  // so it reserves room below the strip and the strip never moves.
+  PanelWindow {
+    id: keys
+    screen: panel.screen
+    anchors { left: true; top: true; bottom: true }
+    implicitWidth: 1
+    exclusionMode: ExclusionMode.Normal
+    exclusiveZone: root.zoned ? root.panelWidth : 0
+    mask: Region {}
+    color: "transparent"
+    WlrLayershell.namespace: "renspace-sidebar-keys"
+    WlrLayershell.layer: WlrLayer.Top
+    WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+
+    Item {
+      id: keyCatcher
+      anchors.fill: parent
+      focus: true
+
+      Keys.priority: Keys.BeforeItem
+      Keys.onPressed: function(event) {
+        var ctrl = event.modifiers & Qt.ControlModifier
+        if (event.key === Qt.Key_Escape) {
+          if (root.filterText) root.setFilter("")
+          else root.close()
+        } else if (Util.editsFilter(event, root.filterText)) {
+          root.setFilter(Util.editedFilter(event, root.filterText))
+        } else if (event.key === Qt.Key_Up || (ctrl && event.key === Qt.Key_P) || event.key === Qt.Key_Backtab) {
+          root.move(-1)
+        } else if (event.key === Qt.Key_Down || (ctrl && event.key === Qt.Key_N) || event.key === Qt.Key_Tab) {
+          root.move(1)
+        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+          root.activate(root.selectedIndex)
+        } else if (event.text && event.text.length === 1 && !ctrl
+            && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+          root.setFilter(root.filterText + event.text)
+        } else {
+          return
+        }
+        event.accepted = true
       }
     }
   }

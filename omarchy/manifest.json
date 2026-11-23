@@ -9,6 +9,7 @@
     "overlay",
     "service"
   ],
+  "keepLoaded": true,
   "entryPoints": {
     "overlay": "Toggle.qml",
     "service": "Service.qml"

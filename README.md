@@ -17,7 +17,7 @@ just setup     # add the tab strip and sidebar to the Omarchy shell, and the key
 
 The strip takes the top edge, so the layout is meant for Omarchy's bar on the right: `omarchy bar position right`.
 
-A file added to the plugin while the shell is running doesn't load until the shell restarts (`omarchy-restart-shell`). The shell reports it as "File name case mismatch". Edits to existing files reload by themselves.
+A file added to the plugin while the shell is running doesn't load until the shell restarts (`omarchy-restart-shell`); the shell reports it as "File name case mismatch". The tab strip and sidebar run in the plugin's service, which also only picks up edits on a restart.
 
 | Keys | Does |
 |---|---|
@@ -38,13 +38,13 @@ The strip shows the space's name, then a tab for each of its workspaces: its num
 
 ### The sidebar
 
-The tab strip, the sidebar and Omarchy's bar (on the right) form a frame, in one colour, with the workspaces inside it. `super+p` slides the sidebar in from the left, below the tab strip. It takes its width from the windows rather than covering them: Hyprland re-tiles them into the space that's left and animates the move. Closing it gives the room back.
+The tab strip, the sidebar and Omarchy's bar (on the right) form a base, in one colour, and the workspaces sit on top of it. The sidebar is part of that base, under the windows. `super+p` makes room for it, and Hyprland slides the windows aside to uncover it. Closing slides them back over it. On a workspace with no tiled windows, the sidebar slides itself in and out on the same curve.
 
 The sidebar lists `home` first, then every space by name, each with its folder and window count. The space you're in has a mark beside it. Rows keep their place from one opening to the next, so you can learn where each space is. The cursor starts on the space you left most recently, so `super+p` then Enter goes back to it.
 
 Type to filter. A prefix match beats a match at a word start, which beats letters in order: `spc` finds `renspace`. Up/down, Tab or `ctrl+n`/`ctrl+p` move the cursor. Enter or a click jumps there and closes the sidebar. Esc clears the filter, then closes. While it's open, the sidebar has the keyboard.
 
-The sidebar stays mapped just off the screen's edge while closed, so opening it is a slide rather than a new window. It lives in the plugin's service (`omarchy/Service.qml`) next to the tab strip. `omarchy/Toggle.qml` is the overlay entry the shell summons and hides, and only forwards to it. The sidebar reads `space ls --json` and runs `space go <name>`, so the `space` binary stays the only thing that knows about spaces. `space go` with no name still opens the centered vicinae or walker picker from a terminal.
+Nothing about the sidebar's own panel changes when it opens. It covers the left edge at full height under everything, never moves and never reserves room, so the only thing on screen that moves is the windows. A one-pixel invisible panel on a top layer reserves the room and holds the keyboard while the sidebar is open, since the bottom layer can't take the keyboard the way the top layers can. Hyprland lays out panels that reserve room before those that don't. If the sidebar reserved room itself, it would change shape at the moment it opened, mid-animation. It lives in the plugin's service (`omarchy/Service.qml`) next to the tab strip. `omarchy/Toggle.qml` is the overlay entry the shell summons and hides, and only forwards to it. The sidebar reads `space ls --json` and runs `space go <name>`, so the `space` binary stays the only thing that knows about spaces. `space go` with no name still opens the centered vicinae or walker picker from a terminal.
 
 ## Use
 

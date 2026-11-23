@@ -160,3 +160,44 @@ export function tabsFor(workspaces, windows, active) {
       })),
   }
 }
+
+// ---------------------------------------------------------------- motion
+//
+// The sidebar moves with the windows it pushes aside, on Hyprland's own
+// curve and duration, so no gap opens between them.
+
+// Hyprland's curve when an animation names `default`.
+const DEFAULT_BEZIER = [0, 0.75, 0.15, 1]
+
+// How Hyprland moves windows, from `hyprctl animations -j`:
+// `{ duration (ms), bezier: [x0, y0, x1, y1] }`, with duration 0 when the
+// animation is off, or null when the output can't be read. `windowsMove`
+// inherits from `windows`, which inherits from `global`, unless overridden.
+export function windowMotion(text) {
+  let data
+  try {
+    data = JSON.parse(String(text || ""))
+  } catch (e) {
+    return null
+  }
+  if (!Array.isArray(data) || !Array.isArray(data[0])) return null
+  const animations = new Map(data[0].map((a) => [a.name, a]))
+  const curves = Array.isArray(data[1]) ? data[1] : []
+
+  let leaf = null
+  for (const name of ["windowsMove", "windows", "global"]) {
+    const animation = animations.get(name)
+    if (animation && (animation.overridden || name === "global")) {
+      leaf = animation
+      break
+    }
+  }
+  if (!leaf) return null
+  if (!leaf.enabled) return { duration: 0, bezier: DEFAULT_BEZIER }
+
+  const curve = curves.find((c) => c.name === leaf.bezier)
+  return {
+    duration: Math.round(Number(leaf.speed) * 100),
+    bezier: curve ? [curve.X0, curve.Y0, curve.X1, curve.Y1] : DEFAULT_BEZIER,
+  }
+}

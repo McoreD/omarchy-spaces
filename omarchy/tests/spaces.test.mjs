@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, displayDir, filterRows, initialIndex, locate, parseRows, score, tabsFor } from "../Spaces.mjs"
+import { appName, displayDir, filterRows, initialIndex, locate, parseRows, score, tabsFor, windowMotion } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { name: "home", dir: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -109,4 +109,26 @@ test("home's tabs are the focused monitor's plain workspaces", () => {
   assert.equal(tabs.space, "home")
   assert.deepEqual(tabs.tabs.map((t) => t.slot), [1, 2])
   assert.deepEqual(tabsFor(workspaces, [], { id: 12, name: "12" }).tabs.map((t) => t.slot), [2])
+})
+
+test("reads Hyprland's window motion", () => {
+  const curves = [{ name: "easeOutQuint", X0: 0.23, Y0: 1, X1: 0.32, Y1: 1 }]
+  const animations = (overrides) => JSON.stringify([
+    [
+      { name: "global", overridden: true, bezier: "default", enabled: true, speed: 10 },
+      { name: "windows", overridden: true, bezier: "easeOutQuint", enabled: true, speed: 3.79 },
+      { name: "windowsMove", overridden: false, bezier: "", enabled: true, speed: 0 },
+      ...overrides,
+    ],
+    curves,
+  ])
+  assert.deepEqual(windowMotion(animations([])), { duration: 379, bezier: [0.23, 1, 0.32, 1] })
+
+  const moveOverride = animations([{ name: "windowsMove", overridden: true, bezier: "default", enabled: true, speed: 2 }])
+  // A later entry wins in the Map, as Hyprland lists each leaf once.
+  assert.deepEqual(windowMotion(moveOverride), { duration: 200, bezier: [0, 0.75, 0.15, 1] })
+
+  const off = JSON.stringify([[{ name: "global", overridden: true, bezier: "default", enabled: false, speed: 10 }], []])
+  assert.equal(windowMotion(off).duration, 0)
+  assert.equal(windowMotion("hyprctl: error"), null)
 })
