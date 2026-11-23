@@ -40,14 +40,24 @@ Item {
   property double openedAt: 0
   readonly property string home: Quickshell.env("HOME") || ""
 
+  // The bar's background look: opaque, glassy or none (Spaces.barLook).
+  property string look: "opaque"
+
   readonly property int panelWidth: Style.space(260)
-  readonly property color background: Commons.Color.bar.background
-  readonly property color foreground: Commons.Color.bar.text
+  readonly property color background: surface.background
+  readonly property color foreground: surface.foreground
   readonly property color accent: Commons.Color.accent
   readonly property color selectedBackground: Commons.Color.menu.selectedBackground
   readonly property string fontFamily: Style.font.family
   readonly property int rowHeight: Math.round((Style.font.title + Style.font.bodySmall) * 1.35) + Style.spacing.controlPaddingY * 2
   readonly property int headerHeight: Math.max(Style.space(30), Style.font.subtitle + Style.spacing.controlPaddingY * 2)
+
+  BarSurface {
+    id: surface
+    look: root.look
+    edge: "left"
+    size: root.panelWidth
+  }
 
   function open() {
     if (root.opened) return
@@ -246,7 +256,15 @@ Item {
       height: parent.height
       x: -width
       visible: root.shown
-      color: root.background
+      color: "transparent"
+
+      // The tab strip runs across the top, over this panel. Start below it,
+      // or a see-through strip would show this through it, twice as dark.
+      Rectangle {
+        anchors.fill: parent
+        anchors.topMargin: Style.bar.sizeHorizontal
+        color: root.background
+      }
 
       Column {
         anchors.fill: parent

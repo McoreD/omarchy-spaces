@@ -83,3 +83,20 @@ if before_name and before_name:match("^[a-z0-9][a-z0-9-]*:%d+$") then
     end
   end)
 end
+
+-- A glassy bar (double-click it to cycle opaque, glassy, clear) has Hyprland
+-- blur what is behind it. The tab strip and the sidebar follow the bar's look,
+-- so blur behind them too. `omarchy bar background` adds or removes this
+-- toggle file and reloads Hyprland, which runs this again. With xray the blur
+-- takes in only the wallpaper, not the windows next to the strip, which would
+-- smear into its edges like a shadow.
+local glassy = io.open(require("default.hypr.paths").state_home .. "/omarchy/toggles/hypr/bar-glassy.lua")
+if glassy then
+  glassy:close()
+  hl.layer_rule({
+    match = { namespace = "^renspace-(tabs|sidebar)$" },
+    blur = true,
+    xray = true,
+    ignore_alpha = 0.3,
+  })
+end

@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, displayDir, filterRows, initialIndex, locate, parseRows, score, tabsFor, windowMotion } from "../Spaces.mjs"
+import { appName, barLook, displayDir, filterRows, initialIndex, locate, parseRows, score, tabsFor, windowMotion } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { name: "home", dir: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -131,4 +131,13 @@ test("reads Hyprland's window motion", () => {
   const off = JSON.stringify([[{ name: "global", overridden: true, bezier: "default", enabled: false, speed: 10 }], []])
   assert.equal(windowMotion(off).duration, 0)
   assert.equal(windowMotion("hyprctl: error"), null)
+})
+
+test("reads the bar's background look", () => {
+  assert.equal(barLook({ background: "glassy" }), "glassy")
+  assert.equal(barLook({ background: "none" }), "none")
+  assert.equal(barLook({ transparent: true }), "none", "the older on/off form")
+  assert.equal(barLook({ background: "opaque", transparent: true }), "opaque")
+  assert.equal(barLook({ background: "neon" }), "opaque")
+  assert.equal(barLook(null), "opaque")
 })

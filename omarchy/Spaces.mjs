@@ -201,3 +201,12 @@ export function windowMotion(text) {
     bezier: curve ? [curve.X0, curve.Y0, curve.X1, curve.Y1] : DEFAULT_BEZIER,
   }
 }
+
+// The bar's background, as Omarchy's shell config holds it: opaque, glassy
+// (see-through, blurred behind) or none (clear). Double-clicking the bar steps
+// through them. A config from before `background` says `transparent` instead.
+export function barLook(config) {
+  const look = config && config.background
+  if (look === "opaque" || look === "glassy" || look === "none") return look
+  return config && config.transparent === true ? "none" : "opaque"
+}

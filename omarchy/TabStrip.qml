@@ -36,13 +36,23 @@ Item {
     return Spaces.tabsFor(workspaces, windows, active ? { id: active.id, name: active.name } : null)
   }
 
+  // The bar's background look: opaque, glassy or none (Spaces.barLook).
+  property string look: "opaque"
+
   readonly property int stripHeight: Style.bar.sizeHorizontal
-  readonly property color background: Commons.Color.bar.background
-  readonly property color foreground: Commons.Color.bar.text
+  readonly property color background: surface.background
+  readonly property color foreground: surface.foreground
   readonly property color accent: Commons.Color.accent
   readonly property color hover: Commons.Color.menu.selectedBackground
   readonly property string fontFamily: Style.font.family
   readonly property int fontSize: Style.font.body
+
+  BarSurface {
+    id: surface
+    look: root.look
+    edge: "top"
+    size: root.stripHeight
+  }
 
   function run(args) {
     Quickshell.execDetached(args)
