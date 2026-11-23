@@ -246,9 +246,9 @@ Item {
 
           Column {
             anchors.left: parent.left
-            anchors.right: windowCount.left
+            anchors.right: parent.right
             anchors.leftMargin: root.textX
-            anchors.rightMargin: Style.spacing.controlGap
+            anchors.rightMargin: Style.spacing.rowPaddingX
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.spacing.xxs
 
@@ -285,19 +285,6 @@ Item {
                 }
               }
             }
-          }
-
-          Text {
-            id: windowCount
-            anchors.right: parent.right
-            anchors.rightMargin: Style.spacing.rowPaddingX
-            anchors.verticalCenter: parent.verticalCenter
-            textFormat: Text.PlainText
-            text: rowItem.modelData.windows >= 0 ? String(rowItem.modelData.windows) : ""
-            color: root.foreground
-            opacity: rowItem.modelData.windows > 0 ? 0.7 : 0.35
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
           }
 
           // Click to go there, right-click for the space's menu.

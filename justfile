@@ -16,3 +16,8 @@ setup:
     omarchy bar put org.ren.renspace --after omarchy.menu
     ln -sfn {{justfile_directory()}}/hypr/renspace.lua ~/.config/hypr/renspace.lua
     grep -qxF 'require("hypr.renspace")' ~/.config/hypr/bindings.lua || echo 'require("hypr.renspace")' >> ~/.config/hypr/bindings.lua
+
+# Restart the Omarchy shell, so it picks up changes to the QML. Reloading its
+# plugins isn't enough: it keeps keepLoaded services, which the sidebar is.
+reload:
+    omarchy restart shell
