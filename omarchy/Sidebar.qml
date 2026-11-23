@@ -80,9 +80,32 @@ Item {
   // The colours spaces' badges take, from the theme's colors.toml.
   property var palette: Spaces.DEFAULT_PALETTE
 
-  readonly property int panelWidth: Style.space(260)
-  // Collapsed, as wide as the badges and the space either side of them.
-  readonly property int railWidth: Style.space(44)
+  readonly property int panelWidth: Style.space(200)
+
+  // The rail's geometry, from which the list's follows (SidebarList.qml).
+  // Whatever `inset` and `badgeScale` are set to, these hold:
+  //  1. The rail's icons share one centre line, `axis`, with the menu's logo
+  //     on a top or bottom bar above or below them. Omarchy's bar sets the
+  //     logo in from the screen's edge by its left section's margin (8, in
+  //     its Bar.qml) and half the menu's slot, so the rail is twice that
+  //     wide and its icons centre in it.
+  //  2. Collapsed, every icon's box is a square `cell`: the toggle, each
+  //     space's row and its highlight, the `+` and the search.
+  //  3. One padding, `inset`, sets the cell in from the rail's edges, the
+  //     list in from the sidebar's, and a row's highlight short of the cut.
+  //  4. A space's row highlights its whole cell; a control (the toggle, the
+  //     `+`, the search) highlights a smaller box, `controlSize`, between a
+  //     badge and a cell, centred in its cell.
+  readonly property real axis: Style.space(8) + Style.bar.iconSlot / 2
+  readonly property int railWidth: Math.round(axis * 2)
+  readonly property int inset: Style.spacing.sm
+  readonly property int cell: railWidth - inset * 2
+  readonly property real badgeScale: 0.7
+  readonly property int badgeSize: Math.round(cell * badgeScale)
+  readonly property int badgeRadius: Math.round(badgeSize / 4)
+  readonly property int controlSize: Math.round((badgeSize + cell) / 2)
+  // The search's magnifier, drawn larger than the rail's other icons.
+  readonly property int searchIconSize: Math.round(badgeSize * 0.72)
   // Hyprland's outer gap on the left, from `hyprctl getoption`.
   property int gapLeft: 0
   // How far from its screen's left edge the windows begin by the rail.
@@ -283,14 +306,6 @@ Item {
     root.endSearch()
     // It says why in a notification if it can't.
     Quickshell.execDetached(["space", "go", row.id])
-  }
-
-  function subtitle(row) {
-    if (root.renaming && row.id === root.renaming) {
-      return row.named ? "Enter to rename, empty for the folder's name" : "Enter to name it, Esc to cancel"
-    }
-    if (row.id === "home") return "Plain workspaces"
-    return row.folder ? Spaces.displayDir(row.folder, root.home) : "No terminal yet"
   }
 
   // The `+`: a new space with a terminal in the folder you are in.

@@ -14,9 +14,12 @@ import "Spaces.mjs" as Spaces
 // It is laid out at the sidebar's whole width, and the base cuts it off where
 // the windows begin (`shownWidth`). Each row starts with its icon in the
 // rail's column, the part that always shows: the toggle, a badge for each
-// space, the `+` and the search. What highlights a row ends just short of
-// the cut, so collapsed it is a square around the icon, and it grows as the
-// windows slide aside.
+// space, the `+` and the search, each centred on the rail by what it draws,
+// in line with the menu on the bar above. What highlights a row ends just
+// short of the cut, so collapsed it is a square around the icon, and it
+// grows as the windows slide aside. On the rail, the other spaces' badges
+// are dimmed, leaving the one you're in at full strength; as the sidebar
+// expands, they come up and its row's highlight fades in instead.
 Item {
   id: root
 
@@ -29,16 +32,25 @@ Item {
 
   readonly property color accent: Commons.Color.accent
   readonly property color selectedBackground: Commons.Color.menu.selectedBackground
+  // Under the pointer or the search's cursor, lighter than the space you're
+  // in, which keeps `selectedBackground`.
+  readonly property color hoverBackground: Qt.rgba(selectedBackground.r, selectedBackground.g, selectedBackground.b, selectedBackground.a * 0.6)
   readonly property string fontFamily: Style.font.family
-  readonly property int margin: Style.spacing.md
-  // The icon column at the start of each row, the rail less its margins.
-  readonly property int slot: root.sidebar.railWidth - root.margin * 2
-  readonly property int badgeSize: Math.min(root.slot, Style.space(24))
-  // How wide a row's highlight is: to just short of the cut.
+  // The rail's geometry, and the rules it keeps, are the sidebar's.
+  readonly property int margin: root.sidebar.inset
+  // The icon column at the start of each row: a cell, as wide as it is tall.
+  readonly property int slot: root.sidebar.cell
+  readonly property int badgeSize: root.sidebar.badgeSize
+  // How wide a row's highlight is: to just short of the cut, so collapsed,
+  // a cell.
   readonly property real highlightWidth: Math.max(root.slot, root.shownWidth - root.margin * 2)
-  readonly property int rowHeight: Math.round((Style.font.title + Style.font.bodySmall) * 1.35) + Style.spacing.controlPaddingY * 2
-  readonly property int headerHeight: Math.max(Style.space(30), Style.font.subtitle + Style.spacing.controlPaddingY * 2)
-  readonly property int searchHeight: Style.font.body + Style.spacing.controlPaddingY * 4
+  // How far it has expanded, from 0 at the rail to 1.
+  readonly property real expansion: Math.max(0, Math.min(1,
+    (root.shownWidth - root.sidebar.railWidth) / Math.max(1, root.sidebar.panelWidth - root.sidebar.railWidth)))
+  // Every row is a cell tall, so collapsed, each icon's box is square.
+  readonly property int rowHeight: root.slot
+  readonly property int headerHeight: root.slot
+  readonly property int searchHeight: root.slot
   // Where a row's text starts, past its icon.
   readonly property int textX: root.slot + Style.spacing.controlGap
 
@@ -52,41 +64,79 @@ Item {
     function onShownRowsChanged() { Qt.callLater(root.reveal) }
   }
 
+  // A glyph centred in its box by the ink it draws, not by the cell it takes:
+  // Nerd Font icons overhang their cell, and letters sit on a baseline.
+  component Glyph: Item {
+    id: glyph
+    property alias text: label.text
+    property alias color: label.color
+    property alias font: label.font
+
+    TextMetrics {
+      id: ink
+      font: label.font
+      text: label.text
+    }
+
+    Text {
+      id: label
+      x: Math.round((glyph.width - ink.tightBoundingRect.width) / 2 - ink.tightBoundingRect.x)
+      y: Math.round((glyph.height - ink.tightBoundingRect.height) / 2 - (label.baselineOffset + ink.tightBoundingRect.y))
+      textFormat: Text.PlainText
+    }
+  }
+
   // An icon centred in the icon column.
-  component SlotIcon: Text {
+  component SlotIcon: Glyph {
     property bool lit: false
     width: root.slot
     height: parent.height
-    horizontalAlignment: Text.AlignHCenter
-    verticalAlignment: Text.AlignVCenter
-    textFormat: Text.PlainText
     color: lit ? root.accent : root.foreground
     opacity: lit ? 1 : 0.6
     font.family: root.fontFamily
     font.pixelSize: Style.font.icon
   }
 
-  // A row's highlight, ending just short of the cut.
+  // A control's highlight: a box `controlSize` wide, centred in its cell,
+  // lighter under the pointer (`lit`), steadier while in use (`held`).
+  component ControlBox: Rectangle {
+    property bool lit: false
+    property bool held: false
+    x: (root.slot - width) / 2
+    y: (root.slot - height) / 2
+    width: root.sidebar.controlSize
+    height: root.sidebar.controlSize
+    radius: root.sidebar.badgeRadius
+    color: held ? root.selectedBackground : lit ? root.hoverBackground : "transparent"
+  }
+
+  // A row's highlight, ending just short of the cut: lighter under the
+  // pointer (`lit`), steady for the space you're in (`held`) once the
+  // sidebar expands, where the badge alone marks it on the rail.
   component Highlight: Rectangle {
     property bool lit: false
+    property bool held: false
     width: Math.min(parent.width, root.highlightWidth)
     height: parent.height
     radius: Style.cornerRadius
-    color: lit ? root.selectedBackground : "transparent"
+    color: {
+      var base = root.selectedBackground
+      var alpha = Math.max(held ? base.a * root.expansion : 0, lit ? root.hoverBackground.a : 0)
+      return Qt.rgba(base.r, base.g, base.b, alpha)
+    }
   }
 
   Column {
     anchors.fill: parent
     anchors.margins: root.margin
-    spacing: Style.spacing.sm
+    spacing: root.margin
 
     // The toggle, then the title.
     Item {
       width: parent.width
       height: root.headerHeight
 
-      Highlight {
-        width: root.slot
+      ControlBox {
         lit: toggleMouse.containsMouse
       }
 
@@ -150,21 +200,11 @@ Item {
           // The cursor shows while searching; otherwise only under the
           // pointer, or while the row is being renamed or has its menu open.
           Highlight {
+            held: rowItem.modelData.active
             lit: rowItem.renaming || rowItem.menuOpen
               || (!root.sidebar.menuRow && rowItem.selected && (root.sidebar.searching || rowMouse.containsMouse))
             border.width: rowItem.renaming ? 1 : 0
             border.color: root.accent
-          }
-
-          // The space you're in.
-          Rectangle {
-            visible: rowItem.modelData.active
-            width: Math.max(2, Style.space(3))
-            height: parent.height - Style.spacing.md * 2
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            radius: width / 2
-            color: root.accent
           }
 
           // Its badge: two letters on a tint of its colour, or a house for
@@ -174,14 +214,12 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             width: root.badgeSize
             height: root.badgeSize
-            radius: Math.round(root.badgeSize / 4)
+            radius: root.sidebar.badgeRadius
             color: Qt.rgba(rowItem.hue.r, rowItem.hue.g, rowItem.hue.b, rowItem.home ? 0.1 : 0.16)
+            opacity: rowItem.modelData.active ? 1 : 1 - 0.45 * (1 - root.expansion)
 
-            Text {
+            Glyph {
               anchors.fill: parent
-              horizontalAlignment: Text.AlignHCenter
-              verticalAlignment: Text.AlignVCenter
-              textFormat: Text.PlainText
               // A house (nf-md-home_outline).
               text: rowItem.home ? "\u{f06a1}" : Spaces.monogram(rowItem.modelData.label)
               color: rowItem.hue
@@ -205,9 +243,10 @@ Item {
               width: parent.width
               textFormat: Text.PlainText
               text: rowItem.renaming ? root.sidebar.nameText : rowItem.modelData.label
-              color: rowItem.selected ? root.accent : root.foreground
+              // The search's cursor; otherwise the highlight says which space you're in.
+              color: rowItem.selected && root.sidebar.searching ? root.accent : root.foreground
               font.family: root.fontFamily
-              font.pixelSize: Style.font.title
+              font.pixelSize: Style.font.subtitle
               font.bold: rowItem.modelData.active
               elide: rowItem.renaming ? Text.ElideLeft : Text.ElideRight
 
@@ -217,7 +256,7 @@ Item {
                 visible: rowItem.renaming
                 x: Math.min(nameText.contentWidth, nameText.width) + 1
                 width: Math.max(1, Style.space(2))
-                height: Style.font.title + Style.spacing.xxs
+                height: Style.font.subtitle + Style.spacing.xxs
                 anchors.verticalCenter: parent.verticalCenter
                 color: root.accent
 
@@ -231,17 +270,6 @@ Item {
                   PauseAnimation { duration: 530 }
                 }
               }
-            }
-
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: root.sidebar.subtitle(rowItem.modelData)
-              color: root.foreground
-              opacity: 0.5
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              elide: Text.ElideMiddle
             }
           }
 
@@ -283,14 +311,14 @@ Item {
         // The `+`: a new space with a terminal in the folder you are in.
         footer: Item {
           width: ListView.view ? ListView.view.width : 0
-          height: root.rowHeight * 0.75 + Style.spacing.xxs
+          height: root.rowHeight + Style.spacing.xxs
 
           Item {
             y: Style.spacing.xxs
             width: parent.width
             height: parent.height - y
 
-            Highlight {
+            ControlBox {
               lit: plusMouse.containsMouse
             }
 
@@ -340,104 +368,108 @@ Item {
       }
     }
 
-    // Click it, or press super+p, to search. Its box ends just short of the
-    // cut, as a row's highlight does; what it holds is laid out at its whole
-    // width, and cut off with it.
+    // Click it, or press super+p, to search. A control, like the `+`: its
+    // icon alone until you point at it or search, when its box and its words
+    // show.
     Item {
+      id: searchRow
+      readonly property bool open: searchMouse.containsMouse || root.sidebar.searching
       width: parent.width
       height: root.searchHeight
 
-      Rectangle {
-        id: searchField
-        width: Math.min(parent.width, root.highlightWidth)
+      ControlBox {
+        lit: searchMouse.containsMouse
+        held: root.sidebar.searching
+      }
+
+      SlotIcon {
+        // A magnifying glass (nf-md-magnify).
+        text: "\u{f0349}"
+        lit: searchRow.open
+        font.pixelSize: root.sidebar.searchIconSize
+      }
+
+      Item {
+        x: root.textX
+        width: Math.min(parent.width, root.highlightWidth) - x
         height: parent.height
-        radius: Style.cornerRadius
         clip: true
-        color: root.sidebar.searching ? root.selectedBackground : "transparent"
-        border.width: 1
-        border.color: root.sidebar.searching ? root.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.2)
+        opacity: searchRow.open ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: Style.duration(120) } }
 
-        Item {
-          width: searchField.parent.width
-          height: parent.height
-
-          SlotIcon {
-            // A magnifying glass (nf-md-magnify).
-            text: "\u{f0349}"
-            lit: root.sidebar.searching
-          }
-
-          Row {
-            anchors.left: parent.left
-            anchors.leftMargin: root.textX
-            anchors.right: hint.left
-            anchors.rightMargin: Style.spacing.xs
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 0
-            clip: true
-
-            Text {
-              id: query
-              visible: root.sidebar.filterText !== ""
-              width: Math.min(implicitWidth, parent.width - caret.width)
-              textFormat: Text.PlainText
-              text: root.sidebar.filterText
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              elide: Text.ElideLeft
-            }
-
-            Rectangle {
-              id: caret
-              visible: root.sidebar.searching
-              width: Math.max(1, Style.space(2))
-              height: Style.font.body + Style.spacing.xxs
-              anchors.verticalCenter: parent.verticalCenter
-              color: root.accent
-
-              SequentialAnimation on opacity {
-                running: caret.visible
-                loops: Animation.Infinite
-                alwaysRunToEnd: false
-                NumberAnimation { to: 1; duration: 0 }
-                PauseAnimation { duration: 530 }
-                NumberAnimation { to: 0; duration: 0 }
-                PauseAnimation { duration: 530 }
-              }
-            }
-
-            Text {
-              visible: root.sidebar.filterText === ""
-              leftPadding: root.sidebar.searching ? Style.spacing.xxs : 0
-              textFormat: Text.PlainText
-              text: "Find a space"
-              color: root.foreground
-              opacity: 0.4
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-            }
-          }
+        Row {
+          anchors.left: parent.left
+          anchors.right: hint.left
+          anchors.rightMargin: Style.spacing.xs
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: 0
+          clip: true
 
           Text {
-            id: hint
-            anchors.right: parent.right
-            anchors.rightMargin: Style.spacing.rowPaddingX
-            anchors.verticalCenter: parent.verticalCenter
+            id: query
+            visible: root.sidebar.filterText !== ""
+            width: Math.min(implicitWidth, parent.width - caret.width)
             textFormat: Text.PlainText
-            text: root.sidebar.searching ? "esc" : "super+p"
+            text: root.sidebar.filterText
             color: root.foreground
-            opacity: 0.35
             font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
+            font.pixelSize: Style.font.body
+            elide: Text.ElideLeft
+          }
+
+          Rectangle {
+            id: caret
+            visible: root.sidebar.searching
+            width: Math.max(1, Style.space(2))
+            height: Style.font.body + Style.spacing.xxs
+            anchors.verticalCenter: parent.verticalCenter
+            color: root.accent
+
+            SequentialAnimation on opacity {
+              running: caret.visible
+              loops: Animation.Infinite
+              alwaysRunToEnd: false
+              NumberAnimation { to: 1; duration: 0 }
+              PauseAnimation { duration: 530 }
+              NumberAnimation { to: 0; duration: 0 }
+              PauseAnimation { duration: 530 }
+            }
+          }
+
+          // Pointed at, it says what it does, as the `+` does; searching,
+          // it waits for what you type.
+          Text {
+            visible: root.sidebar.filterText === ""
+            leftPadding: root.sidebar.searching ? Style.spacing.xxs : 0
+            textFormat: Text.PlainText
+            text: "Search"
+            color: root.sidebar.searching ? root.foreground : root.accent
+            opacity: root.sidebar.searching ? 0.4 : 1
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
           }
         }
 
-        MouseArea {
-          anchors.fill: parent
-          cursorShape: Qt.IBeamCursor
-          onClicked: root.sidebar.search()
+        Text {
+          id: hint
+          anchors.right: parent.right
+          anchors.rightMargin: Style.spacing.rowPaddingX
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: root.sidebar.searching ? "esc" : "super+p"
+          color: root.foreground
+          opacity: 0.35
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
         }
+      }
+
+      MouseArea {
+        id: searchMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: root.sidebar.search()
       }
     }
   }

@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, badgeColor, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, displayDir, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, tabsFor, windowMotion } from "../Spaces.mjs"
+import { appName, badgeColor, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, tabsFor, windowMotion } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -20,13 +20,6 @@ test("parses space ls --json", () => {
   assert.throws(() => parseRows("{}"), /unexpected/)
   assert.deepEqual(parseRows("[{\"folder\":\"/x\"}]"), [], "rows without an id are dropped")
   assert.equal(parseRows("[{\"id\":\"s9\"}]")[0].label, "s9", "no label: the id")
-})
-
-test("shortens home folders", () => {
-  assert.equal(displayDir("/home/me/Projects/ren", "/home/me"), "~/Projects/ren")
-  assert.equal(displayDir("/home/me", "/home/me"), "~")
-  assert.equal(displayDir("/home/mel/x", "/home/me"), "/home/mel/x")
-  assert.equal(displayDir("", "/home/me"), "")
 })
 
 test("scores prefix over word start over substring over letters in order", () => {

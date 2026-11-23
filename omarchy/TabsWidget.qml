@@ -34,7 +34,8 @@ BarWidget {
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
   readonly property int fontSize: Style.font.body
   readonly property real padding: root.vertical ? 0 : Style.spaceReal(4)
-  readonly property real cornerRadius: Style.space(10)
+  // The space's corner rounds as Hyprland rounds windows.
+  readonly property real cornerRadius: Style.cornerRadius
 
   implicitWidth: root.vertical ? root.barSize : row.x + row.implicitWidth + root.padding
   implicitHeight: root.vertical ? column.implicitHeight : root.barSize
@@ -149,6 +150,7 @@ BarWidget {
 
     // The square at the corner, less the quarter circle the corner rounds by.
     Shape {
+      visible: root.cornerRadius > 0
       x: recess.width
       width: root.cornerRadius
       height: root.cornerRadius

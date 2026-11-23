@@ -23,16 +23,6 @@ export function parseRows(text) {
     }))
 }
 
-// `/home/me/Projects/ren` as `~/Projects/ren`.
-export function displayDir(dir, home) {
-  if (!dir) return ""
-  if (home && home !== "/") {
-    if (dir === home) return "~"
-    if (dir.startsWith(home + "/")) return "~" + dir.slice(home.length)
-  }
-  return dir
-}
-
 // How well `query` matches `name`: higher is better, -1 for no match. A
 // prefix beats a match at a word start (after `-`), which beats a substring,
 // which beats the letters in order with gaps.
