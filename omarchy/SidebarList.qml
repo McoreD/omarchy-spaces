@@ -38,19 +38,55 @@ Item {
     anchors.margins: Style.spacing.md
     spacing: Style.spacing.sm
 
-    Text {
+    // The title, and the `+` that makes a new space.
+    Item {
       width: parent.width
       height: root.headerHeight
-      leftPadding: Style.spacing.rowPaddingX
-      verticalAlignment: Text.AlignVCenter
-      textFormat: Text.PlainText
-      text: "Spaces"
-      color: root.foreground
-      opacity: 0.5
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.subtitle
-      elide: Text.ElideRight
+
+      Text {
+        anchors.left: parent.left
+        anchors.right: plus.left
+        anchors.verticalCenter: parent.verticalCenter
+        leftPadding: Style.spacing.rowPaddingX
+        textFormat: Text.PlainText
+        text: "Spaces"
+        color: root.foreground
+        opacity: 0.5
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.subtitle
+        elide: Text.ElideRight
+      }
+
+      Rectangle {
+        id: plus
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        width: parent.height
+        height: parent.height
+        radius: Style.cornerRadius
+        color: plusMouse.containsMouse || root.sidebar.creating ? root.selectedBackground : "transparent"
+
+        Text {
+          anchors.centerIn: parent
+          textFormat: Text.PlainText
+          // A plus (nf-md-plus).
+          text: "\u{f0415}"
+          color: plusMouse.containsMouse || root.sidebar.creating ? root.accent : root.foreground
+          opacity: plusMouse.containsMouse || root.sidebar.creating ? 1 : 0.5
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.icon
+        }
+
+        MouseArea {
+          id: plusMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.sidebar.startCreate()
+        }
+      }
     }
+
 
     Item {
       width: parent.width
@@ -69,7 +105,9 @@ Item {
           required property var modelData
           required property int index
           readonly property bool selected: index === root.sidebar.selectedIndex
-          readonly property bool renaming: root.sidebar.renaming !== "" && root.sidebar.renaming === modelData.name
+          // Its name is being typed: a rename, or the row the `+` added.
+          readonly property bool renaming: modelData.draft === true
+            || (root.sidebar.renaming !== "" && root.sidebar.renaming === modelData.name)
           readonly property bool menuOpen: root.sidebar.menuFor !== "" && root.sidebar.menuFor === modelData.name
 
           width: ListView.view.width
@@ -106,7 +144,7 @@ Item {
               id: nameText
               width: parent.width
               textFormat: Text.PlainText
-              text: rowItem.renaming ? root.sidebar.renameText
+              text: rowItem.renaming ? root.sidebar.nameText
                 : rowItem.modelData.create ? "New space “" + rowItem.modelData.name + "”"
                 : rowItem.modelData.name
               color: rowItem.selected || rowItem.modelData.create ? root.accent : root.foreground
@@ -114,6 +152,18 @@ Item {
               font.pixelSize: Style.font.title
               font.bold: rowItem.modelData.active
               elide: rowItem.renaming ? Text.ElideLeft : Text.ElideRight
+
+              Text {
+                visible: rowItem.modelData.draft === true && root.sidebar.nameText === ""
+                x: Style.spacing.xs
+                anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
+                text: "Name the new space"
+                color: root.foreground
+                opacity: 0.4
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+              }
 
               // The keyboard reaches the rename through the sidebar's
               // panel, so the name draws its own caret.

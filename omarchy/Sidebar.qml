@@ -24,7 +24,8 @@ import "Spaces.mjs" as Spaces
 //
 // Right-clicking a space opens its menu (SpaceMenu.qml), floating where you
 // clicked: rename it, close its windows, or remove it. Renaming takes the
-// keyboard as the search does, to type the new name in place. Each runs `space`, which says why in a notification if it
+// keyboard as the search does, to type the new name in place. The `+` by the
+// title does the same in a new row at the end, to make a space. Each runs `space`, which says why in a notification if it
 // can't.
 Item {
   id: root
@@ -38,12 +39,15 @@ Item {
   property bool opened: false
   property bool searching: false
   property bool searchOnly: false
-  // The space being renamed, and its new name so far.
+  // The space being renamed, or whether a new one is being named (the `+`),
+  // and the name typed so far.
   property string renaming: ""
-  property string renameText: ""
+  property bool creating: false
+  property string nameText: ""
   property double renamedAt: 0
-  // Whatever holds the keyboard: the search or a rename.
-  readonly property bool typing: searching || renaming !== ""
+  readonly property bool naming: renaming !== "" || creating
+  // Whatever holds the keyboard: the search or a name being typed.
+  readonly property bool typing: searching || naming
   // The space whose menu is open, its row, and where on the screen it opens.
   property string menuFor: ""
   readonly property var menuRow: menuFor ? rows.find(function(row) { return row.name === menuFor }) || null : null
@@ -97,7 +101,7 @@ Item {
     if (!root.opened) return
     var wasSearching = root.searching
     root.stopSearching()
-    root.endRename(false)
+    root.endNaming(false)
     root.closeMenu()
     root.opened = false
     root.zoned = false
@@ -116,7 +120,7 @@ Item {
   // is hidden.
   function search() {
     if (root.searching) return
-    root.endRename(false)
+    root.endNaming(false)
     root.closeMenu()
     root.searchOnly = !root.opened
     root.show()
@@ -190,7 +194,9 @@ Item {
   }
 
   function applyFilter(resetCursor) {
-    root.shownRows = Spaces.withNewRow(Spaces.filterRows(root.rows, root.filterText), root.rows, root.filterText)
+    root.shownRows = root.creating
+      ? root.rows.concat([Spaces.draftRow()])
+      : Spaces.withNewRow(Spaces.filterRows(root.rows, root.filterText), root.rows, root.filterText)
     if (resetCursor) {
       root.selectedIndex = root.filterText ? 0 : Spaces.initialIndex(root.shownRows)
     }
@@ -229,7 +235,8 @@ Item {
   }
 
   function subtitle(row) {
-    if (row.name === root.renaming) return "Enter to rename, Esc to cancel"
+    if (row.draft) return "Enter to make it, Esc to cancel"
+    if (root.renaming && row.name === root.renaming) return "Enter to rename, Esc to cancel"
     if (row.create) return root.searching ? "Enter to make it" : "Click to make it"
     if (row.dir) return Spaces.displayDir(row.dir, root.home)
     return row.name === "home" ? "Plain workspaces" : "Folder not found"
@@ -238,7 +245,7 @@ Item {
   // Opens a space's menu at a point on the sidebar's screen. The menu takes
   // the keyboard, so a search ends, leaving the sidebar open.
   function openMenu(name, x, y) {
-    root.endRename(false)
+    root.endNaming(false)
     if (root.searching) {
       root.searchOnly = false
       root.stopSearching()
@@ -264,24 +271,50 @@ Item {
   // Takes the keyboard to type a new name over the old one. A sidebar shown
   // just for a search stays, as you are now using it.
   function startRename(name) {
+    root.startNaming()
+    root.renaming = name
+    root.nameText = name
+  }
+
+  // The `+`: a new row at the end of the list to type a new space's name
+  // into, made in a folder of that name in the roots, as the search's
+  // new-space row does.
+  function startCreate() {
+    if (root.creating) return
+    root.closeMenu()
+    root.startNaming()
+    root.creating = true
+    root.nameText = ""
+    root.applyFilter(false)
+    root.selectedIndex = root.shownRows.length - 1
+  }
+
+  function startNaming() {
+    root.endNaming(false)
     if (root.searching) {
       root.searchOnly = false
       root.stopSearching()
       root.searchEnded()
     }
-    root.renaming = name
-    root.renameText = name
     root.renamedAt = Date.now()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
-  function endRename(commit) {
-    if (!root.renaming) return
+  // Enter commits the name typed, Escape (`commit` false) drops it.
+  function endNaming(commit) {
+    if (!root.naming) return
     var from = root.renaming
-    var to = root.renameText.replace(/-+$/, "")
+    var creating = root.creating
+    var to = root.nameText.replace(/-+$/, "")
     root.renaming = ""
-    root.renameText = ""
-    if (commit && to && to !== from) root.run(["space", "rename", from, to])
+    root.creating = false
+    root.nameText = ""
+    if (creating) {
+      root.applyFilter(false)
+      if (commit && to) root.run(["space", "new", to, "--in-roots"])
+    } else if (commit && to && to !== from) {
+      root.run(["space", "rename", from, to])
+    }
   }
 
   // Runs a `space` command that changes the spaces, then lists them again:
@@ -399,7 +432,7 @@ Item {
         relist.restart()
       }
       if (event.name !== "activewindowv2" && event.name !== "workspacev2") return
-      if (root.renaming && Date.now() - root.renamedAt >= 300) root.endRename(false)
+      if (root.naming && Date.now() - root.renamedAt >= 300) root.endNaming(false)
       if (root.searching && Date.now() - root.searchedAt >= 300) root.endSearch()
     }
   }
@@ -438,11 +471,11 @@ Item {
         var ctrl = event.modifiers & Qt.ControlModifier
         var printable = event.text && event.text.length === 1 && !ctrl
             && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127
-        if (root.renaming) {
-          if (event.key === Qt.Key_Escape) root.endRename(false)
-          else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) root.endRename(true)
-          else if (Util.editsFilter(event, root.renameText)) root.renameText = Util.editedFilter(event, root.renameText)
-          else if (printable) root.renameText = Spaces.renameInput(root.renameText, event.text)
+        if (root.naming) {
+          if (event.key === Qt.Key_Escape) root.endNaming(false)
+          else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) root.endNaming(true)
+          else if (Util.editsFilter(event, root.nameText)) root.nameText = Util.editedFilter(event, root.nameText)
+          else if (printable) root.nameText = Spaces.renameInput(root.nameText, event.text)
           else return
           event.accepted = true
           return

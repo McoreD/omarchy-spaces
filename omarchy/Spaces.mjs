@@ -85,6 +85,12 @@ export function withNewRow(shown, rows, query) {
   return shown.concat([{ name, dir: "", active: false, windows: -1, leftAt: 0, create: true }])
 }
 
+// The row the `+` by the title adds at the end of the list, to type a new
+// space's name into. Its name is what you have typed so far.
+export function draftRow() {
+  return { name: "", dir: "", active: false, windows: -1, leftAt: 0, create: true, draft: true }
+}
+
 // A row's right-click menu: which actions apply, and why not when one
 // doesn't. `home` and the new-space row have none. Icons are Nerd Font
 // glyphs: a pencil, a cross, and a folder with a cross (the folder stays, so

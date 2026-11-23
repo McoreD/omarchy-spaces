@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, barLook, displayDir, filterRows, freshen, initialIndex, locate, parseRows, renameInput, rowActions, score, slugify, stepAction, tabsFor, windowMotion, withNewRow } from "../Spaces.mjs"
+import { appName, barLook, displayDir, filterRows, freshen, initialIndex, locate, parseRows, draftRow, renameInput, rowActions, score, slugify, stepAction, tabsFor, windowMotion, withNewRow } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { name: "home", dir: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -209,4 +209,11 @@ test("steps through the enabled actions", () => {
   assert.equal(stepAction([{ enabled: false }], -1, 1), -1)
   assert.equal(stepAction([], -1, 1), -1)
   assert.deepEqual(actions.map((a) => a.separatorBefore), [false, true, false])
+})
+
+test("the + adds a draft row with no actions", () => {
+  const draft = draftRow()
+  assert.equal(draft.draft, true)
+  assert.equal(draft.name, "")
+  assert.deepEqual(rowActions(draft), [])
 })
