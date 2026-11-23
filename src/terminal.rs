@@ -92,6 +92,18 @@ pub fn folder_name(dir: &Path) -> String {
         .unwrap_or_else(|| dir.display().to_string())
 }
 
+/// The terminal `command` as one shell command that runs it in `dir` with
+/// `RENSPACE_DIR` set, for Hyprland to run (`launch` sets them itself).
+pub fn command_in(command: &str, dir: &Path) -> String {
+    let dir = shell_quote(&dir.to_string_lossy());
+    format!("cd -- {dir} && export RENSPACE_DIR={dir} && {command}")
+}
+
+/// `value` in single quotes for `sh`.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// Opens a terminal in `dir` with `command` (the `terminal` setting), run by
 /// `sh -c` in that folder with `RENSPACE_DIR` set to it. It runs on its own,
 /// outliving `space`.
@@ -132,6 +144,27 @@ mod tests {
         assert_eq!(folder_name(&repo), "ren");
         assert_eq!(folder_name(&paths::home()), "~");
         assert_eq!(folder_name(Path::new("/")), "/");
+    }
+
+    #[test]
+    fn runs_the_terminal_command_in_a_folder() {
+        assert_eq!(
+            command_in("exec kitty", Path::new("/p/it's here")),
+            r#"cd -- '/p/it'\''s here' && export RENSPACE_DIR='/p/it'\''s here' && exec kitty"#
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let odd = tmp.path().join("a 'b' $c");
+        std::fs::create_dir_all(&odd).unwrap();
+        let out = Command::new("sh")
+            .arg("-c")
+            .arg(command_in("pwd; echo \"$RENSPACE_DIR\"", &odd))
+            .output()
+            .unwrap();
+        let odd = odd.display().to_string();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            format!("{odd}\n{odd}\n")
+        );
     }
 
     #[test]

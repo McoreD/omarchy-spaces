@@ -174,6 +174,27 @@ pub fn move_window(selector: &str, follow: bool) -> String {
     )
 }
 
+/// Run a shell command, its first window placed on `workspace`, as
+/// `name:s1:1 silent`: there, without going there, and drawn whole at once,
+/// without its open animation (`animate_again` brings animations back).
+pub fn exec_on(command: &str, workspace: &str) -> String {
+    format!(
+        "hl.dsp.exec_cmd({}, {{ workspace = {}, no_anim = true }})",
+        lua_string(command),
+        lua_string(workspace)
+    )
+}
+
+/// Lets a window placed by `exec_on` animate again, as others do. A value
+/// set this way outranks the exec rule. (Lua's `false` reads as missing to
+/// Hyprland, so it's the string.)
+pub fn animate_again(address: &str) -> String {
+    format!(
+        "hl.dsp.window.set_prop({{ prop = \"no_anim\", value = \"false\", window = {} }})",
+        lua_string(&format!("address:{address}"))
+    )
+}
+
 /// Ask a window to close, by its address, as `super+w` does: the app can
 /// still ask about unsaved work.
 pub fn close_window(address: &str) -> String {
@@ -212,6 +233,14 @@ mod tests {
             r#"hl.dsp.window.move({ workspace = "name:ren:2", follow = false })"#
         );
         assert_eq!(lua_string(r#"a"b\c"#), r#""a\"b\\c""#);
+        assert_eq!(
+            exec_on("kitty", "name:s1:1 silent"),
+            r#"hl.dsp.exec_cmd("kitty", { workspace = "name:s1:1 silent", no_anim = true })"#
+        );
+        assert_eq!(
+            animate_again("0x55a4"),
+            r#"hl.dsp.window.set_prop({ prop = "no_anim", value = "false", window = "address:0x55a4" })"#
+        );
         assert_eq!(
             close_window("0x55a4"),
             r#"hl.dsp.window.close({ window = "address:0x55a4" })"#

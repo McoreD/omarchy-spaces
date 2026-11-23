@@ -484,16 +484,73 @@ pub fn new(dir: Option<PathBuf>) -> Result<()> {
         save(&last);
     }
 
-    switch(&hypr, &id)?;
-    *store.entry(&id) = spaces::Entry {
-        folder: Some(dir.clone()),
-        created: state::now(),
-        ..Default::default()
+    // The terminal opens on the new space while you stay where you are, and
+    // you go there once its window is up, so you never see the space empty.
+    // Hyprland places it by an exec rule, which follows the process it
+    // starts down to the terminal. The rule also skips its pop-in, which
+    // would otherwise still be fading it in from nothing as you arrive;
+    // once you're there it animates like any other window.
+    let workspace = name::workspace_name(&id, 1);
+    let events = hypr.events().ok();
+    let command = terminal::command_in(&config.terminal(), &dir);
+    let placed = hypr
+        .dispatch(&hypr::exec_on(
+            &command,
+            &format!("name:{workspace} silent"),
+        ))
+        .is_ok();
+    let window = match (placed, events) {
+        (true, Some(events)) => wait_for_window(&events, &workspace, OPEN_TIMEOUT),
+        (true, None) => None,
+        (false, _) => {
+            terminal::launch(&config.terminal(), &dir)?;
+            None
+        }
     };
+    switch(&hypr, &id)?;
+    if let Some(address) = window
+        && let Err(e) = hypr.dispatch(&hypr::animate_again(&address))
+    {
+        eprintln!("space: warning: {e:#}");
+    }
+
+    // The watcher may have seen the space by now, and made its entry.
+    let mut store = Store::load(&paths::state_dir())?;
+    let entry = store.entry(&id);
+    entry.folder.get_or_insert(dir.clone());
+    if entry.created == 0 {
+        entry.created = state::now();
+    }
     store.save()?;
-    terminal::launch(&config.terminal(), &dir)?;
     println!("Opened a space in {}", paths::tilde(&dir));
     Ok(())
+}
+
+/// How long `space new` waits for its terminal before going to the space
+/// anyway, where the terminal then shows up when it can.
+const OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Waits until a window opens on `workspace` (Hyprland's `openwindow` event:
+/// address, workspace, class, title) and returns its address, or `None`
+/// once `timeout` passes.
+fn wait_for_window(
+    events: &std::sync::mpsc::Receiver<String>,
+    workspace: &str,
+    timeout: std::time::Duration,
+) -> Option<String> {
+    let deadline = std::time::Instant::now() + timeout;
+    while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+        let event = events.recv_timeout(left).ok()?;
+        if let Some(data) = event.strip_prefix("openwindow>>") {
+            let mut fields = data.split(',');
+            if let (Some(address), Some(on)) = (fields.next(), fields.next())
+                && on == workspace
+            {
+                return Some(format!("0x{}", address.trim_start_matches("0x")));
+            }
+        }
+    }
+    None
 }
 
 /// `space terminal`: a terminal in the folder you are in, so a new tab of a

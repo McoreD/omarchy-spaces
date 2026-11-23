@@ -24,6 +24,12 @@ struct Hyprland {
     next_address: u32,
     /// Whether Omarchy's `o.workspaces` Lua module is loaded.
     omarchy: bool,
+    /// Whether `hl.dsp.exec_cmd` takes rules, as Hyprland 0.56 does.
+    exec_rules: bool,
+    /// The fake home, which commands it runs see as `HOME`.
+    home: PathBuf,
+    /// Whoever listens to Hyprland's events, as `space watch` does.
+    listeners: Arc<Mutex<Vec<UnixStream>>>,
     /// Every dispatch received.
     dispatched: Vec<String>,
     next_named_id: i64,
@@ -127,6 +133,42 @@ impl Hyprland {
             Some(e[start..end].to_string())
         };
 
+        if expression.starts_with("hl.dsp.exec_cmd(") {
+            if !self.exec_rules {
+                return "error: exec_cmd: bad argument 2".into();
+            }
+            // Run it, as Hyprland does, and open its window where the rule
+            // says, without going there.
+            let start = "hl.dsp.exec_cmd(\"".len();
+            let end = expression.find("\", { workspace").unwrap();
+            let command = expression[start..end]
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\");
+            let workspace = field(expression, "workspace").unwrap();
+            let workspace = selector(workspace.trim_end_matches(" silent").to_string());
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&command)
+                .env("HOME", &self.home)
+                .status()
+                .unwrap();
+            self.ensure(&workspace);
+            self.windows.push(workspace.clone());
+            self.next_address += 1;
+            let address = self.next_address;
+            self.addresses.push(address);
+            // Hyprland says so once the window maps, a moment later, as a
+            // real terminal takes to start: by then whoever asked to be
+            // told has been heard.
+            let listeners = Arc::clone(&self.listeners);
+            thread::spawn(move || {
+                thread::sleep(std::time::Duration::from_millis(50));
+                for stream in listeners.lock().unwrap().iter_mut() {
+                    let _ = writeln!(stream, "openwindow>>{address:x},{workspace},kitty,zsh");
+                }
+            });
+            return "ok".into();
+        }
         if expression.starts_with("o.workspaces.") && !self.omarchy {
             return "error: attempt to index a nil value (global 'o')".into();
         }
@@ -143,6 +185,13 @@ impl Hyprland {
             };
             self.windows.remove(index);
             self.addresses.remove(index);
+        } else if expression.starts_with("hl.dsp.window.set_prop(") {
+            let address = field(expression, "window").unwrap();
+            let address = address.strip_prefix("address:0x").unwrap();
+            let address = u32::from_str_radix(address, 16).unwrap();
+            if !self.addresses.contains(&address) {
+                return "error: no such window".into();
+            }
         } else if expression.starts_with("o.workspaces.focus(") {
             let target = number(expression).unwrap().to_string();
             self.ensure(&target);
@@ -191,9 +240,13 @@ impl Env {
         fs::create_dir_all(root.path().join("home/Projects")).unwrap();
         let listener = UnixListener::bind(socket_dir.join(".socket.sock")).unwrap();
 
+        let listeners = Arc::new(Mutex::new(Vec::new()));
         let hypr = Arc::new(Mutex::new(Hyprland {
             active: "1".into(),
             omarchy: true,
+            exec_rules: true,
+            home: root.path().join("home"),
+            listeners: Arc::clone(&listeners),
             ..Default::default()
         }));
         hypr.lock().unwrap().ensure("1");
@@ -210,7 +263,6 @@ impl Env {
             }
         });
         let events = UnixListener::bind(socket_dir.join(".socket2.sock")).unwrap();
-        let listeners = Arc::new(Mutex::new(Vec::new()));
         let joined = Arc::clone(&listeners);
         thread::spawn(move || {
             for stream in events.incoming() {
@@ -282,6 +334,15 @@ impl Env {
         let link = self.cwds().join(pid.to_string());
         let _ = fs::remove_file(&link);
         std::os::unix::fs::symlink(dir, link).unwrap();
+    }
+
+    /// The address of the newest window, such as the terminal `space new`
+    /// opened.
+    fn newest_window(&self) -> String {
+        format!(
+            "0x{:x}",
+            self.hypr.lock().unwrap().addresses.last().unwrap()
+        )
     }
 
     fn close_window(&self, address: &str) {
@@ -522,13 +583,38 @@ fn new_opens_a_space_with_a_terminal_in_the_focused_terminals_folder() {
     assert_eq!(out, "Opened a space in ~/Projects/ren/src\n");
     assert_eq!(env.active(), "s1:1");
     assert_eq!(env.launched(1), [src.display().to_string()]);
+    // The terminal opened there first, without its pop-in, which would still
+    // be fading it in from nothing as you arrived; only then did you go
+    // there, so the space never shows empty. Then it animates as usual.
+    let dispatched = env.dispatched();
+    assert!(
+        dispatched[0].starts_with("hl.dsp.exec_cmd("),
+        "{dispatched:?}"
+    );
+    assert!(
+        dispatched[0].ends_with(r#"{ workspace = "name:s1:1 silent", no_anim = true })"#),
+        "{dispatched:?}"
+    );
+    let window = env.newest_window();
+    assert_eq!(
+        dispatched[2],
+        format!(
+            r#"hl.dsp.window.set_prop({{ prop = "no_anim", value = "false", window = "address:{window}" }})"#
+        )
+    );
+    assert_eq!(
+        dispatched[1],
+        r#"hl.dsp.focus({ workspace = "name:s1:1" })"#
+    );
+    assert_eq!(env.windows().last().unwrap(), "s1:1");
 
     // Until its terminal shows up, it goes by the folder it opened in, as
     // it will after: by that folder's checkout.
     let rows = env.ls_json();
     assert_eq!(rows[1]["id"], "s1");
     assert_eq!(rows[1]["label"], "ren");
-    env.add_terminal("s1:1", &src);
+    // Its terminal's shell starts.
+    env.cd(&env.newest_window(), &src);
     let rows = env.ls_json();
     assert_eq!(rows[1]["label"], "ren");
     assert_eq!(rows[1]["named"], false);
@@ -549,7 +635,7 @@ fn new_from_a_window_that_isnt_a_terminal_uses_the_spaces_folder() {
     let env = Env::new();
     let mail = env.dir("mail");
     env.ok(&["new", "mail"]);
-    env.add_terminal("s1:1", &mail);
+    env.cd(&env.newest_window(), &mail);
     env.add_window("s1:1");
     env.ok(&["ls"]);
 
@@ -652,9 +738,10 @@ fn go_finds_spaces_by_id_or_by_what_they_are_called() {
 fn spaces_end_with_their_windows_and_keep_the_order_they_were_made_in() {
     let env = Env::new();
     env.ok(&["new"]);
-    let first = env.add_terminal("s1:1", &env.dir("zebra"));
+    let first = env.newest_window();
+    env.cd(&first, &env.dir("zebra"));
     env.ok(&["new"]);
-    env.add_terminal("s2:1", &env.dir("apple"));
+    env.cd(&env.newest_window(), &env.dir("apple"));
     let labels = |env: &Env| -> Vec<String> {
         env.ls_json()
             .iter()
@@ -927,4 +1014,13 @@ fn watch_ends_with_hyprland() {
         thread::sleep(std::time::Duration::from_millis(20));
     }
     panic!("space watch kept running without Hyprland");
+}
+
+#[test]
+fn new_without_exec_rules_goes_there_and_then_opens_the_terminal() {
+    let env = Env::new();
+    env.hypr.lock().unwrap().exec_rules = false;
+    env.ok(&["new"]);
+    assert_eq!(env.active(), "s1:1");
+    assert_eq!(env.launched(1), [env.dir("").display().to_string()]);
 }
