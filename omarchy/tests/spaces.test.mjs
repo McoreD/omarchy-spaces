@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, badgeColor, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, tabsFor, windowMotion } from "../Spaces.mjs"
+import { appName, badgeColor, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, tabsFor, terminalLabels, windowMotion } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -13,7 +13,7 @@ const json = JSON.stringify([
 test("parses space ls --json", () => {
   const rows = parseRows(json)
   assert.equal(rows.length, 4)
-  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, folder: "", active: false, windows: 4, leftAt: 1000 })
+  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, folder: "", active: false, windows: 4, leftAt: 1000, terminals: [] })
   assert.equal(rows[3].windows, -1, "no count without Hyprland")
   assert.equal(rows[3].named, true)
   assert.throws(() => parseRows("space: error"), /unexpected/)
@@ -89,6 +89,30 @@ test("builds the active space's tabs", () => {
       { slot: 3, label: "Nvim", windows: 1, active: true },
     ],
   })
+})
+
+test("names a terminal's tab by what it runs, else its folder", () => {
+  const rows = parseRows(JSON.stringify([
+    { id: "home", terminals: [{ address: "0xa", slot: 1, folder: "/home/me", program: null, label: "~" }] },
+    { id: "s1", terminals: [
+      { address: "0xb", slot: 1, folder: "/p/ren", program: "claude", label: "claude" },
+      { address: "0xc", slot: 2, folder: "/p/ren/src", program: null, label: "src" },
+      { address: 7, label: "broken" },
+    ] },
+  ]))
+  const labels = terminalLabels(rows)
+  assert.deepEqual(labels, { "0xa": "~", "0xb": "claude", "0xc": "src" })
+
+  const workspaces = [{ id: -1337, name: "s1:1" }, { id: -1338, name: "s1:2" }, { id: -1339, name: "s1:3" }]
+  const windows = [
+    { workspaceId: -1337, address: "0xb", windowClass: "kitty", focus: 0 },
+    { workspaceId: -1338, address: "0xc", windowClass: "kitty", focus: 1 },
+    // Not a terminal, or not read yet: its class.
+    { workspaceId: -1339, address: "0xd", windowClass: "kitty", focus: 2 },
+  ]
+  const tabs = tabsFor(workspaces, windows, { id: -1337, name: "s1:1" }, labels).tabs
+  assert.deepEqual(tabs.map((t) => t.label), ["claude", "src", "Kitty"])
+  assert.equal(tabsFor(workspaces, windows, { id: -1337, name: "s1:1" }).tabs[0].label, "Kitty", "no labels: classes")
 })
 
 test("a new tab is empty until something opens on it", () => {

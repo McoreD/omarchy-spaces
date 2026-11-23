@@ -4,10 +4,10 @@
 //!
 //! Hyprland says when windows and workspaces change, on its event socket, so
 //! its state is read again only then. Nothing says when a shell changes
-//! folder, so the terminals' folders are read from `/proc`, which costs a few
-//! `readlink`s: the active space's every `FAST`, the rest every `SLOW`, and
-//! all of them at once when a window's title changes, as terminals retitle
-//! themselves on `cd`.
+//! folder or runs a program, so the terminals' shells are read from `/proc`,
+//! which costs a few small reads: the active space's every `FAST`, the rest
+//! every `SLOW`, and all of them at once when a window's title changes, as
+//! terminals retitle themselves on `cd` and when a command starts.
 //!
 //! It exits when Hyprland's event socket closes, when nobody reads what it
 //! prints, and when its binary has been replaced (`cargo install`), so that
@@ -15,7 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -28,9 +28,9 @@ use crate::spaces::Store;
 use crate::state::Last;
 use crate::terminal;
 
-/// How often the active space's terminals' folders are read.
+/// How often the active space's terminals' shells are read.
 const FAST: Duration = Duration::from_millis(200);
-/// How often every other terminal's folder is read, and the binary checked.
+/// How often every other terminal's shell is read, and the binary checked.
 const SLOW: Duration = Duration::from_secs(2);
 /// How long to let a burst of Hyprland events settle before reading its
 /// state again: opening a window sends several.
@@ -42,7 +42,7 @@ pub fn watch() -> Result<()> {
     let state_dir = paths::state_dir();
 
     let mut snapshot = commands::snapshot(&hypr)?;
-    let mut cwds: HashMap<u32, Option<PathBuf>> = HashMap::new();
+    let mut shells: HashMap<u32, Option<terminal::Shell>> = HashMap::new();
     let mut store = Store::load(&state_dir)?;
     let mut last = Last::load(&state_dir)?;
     let (mut store_seen, mut last_seen) = (
@@ -55,7 +55,8 @@ pub fn watch() -> Result<()> {
     let mut out = std::io::stdout().lock();
 
     loop {
-        // The terminals' folders: the active space's now, the rest when due.
+        // What the terminals' shells are doing: the active space's now, the
+        // rest when due.
         let now = Instant::now();
         if now >= slow_at {
             read_all = true;
@@ -65,10 +66,10 @@ pub fn watch() -> Result<()> {
             }
         }
         let pids: HashSet<u32> = snapshot.space_windows.iter().map(|w| w.pid).collect();
-        cwds.retain(|pid, _| pids.contains(pid));
+        shells.retain(|pid, _| pids.contains(pid));
         for window in &snapshot.space_windows {
             if read_all || snapshot.active.as_deref() == Some(window.space.as_str()) {
-                cwds.insert(window.pid, terminal::shell_cwd(window.pid));
+                shells.insert(window.pid, terminal::shell(window.pid));
             }
         }
         read_all = false;
@@ -84,8 +85,9 @@ pub fn watch() -> Result<()> {
             last_seen = seen;
         }
 
-        let live =
-            commands::live_from(&snapshot, |window| cwds.get(&window.pid).cloned().flatten());
+        let live = commands::live_from(&snapshot, |window| {
+            shells.get(&window.pid).cloned().flatten()
+        });
         let rows = commands::rows(&mut store, Some(&live), &last);
         if let Err(e) = store.save() {
             eprintln!("space: warning: {e:#}");
@@ -130,7 +132,8 @@ pub fn watch() -> Result<()> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Change {
     Nothing,
-    /// A title changed, which terminals do on `cd`: read their folders.
+    /// A title changed, which terminals do on `cd` and as a command starts:
+    /// read their shells.
     Folders,
     /// Windows or workspaces came, went or moved: read Hyprland's state.
     Windows,

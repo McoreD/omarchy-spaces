@@ -20,6 +20,9 @@ export function parseRows(text) {
       active: row.active === true,
       windows: typeof row.windows === "number" ? row.windows : -1,
       leftAt: typeof row.left_at === "number" ? row.left_at : 0,
+      terminals: (Array.isArray(row.terminals) ? row.terminals : [])
+        .filter((t) => t && typeof t.address === "string" && typeof t.label === "string")
+        .map((t) => ({ address: t.address, label: t.label })),
     }))
 }
 
@@ -137,12 +140,23 @@ export function appName(windowClass) {
   return name ? name[0].toUpperCase() + name.slice(1) : ""
 }
 
+// What each terminal window's tab shows, by its address, from the rows:
+// what it runs, or its folder.
+export function terminalLabels(rows) {
+  const labels = {}
+  for (const row of rows || []) {
+    for (const terminal of row.terminals || []) labels[terminal.address] = terminal.label
+  }
+  return labels
+}
+
 // The active space's tabs from Hyprland's workspaces and windows.
 //   workspaces: [{ id, name }]
-//   windows:    [{ workspaceId, windowClass, focus }]  (focus: lower is more recent)
+//   windows:    [{ workspaceId, address, windowClass, focus }]  (focus: lower is more recent)
 //   active:     { id, name } of the focused workspace
+//   labels:     terminalLabels(rows), which name terminals better than their class
 // Returns { space, tabs: [{ slot, label, windows, active }] } in slot order.
-export function tabsFor(workspaces, windows, active) {
+export function tabsFor(workspaces, windows, active, labels) {
   const here = locate(active ? active.id : 0, active ? active.name : "")
   const block = (id) => Math.floor((id - 1) / SLOTS)
   const activeBlock = block(active && active.id > 0 ? active.id : 1)
@@ -172,7 +186,8 @@ export function tabsFor(workspaces, windows, active) {
     const focus = typeof window.focus === "number" ? window.focus : Infinity
     // The most recently focused window names the tab.
     if (!tab.label || focus < tab.focus) {
-      tab.label = appName(window.windowClass)
+      const terminal = labels && Object.prototype.hasOwnProperty.call(labels, window.address) ? labels[window.address] : ""
+      tab.label = terminal || appName(window.windowClass)
       tab.focus = focus
     }
   }

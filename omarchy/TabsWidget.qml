@@ -126,6 +126,7 @@ BarWidget {
 
   Tabs {
     id: tabs
+    rows: root.service && root.service.watch ? root.service.watch.rows : []
   }
 
   // The background, from the screen's edge to where the windows begin, over

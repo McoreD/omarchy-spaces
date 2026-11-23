@@ -4,12 +4,16 @@ import QtQuick
 import Quickshell.Hyprland
 import "Spaces.mjs" as Spaces
 
-// The active space's tabs, which are its workspaces, read live from Hyprland.
+// The active space's tabs, which are its workspaces, read live from Hyprland,
+// with what terminals run from `space watch`.
 Item {
   id: root
 
   // Bumped after Hyprland has answered a refresh, for anything bindings miss.
   property int revision: 0
+  // The spaces from `space watch`, which name terminals' tabs by what they
+  // run, or their folder.
+  property var rows: []
 
   readonly property var model: {
     root.revision
@@ -22,11 +26,13 @@ Item {
       var workspace = toplevels[i].workspace
       windows.push({
         workspaceId: workspace ? workspace.id : (ipc.workspace ? ipc.workspace.id : 0),
+        address: ipc.address || "",
         windowClass: ipc.class || "",
         focus: typeof ipc.focusHistoryID === "number" ? ipc.focusHistoryID : 1e9,
       })
     }
-    return Spaces.tabsFor(workspaces, windows, active ? { id: active.id, name: active.name } : null)
+    var labels = Spaces.terminalLabels(root.rows)
+    return Spaces.tabsFor(workspaces, windows, active ? { id: active.id, name: active.name } : null, labels)
   }
 
   // Window classes and focus order come from Hyprland's IPC, which Quickshell

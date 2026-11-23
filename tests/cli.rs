@@ -336,6 +336,19 @@ impl Env {
         std::os::unix::fs::symlink(dir, link).unwrap();
     }
 
+    /// The terminal at `address` starts running `program`, or goes back to
+    /// its prompt with `None`.
+    fn run_program(&self, address: &str, program: Option<&str>) {
+        let pid = 1000 + u32::from_str_radix(address.trim_start_matches("0x"), 16).unwrap();
+        let file = self.cwds().join(format!("{pid}.program"));
+        match program {
+            Some(program) => fs::write(file, program).unwrap(),
+            None => {
+                let _ = fs::remove_file(file);
+            }
+        }
+    }
+
     /// The address of the newest window, such as the terminal `space new`
     /// opened.
     fn newest_window(&self) -> String {
@@ -577,7 +590,10 @@ fn ws_new_opens_a_tab_with_a_terminal_in_the_spaces_folder() {
         dispatched[0].ends_with(r#"{ workspace = "name:s1:2 silent", no_anim = true })"#),
         "{dispatched:?}"
     );
-    assert_eq!(dispatched[1], r#"hl.dsp.focus({ workspace = "name:s1:2" })"#);
+    assert_eq!(
+        dispatched[1],
+        r#"hl.dsp.focus({ workspace = "name:s1:2" })"#
+    );
     let window = env.newest_window();
     assert_eq!(
         dispatched[2],
@@ -864,6 +880,35 @@ fn ls_lists_spaces_with_counts() {
     assert_eq!(rows[1]["workspaces"], json!([1, 2]));
     assert_eq!(rows[0]["folder"], Value::Null);
     assert_eq!(rows[2]["left_at"], 0, "never left");
+}
+
+#[test]
+fn ls_lists_each_spaces_terminals_by_what_they_run() {
+    let env = Env::new();
+    let ren = env.dir("Projects/ren");
+    let notes = env.add_terminal("1", &env.dir(""));
+    env.add_window("2");
+    let agent = env.add_terminal("s1:1", &ren);
+    let shell = env.add_terminal("s1:2", &ren.join("src"));
+    env.run_program(&agent, Some("claude"));
+
+    let rows = env.ls_json();
+    assert_eq!(
+        rows[0]["terminals"],
+        json!([{ "address": notes, "slot": 1, "folder": env.dir("").display().to_string(), "program": null, "label": "~" }])
+    );
+    assert_eq!(
+        rows[1]["terminals"],
+        json!([
+            { "address": agent, "slot": 1, "folder": ren.display().to_string(), "program": "claude", "label": "claude" },
+            { "address": shell, "slot": 2, "folder": ren.join("src").display().to_string(), "program": null, "label": "src" },
+        ])
+    );
+    // The space still goes by its first terminal's checkout.
+    assert_eq!(rows[1]["label"], "ren");
+
+    env.run_program(&agent, None);
+    assert_eq!(env.ls_json()[1]["terminals"][0]["label"], "ren");
 }
 
 #[test]

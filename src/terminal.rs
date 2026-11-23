@@ -8,17 +8,50 @@ use anyhow::{Context, Result};
 
 use crate::paths;
 
+/// What the shell of a terminal window is doing: the folder it's in, and
+/// the program it's running, unless it's at its prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shell {
+    pub cwd: PathBuf,
+    /// The command running in the terminal's foreground (`claude`, `nvim`),
+    /// or `None` at the prompt.
+    pub program: Option<String>,
+}
+
+impl Shell {
+    /// What a tab shows for this terminal: what it's running, or else the
+    /// folder it's in.
+    pub fn label(&self) -> String {
+        self.program
+            .clone()
+            .unwrap_or_else(|| folder_name(&self.cwd))
+    }
+}
+
 /// The folder the shell of the terminal window run by `pid` is in, or `None`
-/// when the window isn't a terminal. As `omarchy-cmd-terminal-cwd` decides:
-/// a terminal's shell is its newest child that leads its own session on a
-/// tty and is a login shell (listed in `/etc/shells`). Other apps' children,
-/// such as kitty's `kitten` helpers or a browser's, don't qualify.
+/// when the window isn't a terminal.
+pub fn shell_cwd(pid: u32) -> Option<PathBuf> {
+    shell(pid).map(|shell| shell.cwd)
+}
+
+/// The shell of the terminal window run by `pid`, or `None` when the window
+/// isn't a terminal. As `omarchy-cmd-terminal-cwd` decides: a terminal's
+/// shell is its newest child that leads its own session on a tty and is a
+/// login shell (listed in `/etc/shells`). Other apps' children, such as
+/// kitty's `kitten` helpers or a browser's, don't qualify.
 ///
 /// For tests, `RENSPACE_FAKE_CWDS` names a folder of symlinks, one per pid,
-/// pointing at that "terminal's" folder.
-pub fn shell_cwd(pid: u32) -> Option<PathBuf> {
+/// pointing at that "terminal's" folder, and of `<pid>.program` files
+/// holding what it runs.
+pub fn shell(pid: u32) -> Option<Shell> {
     if let Some(fake) = std::env::var_os("RENSPACE_FAKE_CWDS") {
-        return std::fs::read_link(Path::new(&fake).join(pid.to_string())).ok();
+        let fake = Path::new(&fake);
+        let cwd = std::fs::read_link(fake.join(pid.to_string())).ok()?;
+        let program = std::fs::read_to_string(fake.join(format!("{pid}.program")))
+            .ok()
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty());
+        return Some(Shell { cwd, program });
     }
     let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
     let mut children: Vec<u32> = std::fs::read_dir(format!("/proc/{pid}/task"))
@@ -32,29 +65,56 @@ pub fn shell_cwd(pid: u32) -> Option<PathBuf> {
         })
         .collect();
     children.sort_unstable();
-    children
-        .into_iter()
-        .rev()
-        .find(|&child| is_shell(child, &shells))
-        .and_then(|child| std::fs::canonicalize(format!("/proc/{child}/cwd")).ok())
+    let (shell, stat) = children.into_iter().rev().find_map(|child| {
+        let stat = Stat::read(child)?;
+        is_shell(child, &stat, &shells).then_some((child, stat))
+    })?;
+    let cwd = std::fs::canonicalize(format!("/proc/{shell}/cwd")).ok()?;
+    Some(Shell {
+        cwd,
+        program: foreground(&stat, &shells),
+    })
 }
 
-fn is_shell(pid: u32, shells: &str) -> bool {
-    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-        return false;
-    };
-    // The command name, in parentheses, can hold spaces; the fields after
-    // it are state, ppid, pgrp, session, tty_nr.
-    let Some((_, rest)) = stat.rsplit_once(") ") else {
-        return false;
-    };
-    let fields: Vec<&str> = rest.split_whitespace().collect();
-    let (Some(session), Some(tty)) = (fields.get(3), fields.get(4)) else {
-        return false;
-    };
-    if session.parse::<u32>().ok() != Some(pid) || *tty == "0" {
-        return false;
+/// The fields of `/proc/<pid>/stat` that say how a process sits on its tty.
+struct Stat {
+    pgrp: i64,
+    session: i64,
+    tty: i64,
+    /// The process group in the foreground of its tty.
+    tpgid: i64,
+}
+
+impl Stat {
+    fn read(pid: u32) -> Option<Self> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // The command name, in parentheses, can hold spaces; the fields after
+        // it are state, ppid, pgrp, session, tty_nr, tpgid.
+        let (_, rest) = stat.rsplit_once(") ")?;
+        let fields: Vec<i64> = rest
+            .split_whitespace()
+            .skip(1)
+            .take(5)
+            .map(|f| f.parse().ok())
+            .collect::<Option<_>>()?;
+        let &[_ppid, pgrp, session, tty, tpgid] = fields.as_slice() else {
+            return None;
+        };
+        Some(Self {
+            pgrp,
+            session,
+            tty,
+            tpgid,
+        })
     }
+}
+
+fn is_shell(pid: u32, stat: &Stat, shells: &str) -> bool {
+    stat.session == i64::from(pid) && stat.tty != 0 && is_shell_binary(pid, shells)
+}
+
+/// Whether `pid` runs one of the shells `/etc/shells` lists.
+fn is_shell_binary(pid: u32, shells: &str) -> bool {
     let Ok(exe) = std::fs::canonicalize(format!("/proc/{pid}/exe")) else {
         return false;
     };
@@ -64,6 +124,49 @@ fn is_shell(pid: u32, shells: &str) -> bool {
             && !line.is_empty()
             && std::fs::canonicalize(line).is_ok_and(|shell| shell == exe)
     })
+}
+
+/// What runs in the foreground of the shell's tty, when it isn't the shell
+/// at its prompt: the leader of the foreground process group, which is the
+/// command you ran, or the first of a pipeline. Another shell started from
+/// this one (`bash`, `nix develop`) counts as a prompt too.
+fn foreground(shell: &Stat, shells: &str) -> Option<String> {
+    if shell.tpgid <= 0 || shell.tpgid == shell.pgrp {
+        return None;
+    }
+    let leader = u32::try_from(shell.tpgid).ok()?;
+    if is_shell_binary(leader, shells) {
+        return None;
+    }
+    program_name(leader)
+}
+
+/// What to call the program `pid` runs: its command name, as `ps` shows it,
+/// read in full from its arguments when the kernel cut it short, and up to
+/// any `: ` (tmux calls its client `tmux: client`).
+fn program_name(pid: u32) -> Option<String> {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    let comm = comm.trim_end_matches('\n');
+    // The kernel keeps 15 bytes of it.
+    let full = if comm.len() >= 15 {
+        std::fs::read(format!("/proc/{pid}/cmdline"))
+            .ok()
+            .and_then(|cmdline| {
+                cmdline
+                    .split(|&b| b == 0)
+                    .map(|arg| String::from_utf8_lossy(arg).into_owned())
+                    .map(|arg| arg.rsplit('/').next().unwrap_or_default().to_string())
+                    .find(|base| base.starts_with(comm))
+            })
+    } else {
+        None
+    };
+    let name = full.as_deref().unwrap_or(comm);
+    let name = name
+        .split_once(": ")
+        .map_or(name, |(before, _)| before)
+        .trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// The checkout `dir` is in (a worktree's own folder), else `dir` itself, as
@@ -170,7 +273,34 @@ mod tests {
     #[test]
     fn finds_no_shell_for_a_non_terminal() {
         // This test process's children aren't session-leading shells.
-        assert_eq!(shell_cwd(std::process::id()), None);
-        assert_eq!(shell_cwd(u32::MAX), None);
+        assert_eq!(shell(std::process::id()), None);
+        assert_eq!(shell(u32::MAX), None);
+    }
+
+    #[test]
+    fn names_programs_by_their_command() {
+        assert_eq!(
+            program_name(std::process::id())
+                .as_deref()
+                .map(str::is_empty),
+            Some(false)
+        );
+        let child = Command::new("sleep").arg("5").spawn().unwrap();
+        assert_eq!(program_name(child.id()).as_deref(), Some("sleep"));
+        let mut child = child;
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(program_name(u32::MAX), None);
+    }
+
+    #[test]
+    fn labels_a_terminal_by_its_program_else_its_folder() {
+        let at = |cwd: &Path, program: Option<&str>| Shell {
+            cwd: cwd.to_path_buf(),
+            program: program.map(String::from),
+        };
+        assert_eq!(at(Path::new("/p/ren"), Some("claude")).label(), "claude");
+        assert_eq!(at(Path::new("/p/ren/src"), None).label(), "src");
+        assert_eq!(at(&paths::home(), None).label(), "~");
     }
 }

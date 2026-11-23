@@ -153,21 +153,24 @@ pub fn move_window(slot: u8, silent: bool) -> Result<()> {
 
 // ---------------------------------------------------------------- spaces
 
-/// A terminal window in a space, and the folder its shell is in.
+/// A terminal window in a space, the folder its shell is in and what it
+/// runs.
 #[derive(Debug, Clone)]
 pub(crate) struct Terminal {
     address: String,
     slot: u8,
     pid: u32,
-    cwd: PathBuf,
+    shell: terminal::Shell,
 }
 
-/// A window on one of a space's workspaces, which may be a terminal.
+/// A window on one of a space's workspaces, `home`'s included, which may be
+/// a terminal.
 #[derive(Debug, Clone)]
 pub(crate) struct SpaceWindow {
     pub address: String,
     pub pid: u32,
     pub space: String,
+    /// The tab it's on; 0 for a `home` workspace that has no number.
     pub slot: u8,
 }
 
@@ -178,7 +181,7 @@ pub(crate) struct Snapshot {
     pub active: Option<String>,
     windows: BTreeMap<String, u32>,
     workspaces: BTreeMap<String, BTreeSet<u8>>,
-    /// The windows on spaces' workspaces, `home` aside.
+    /// The windows on spaces' workspaces, `home`'s included.
     pub space_windows: Vec<SpaceWindow>,
 }
 
@@ -231,29 +234,27 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
             .windows
             .entry(location.space().to_string())
             .or_default() += 1;
-        if let Location::Space { name: space, slot } = location
-            && let Ok(pid) = u32::try_from(client.pid)
-        {
+        if let Ok(pid) = u32::try_from(client.pid) {
             snapshot.space_windows.push(SpaceWindow {
                 address: client.address,
                 pid,
-                space,
-                slot,
+                space: location.space().to_string(),
+                slot: location.slot().unwrap_or(0),
             });
         }
     }
     Ok(snapshot)
 }
 
-/// Makes the live view from a snapshot, with `cwd` saying which windows are
-/// terminals and which folder each one's shell is in.
+/// Makes the live view from a snapshot, with `shell` saying which windows
+/// are terminals, which folder each one's shell is in and what it runs.
 pub(crate) fn live_from(
     snapshot: &Snapshot,
-    mut cwd: impl FnMut(&SpaceWindow) -> Option<PathBuf>,
+    mut shell: impl FnMut(&SpaceWindow) -> Option<terminal::Shell>,
 ) -> Live {
     let mut terminals: BTreeMap<String, Vec<Terminal>> = BTreeMap::new();
     for window in &snapshot.space_windows {
-        if let Some(cwd) = cwd(window) {
+        if let Some(shell) = shell(window) {
             terminals
                 .entry(window.space.clone())
                 .or_default()
@@ -261,7 +262,7 @@ pub(crate) fn live_from(
                     address: window.address.clone(),
                     slot: window.slot,
                     pid: window.pid,
-                    cwd,
+                    shell,
                 });
         }
     }
@@ -279,7 +280,7 @@ pub(crate) fn live_from(
 
 fn live(hypr: &Hypr) -> Result<Live> {
     Ok(live_from(&snapshot(hypr)?, |window| {
-        terminal::shell_cwd(window.pid)
+        terminal::shell(window.pid)
     }))
 }
 
@@ -305,6 +306,34 @@ pub struct Row {
     /// When the space was last left, in Unix milliseconds, or 0 if never.
     /// Larger is more recent; the sidebar starts on the most recent one.
     pub left_at: u64,
+    /// Its terminal windows, oldest first. Empty without Hyprland.
+    pub terminals: Vec<TerminalRow>,
+}
+
+/// A terminal window, as the bar names its tab.
+#[derive(Debug, Serialize)]
+pub struct TerminalRow {
+    /// Hyprland's address for the window: `0x55a4...`.
+    pub address: String,
+    pub slot: u8,
+    /// The folder its shell is in.
+    pub folder: PathBuf,
+    /// What runs in it (`claude`, `nvim`), or `None` at the prompt.
+    pub program: Option<String>,
+    /// What its tab shows: the program, or else the folder's name.
+    pub label: String,
+}
+
+impl From<&Terminal> for TerminalRow {
+    fn from(t: &Terminal) -> Self {
+        Self {
+            address: t.address.clone(),
+            slot: t.slot,
+            folder: t.shell.cwd.clone(),
+            program: t.shell.program.clone(),
+            label: t.shell.label(),
+        }
+    }
 }
 
 /// Brings what the store knows about a space up to date with its terminals,
@@ -323,7 +352,7 @@ fn describe(
         .or_else(|| terminals.first());
     if let Some(terminal) = followed {
         entry.anchor = Some(terminal.address.clone());
-        entry.folder = Some(terminal.cwd.clone());
+        entry.folder = Some(terminal.shell.cwd.clone());
     } else {
         entry.anchor = None;
     }
@@ -378,6 +407,10 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
             }),
             last: visit.map(|v| v.slot).unwrap_or(1),
             left_at: visit.map(|v| v.at).unwrap_or(0),
+            terminals: live
+                .and_then(|l| l.terminals.get(id))
+                .map(|list| list.iter().map(TerminalRow::from).collect())
+                .unwrap_or_default(),
         }
     };
 
@@ -956,7 +989,10 @@ mod tests {
             address: address.into(),
             slot,
             pid,
-            cwd: cwd.into(),
+            shell: terminal::Shell {
+                cwd: cwd.into(),
+                program: None,
+            },
         }
     }
 
@@ -1042,6 +1078,7 @@ mod tests {
             workspaces: None,
             last: 1,
             left_at: 0,
+            terminals: Vec::new(),
         }
     }
 
