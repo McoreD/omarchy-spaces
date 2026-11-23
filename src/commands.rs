@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
@@ -28,7 +28,9 @@ pub enum Target {
     Prev,
 }
 
-/// `space ws <n|new|next|prev>`: a workspace of the active space.
+/// `space ws <n|new|next|prev>`: a workspace of the active space. A space's
+/// new tab opens with a terminal in the space's folder, as a new space does,
+/// so it never shows empty; `home`'s is Omarchy's next workspace, empty.
 pub fn ws(target: Target) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let active = hypr.active_workspace()?;
@@ -47,8 +49,18 @@ pub fn ws(target: Target) -> Result<()> {
         return Ok(());
     }
 
-    focus(&hypr, here.space(), slot)?;
-    remember(here.space(), slot);
+    let space = here.space();
+    if target == Target::New && space != HOME {
+        let config = Config::load()?;
+        let dir = space_folder(&hypr, space)?;
+        let workspace = name::workspace_name(space, slot);
+        open_terminal_then(&hypr, &config, &dir, &workspace, || {
+            focus(&hypr, space, slot)
+        })?;
+    } else {
+        focus(&hypr, space, slot)?;
+    }
+    remember(space, slot);
     Ok(())
 }
 
@@ -453,6 +465,21 @@ fn here_folder(hypr: &Hypr) -> Result<PathBuf> {
         .unwrap_or_else(paths::home))
 }
 
+/// The folder a space's new tab opens in: the space's own, its checkout's
+/// when it's in one, else the folder you are in.
+fn space_folder(hypr: &Hypr, space: &str) -> Result<PathBuf> {
+    let (rows, _) = load_rows(Some(hypr))?;
+    match rows
+        .into_iter()
+        .find(|r| r.id == space)
+        .and_then(|r| r.folder)
+        .filter(|dir| dir.is_dir())
+    {
+        Some(dir) => Ok(dir),
+        None => here_folder(hypr),
+    }
+}
+
 /// `space new [dir]`: a new space in `dir`, by default the folder you are
 /// in, with a terminal open there. It is called after the folder that
 /// terminal is in, and follows it.
@@ -484,35 +511,8 @@ pub fn new(dir: Option<PathBuf>) -> Result<()> {
         save(&last);
     }
 
-    // The terminal opens on the new space while you stay where you are, and
-    // you go there once its window is up, so you never see the space empty.
-    // Hyprland places it by an exec rule, which follows the process it
-    // starts down to the terminal. The rule also skips its pop-in, which
-    // would otherwise still be fading it in from nothing as you arrive;
-    // once you're there it animates like any other window.
     let workspace = name::workspace_name(&id, 1);
-    let events = hypr.events().ok();
-    let command = terminal::command_in(&config.terminal(), &dir);
-    let placed = hypr
-        .dispatch(&hypr::exec_on(
-            &command,
-            &format!("name:{workspace} silent"),
-        ))
-        .is_ok();
-    let window = match (placed, events) {
-        (true, Some(events)) => wait_for_window(&events, &workspace, OPEN_TIMEOUT),
-        (true, None) => None,
-        (false, _) => {
-            terminal::launch(&config.terminal(), &dir)?;
-            None
-        }
-    };
-    switch(&hypr, &id)?;
-    if let Some(address) = window
-        && let Err(e) = hypr.dispatch(&hypr::animate_again(&address))
-    {
-        eprintln!("space: warning: {e:#}");
-    }
+    open_terminal_then(&hypr, &config, &dir, &workspace, || switch(&hypr, &id))?;
 
     // The watcher may have seen the space by now, and made its entry.
     let mut store = Store::load(&paths::state_dir())?;
@@ -526,7 +526,45 @@ pub fn new(dir: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// How long `space new` waits for its terminal before going to the space
+/// Opens a terminal in `dir` on `workspace` (a space's tab) while you stay
+/// where you are, then goes there with `arrive` once its window is up, so you
+/// never see the tab empty. Hyprland places it by an exec rule, which follows
+/// the process it starts down to the terminal. The rule also skips its
+/// pop-in, which would otherwise still be fading it in from nothing as you
+/// arrive; once you're there it animates like any other window.
+fn open_terminal_then(
+    hypr: &Hypr,
+    config: &Config,
+    dir: &Path,
+    workspace: &str,
+    arrive: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let events = hypr.events().ok();
+    let command = terminal::command_in(&config.terminal(), dir);
+    let placed = hypr
+        .dispatch(&hypr::exec_on(
+            &command,
+            &format!("name:{workspace} silent"),
+        ))
+        .is_ok();
+    let window = match (placed, events) {
+        (true, Some(events)) => wait_for_window(&events, workspace, OPEN_TIMEOUT),
+        (true, None) => None,
+        (false, _) => {
+            terminal::launch(&config.terminal(), dir)?;
+            None
+        }
+    };
+    arrive()?;
+    if let Some(address) = window
+        && let Err(e) = hypr.dispatch(&hypr::animate_again(&address))
+    {
+        eprintln!("space: warning: {e:#}");
+    }
+    Ok(())
+}
+
+/// How long a new space or tab waits for its terminal before going there
 /// anyway, where the terminal then shows up when it can.
 const OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -553,8 +591,8 @@ fn wait_for_window(
     None
 }
 
-/// `space terminal`: a terminal in the folder you are in, so a new tab of a
-/// space opens on its folder rather than home.
+/// `space terminal`: a terminal in the folder you are in, so an empty tab of
+/// a space opens on its folder rather than home.
 pub fn open_terminal() -> Result<()> {
     let config = Config::load()?;
     let dir = match Hypr::from_env() {
@@ -698,8 +736,7 @@ pub fn close(target: Option<String>) -> Result<()> {
 /// closing a window left the workspace you are on empty. An emptied tab
 /// doesn't linger: you go to the space's next tab with windows, else the one
 /// before; with none left, the space ends and you go back to the space you
-/// were in before it, or `home`. Tabs made empty on purpose (`space ws new`)
-/// never get here. Nothing happens if things moved on since: you left that
+/// were in before it, or `home`. Nothing happens if things moved on since: you left that
 /// workspace, or something opened on it.
 pub fn emptied(workspace: &str) -> Result<()> {
     let hypr = Hypr::from_env()?;
@@ -913,7 +950,6 @@ fn run_picker(command: &str, input: &str) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn terminal(address: &str, slot: u8, pid: u32, cwd: &str) -> Terminal {
         Terminal {

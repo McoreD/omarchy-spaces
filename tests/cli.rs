@@ -550,11 +550,41 @@ fn ws_new_next_and_prev_move_between_a_spaces_tabs() {
     assert_eq!(env.active(), "ren:3");
     env.ok(&["ws", "new"]);
     assert_eq!(env.active(), "ren:4", "after the last tab");
-
-    // The empty new tab goes away when left, as Hyprland does.
     env.ok(&["ws", "1"]);
     env.ok(&["ws", "new"]);
-    assert_eq!(env.active(), "ren:4");
+    assert_eq!(env.active(), "ren:5", "the new tab kept its terminal");
+}
+
+#[test]
+fn ws_new_opens_a_tab_with_a_terminal_in_the_spaces_folder() {
+    let env = Env::new();
+    let ren = env.dir("Projects/ren");
+    fs::create_dir_all(ren.join(".git")).unwrap();
+    let src = env.dir("Projects/ren/src");
+    env.add_terminal("s1:1", &src);
+    env.set_active("s1:1");
+    env.ok(&["ls"]);
+    env.dispatched();
+
+    env.ok(&["ws", "new"]);
+    assert_eq!(env.active(), "s1:2");
+    assert_eq!(env.windows().last().unwrap(), "s1:2");
+    // The space's checkout, not the subfolder its terminal is in.
+    assert_eq!(env.launched(1), [ren.display().to_string()]);
+    // As with a new space: the terminal opens there first, then you go.
+    let dispatched = env.dispatched();
+    assert!(
+        dispatched[0].ends_with(r#"{ workspace = "name:s1:2 silent", no_anim = true })"#),
+        "{dispatched:?}"
+    );
+    assert_eq!(dispatched[1], r#"hl.dsp.focus({ workspace = "name:s1:2" })"#);
+    let window = env.newest_window();
+    assert_eq!(
+        dispatched[2],
+        format!(
+            r#"hl.dsp.window.set_prop({{ prop = "no_anim", value = "false", window = "address:{window}" }})"#
+        )
+    );
 }
 
 #[test]
@@ -793,8 +823,8 @@ fn terminal_opens_in_the_focused_terminals_folder_or_the_spaces() {
     env.set_active("s1:1");
     env.ok(&["ls"]);
 
-    // A new, empty tab of the space: its folder.
-    env.ok(&["ws", "new"]);
+    // An empty tab of the space: its folder.
+    env.set_active("s1:2");
     env.ok(&["terminal"]);
     // A tab whose terminal is elsewhere: that terminal's folder.
     env.add_terminal("s1:2", &docs);

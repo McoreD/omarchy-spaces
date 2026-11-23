@@ -79,8 +79,8 @@ end
 -- A tab emptied by closing its last window doesn't linger, however the
 -- window went (super+w, `exit` in a terminal, an app quitting): `space
 -- emptied` goes on to another of the space's tabs, or, with none left, ends
--- the space and goes back to where you were before it. Tabs made empty on
--- purpose (super+t) stay, as only a close gets here. The closing window
+-- the space and goes back to where you were before it. Only a close gets
+-- here, so an empty workspace you go to yourself stays. The closing window
 -- still counts until the next loop, so look then.
 hl.on("window.close", function(window)
   local workspace = window and window.workspace

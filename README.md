@@ -8,7 +8,7 @@ A space is called after the folder its first terminal is in: the repository's fo
 
 The spaces have their own column down the left of the screen, and the active space's tabs sit beside it on Omarchy's bar, in place of its workspaces. Collapsed, the column is a rail of badges, one per space: two letters for its name, as T3 Code marks projects, in a colour from the theme that stays with the name, with the space you're in outlined. Press `super+b`, or click the toggle at its top, to expand it into the spaces sidebar, with each space's name: your windows and the bar's tabs slide aside to reveal it, and the keyboard stays with your windows. Press `super+p` to search it.
 
-Click `+` at the end of the list to open a new space with a terminal in the folder you are in, or home if you aren't in one: you go there once the terminal is up, so you never see the space empty. Right-click a space to rename or close it. The sidebar takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
+Click `+` at the end of the list to open a new space with a terminal in the folder you are in, or home if you aren't in one: you go there once the terminal is up, so you never see the space empty. A new tab, from `super+t` or the `+` after the tabs, opens the same way, with a terminal in the space's folder. Right-click a space to rename or close it. The sidebar takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
 
 ## Install
 
@@ -24,13 +24,13 @@ just setup     # add the tabs to the bar, the sidebar and the keys
 | `super+b` | Expand or collapse the spaces sidebar |
 | `super+p` | Find a space: type to filter, Enter to switch, Escape to stop. Expands the sidebar for the search if it's collapsed |
 | `super+enter` | Terminal in the folder you are in; on an empty tab, the space's folder |
-| `super+t` | New tab |
+| `super+t` | New tab, with a terminal in the space's folder |
 | `super+1..0` | Go to tab N |
 | `super+tab` / `super+shift+tab` | Next / previous tab |
 | `super+shift+1..0` | Move the window to tab N |
 | `super+shift+alt+1..0` | Move the window to tab N, staying where you are |
 
-In `home`, the tab keys behave exactly as Omarchy's workspace keys.
+In `home`, the tab keys behave exactly as Omarchy's workspace keys, so a new tab there opens empty.
 
 ## CLI
 
