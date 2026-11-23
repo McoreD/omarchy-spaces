@@ -1,0 +1,112 @@
+//! `~/.config/renspace/config.toml`, the global config.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use serde::Deserialize;
+
+use crate::paths;
+
+/// Pickers for `space go` with no name, used in this order when the config
+/// names none: space names on stdin, the chosen line on stdout, run with
+/// `sh -c`. Omarchy's walker needs its elephant service running, so vicinae,
+/// whose server is usually up already, goes first when it is installed.
+pub const DEFAULT_PICKERS: &[(&str, &str)] = &[
+    (
+        "vicinae",
+        "vicinae dmenu --placeholder 'Switch space' --no-quick-look",
+    ),
+    ("walker", "walker --dmenu --placeholder 'Switch space'"),
+];
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Config {
+    /// Directories scanned for folders containing `.renspace.toml`.
+    pub roots: Vec<String>,
+    /// How many levels below each root to look.
+    pub scan_depth: usize,
+    /// A dmenu-style command for `space go` with no name.
+    pub picker: Option<String>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            roots: vec!["~/Projects".into(), "~/Spaces".into()],
+            scan_depth: 3,
+            picker: None,
+        }
+    }
+}
+
+impl Config {
+    /// Reads the config file, or the defaults when there is none.
+    pub fn load() -> Result<Self> {
+        Self::load_from(&paths::config_file())
+    }
+
+    pub fn load_from(path: &Path) -> Result<Self> {
+        match fs::read_to_string(path) {
+            Ok(text) => {
+                toml::from_str(&text).with_context(|| format!("can't read {}", paths::tilde(path)))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(e).with_context(|| format!("can't read {}", paths::tilde(path))),
+        }
+    }
+
+    pub fn root_dirs(&self) -> Vec<PathBuf> {
+        self.roots.iter().map(|root| paths::expand(root)).collect()
+    }
+
+    /// The configured picker, or the first installed default.
+    pub fn picker(&self) -> Option<String> {
+        if let Some(picker) = &self.picker {
+            return Some(picker.clone());
+        }
+        DEFAULT_PICKERS
+            .iter()
+            .find(|(program, _)| on_path(program))
+            .map(|(_, command)| command.to_string())
+    }
+}
+
+fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_file_gives_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::load_from(&dir.path().join("config.toml")).unwrap();
+        assert_eq!(config.roots, ["~/Projects", "~/Spaces"]);
+        assert_eq!(config.scan_depth, 3);
+        assert_eq!(config.picker, None);
+    }
+
+    #[test]
+    fn reads_partial_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "roots = [\"~/dev\"]\npicker = \"vicinae dmenu\"\n").unwrap();
+        let config = Config::load_from(&path).unwrap();
+        assert_eq!(config.roots, ["~/dev"]);
+        assert_eq!(config.scan_depth, 3);
+        assert_eq!(config.picker(), Some("vicinae dmenu".into()));
+    }
+
+    #[test]
+    fn rejects_unknown_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "root = [\"~/dev\"]\n").unwrap();
+        assert!(Config::load_from(&path).is_err());
+    }
+}
