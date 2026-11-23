@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, barLook, displayDir, filterRows, freshen, gapLeft, initialIndex, labels, locate, nameInput, parseRows, rowActions, score, stepAction, tabsFor, windowMotion } from "../Spaces.mjs"
+import { appName, barLook, displayDir, ease, filterRows, freshen, gapLeft, initialIndex, labels, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, tabsFor, windowMotion } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -145,6 +145,29 @@ test("reads the left of Hyprland's outer gaps", () => {
   assert.equal(gapLeft('{"int": 7}'), 7)
   assert.equal(gapLeft('{"css": "a b c d"}'), null)
   assert.equal(gapLeft("hyprctl: no such option"), null)
+})
+
+test("eases along a cubic Bézier as Hyprland does", () => {
+  const linear = [0, 0, 1, 1]
+  assert.ok(Math.abs(ease(linear, 0.25) - 0.25) < 1e-9)
+  assert.equal(ease(linear, -1), 0)
+  assert.equal(ease(linear, 2), 1)
+  // easeOutQuint, as Omarchy sets it: most of the way there early on.
+  const quint = [0.23, 1, 0.32, 1]
+  assert.ok(Math.abs(ease(quint, 0.5) - 0.9660) < 1e-3, String(ease(quint, 0.5)))
+  // CSS's ease at its midpoint.
+  assert.ok(Math.abs(ease([0.25, 0.1, 0.25, 1], 0.5) - 0.8024) < 1e-3, String(ease([0.25, 0.1, 0.25, 1], 0.5)))
+  let last = 0
+  for (let x = 0; x <= 1; x += 0.01) {
+    const y = ease(quint, x)
+    assert.ok(y >= last - 1e-9, "never goes back")
+    last = y
+  }
+})
+
+test("sets the background back more on a dark bar than a light one", () => {
+  assert.equal(recessAlpha(0.03, 0.08, 0.15), 0.3)
+  assert.equal(recessAlpha(0.95, 0.93, 0.9), 0.07)
 })
 
 test("reads the bar's background look", () => {

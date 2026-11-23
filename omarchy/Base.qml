@@ -58,6 +58,13 @@ Scope {
         height: base.height - y - base.barOn("bottom")
         color: surface.background
 
+        // Set back as the background, beside the space's windows; the bar
+        // above it is shaded the same (TabsWidget.qml).
+        Rectangle {
+          anchors.fill: parent
+          color: surface.recess
+        }
+
         SidebarList {
           anchors.fill: parent
           sidebar: root.sidebar

@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons as Commons
+import "Spaces.mjs" as Spaces
 
 // The colours of a surface that dresses like Omarchy's bar: opaque, glassy or
 // clear, as the bar's background is set (Spaces.barLook). Glassy is the
@@ -26,6 +27,8 @@ Item {
     : look === "glassy" ? Qt.rgba(theme.r, theme.g, theme.b, Math.min(theme.a, 0.35))
     : theme
   readonly property color foreground: look === "none" ? clearText : text
+  // The shade over it where the background shows beside the space's windows.
+  readonly property color recess: Qt.rgba(0, 0, 0, Spaces.recessAlpha(theme.r, theme.g, theme.b))
 
   function hex(c) {
     function channel(v) { return ("0" + Math.round(v * 255).toString(16)).slice(-2) }

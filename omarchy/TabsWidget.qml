@@ -1,22 +1,27 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Shapes
 import Quickshell
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
+import "Spaces.mjs" as Spaces
 
 // The active space's tabs on Omarchy's bar, in place of its workspaces: the
 // space's name, which opens the sidebar, then a tab per workspace. Clicks on
 // tabs run `space ws`, which stays the only thing that changes workspaces. On
 // a vertical bar there is room only for the tabs' numbers.
 //
-// While the sidebar shows on this screen, the tabs move over to where the
-// windows begin, beside it, so they sit over the space's windows they belong
-// to, and the name stays over the sidebar, where the spaces are. They move on
-// the curve the windows slide aside on. Only a widget whose left edge stays put
+// While the sidebar shows on this screen, the bar parts where the windows
+// begin. Before that line it shows the background, shaded as the sidebar
+// below it is, with the menu and the space's name on it. Past it, the tabs
+// and the rest of the bar are the space's, over its windows, from a rounded
+// corner. The line moves with the windows as they slide aside (Sidebar.qml's
+// `edge`), and it carries the tabs along once it reaches them, so they move as
+// far and as fast as the windows do. Only a widget whose left edge stays put
 // as it grows can do this, as one in the bar's left section does: anywhere
-// else, growing would move it out from under the edge it lines up with.
+// else, growing would move it out from under the line.
 BarWidget {
   id: root
   moduleName: "org.ren.renspace"
@@ -28,6 +33,7 @@ BarWidget {
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
   readonly property int fontSize: Style.font.body
   readonly property real padding: root.vertical ? 0 : Style.spaceReal(4)
+  readonly property real cornerRadius: Style.space(10)
 
   implicitWidth: root.vertical ? root.barSize : row.x + row.implicitWidth + root.padding
   implicitHeight: root.vertical ? column.implicitHeight : root.barSize
@@ -44,44 +50,42 @@ BarWidget {
   }
   readonly property var sidebar: root.service && root.service.sidebar ? root.service.sidebar : null
 
-  // Where this widget's left edge is along its bar, which spans its screen.
-  property real origin: 0
+  // Where this widget sits on its bar, which spans its screen.
+  property point origin: Qt.point(0, 0)
   function place() {
     var content = root.QsWindow.contentItem
-    if (content) root.origin = content.mapFromItem(root, 0, 0).x
+    if (content) root.origin = content.mapFromItem(root, 0, 0)
   }
   // The widget moves when something before it on the bar changes size, which
-  // moves one of the items it sits in.
+  // moves one of the items it sits in. Read once the bar has laid itself out:
+  // resizing, the widget's slot centres it in room that catches up a moment
+  // later, which would otherwise move it for that moment.
+  function placeLater() {
+    Qt.callLater(root.place)
+  }
   function follow() {
-    for (var item = root; item; item = item.parent) item.xChanged.connect(root.place)
-    root.place()
+    for (var item = root; item; item = item.parent) item.xChanged.connect(root.placeLater)
+    root.placeLater()
   }
   Component.onCompleted: root.follow()
   onParentChanged: root.follow()
 
-  // Whether the tabs line up beside the sidebar: it is open on this bar's screen.
-  readonly property bool beside: {
-    if (root.vertical || root.fixedEdge !== "start" || !root.sidebar || !root.sidebar.opened) return false
+  readonly property string screenName: {
     var window = root.QsWindow.window
-    var screen = window ? window.screen : null
-    return !!screen && !!root.sidebar.screen && screen.name === root.sidebar.screen.name
+    return window && window.screen ? window.screen.name : ""
   }
+  // Whether the sidebar parts this bar: it opens on this screen, and the
+  // widget can follow its edge.
+  readonly property bool parts: !root.vertical && root.fixedEdge === "start" && !!root.sidebar
+    && !!root.sidebar.screen && root.sidebar.screen.name === root.screenName
+  // Where the windows begin on this screen, as they slide: 0 with the sidebar hidden.
+  readonly property real edge: root.parts ? root.sidebar.edge : 0
+  onPartsChanged: root.placeLater()
 
-  // Where the tabs start: after the name, or, beside the sidebar, where the
-  // windows begin, so the first tab's hover lines up with their edge.
+  // Where the tabs start: after the name, or just inside the space's part of
+  // the bar once its edge has come up to them.
   readonly property real tabsAfterName: root.padding + head.implicitWidth + Style.spacing.xs
-  readonly property real tabsBeside: root.sidebar
-    ? root.sidebar.windowsEdge - root.origin - Style.spacing.xxs : root.tabsAfterName
-  property real tabsX: root.beside ? Math.max(root.tabsAfterName, root.tabsBeside) : root.tabsAfterName
-  Behavior on tabsX {
-    enabled: !root.vertical
-    NumberAnimation {
-      duration: root.sidebar && !Style.reduceMotion ? root.sidebar.motion.duration : 0
-      easing.type: Easing.BezierSpline
-      easing.bezierCurve: root.sidebar ? root.sidebar.curve : [0, 0.75, 0.15, 1, 1, 1]
-    }
-  }
-  onBesideChanged: root.place()
+  readonly property real tabsX: Math.max(root.tabsAfterName, root.edge - root.origin.x + Style.spacing.xs)
 
   function tabLabel(tab) {
     if (root.vertical) return String(tab.slot)
@@ -94,9 +98,52 @@ BarWidget {
     watch: root.service && root.service.watch ? root.service.watch : null
   }
 
-  // The space's name; click it to show or hide the sidebar. It stays put as
-  // the sidebar comes and goes, and the line between it and the tabs fades
-  // while they sit apart.
+  // The background, from the screen's edge to where the windows begin, over
+  // the bar's whole thickness, and the space's part of the bar's rounded
+  // corner past it. Drawn under the name and the tabs, and over the menu
+  // before them, which it shades along with the rest.
+  Item {
+    id: recess
+    visible: !root.vertical && root.edge > 0.5
+    x: -root.origin.x
+    y: -root.origin.y
+    width: root.edge
+    height: root.barSize
+    readonly property color shade: {
+      var bar = Commons.Color.bar.background
+      return Qt.rgba(0, 0, 0, Spaces.recessAlpha(bar.r, bar.g, bar.b))
+    }
+
+    Rectangle {
+      anchors.fill: parent
+      color: recess.shade
+    }
+
+    // The square at the corner, less the quarter circle the corner rounds by.
+    Shape {
+      x: recess.width
+      width: root.cornerRadius
+      height: root.cornerRadius
+      preferredRendererType: Shape.CurveRenderer
+
+      ShapePath {
+        strokeWidth: -1
+        fillColor: recess.shade
+        startX: 0; startY: 0
+        PathLine { x: root.cornerRadius; y: 0 }
+        PathArc {
+          x: 0; y: root.cornerRadius
+          radiusX: root.cornerRadius; radiusY: root.cornerRadius
+          direction: PathArc.Counterclockwise
+        }
+        PathLine { x: 0; y: 0 }
+      }
+    }
+  }
+
+  // The space's name; click it to show or hide the sidebar. It stays put, on
+  // the background, as the sidebar comes and goes; the line between it and
+  // the tabs fades while they sit apart.
   Row {
     id: head
     visible: !root.vertical
@@ -115,7 +162,7 @@ BarWidget {
       height: parent.height * 0.5
       anchors.verticalCenter: parent.verticalCenter
       color: root.foreground
-      opacity: root.beside ? 0 : 0.25
+      opacity: root.parts && root.sidebar.opened ? 0 : 0.25
       Behavior on opacity { NumberAnimation { duration: Style.duration(160) } }
     }
   }

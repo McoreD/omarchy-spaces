@@ -84,13 +84,61 @@ Item {
   readonly property int panelWidth: Style.space(260)
   // Hyprland's outer gap on the left, from `hyprctl getoption`.
   property int gapLeft: 0
-  // How far from its screen's left edge the windows begin while it shows:
-  // where the tabs on the bar line up (TabsWidget.qml).
+  // How far from its screen's left edge the windows begin while it shows.
   readonly property int windowsEdge: panelWidth + gapLeft
+  // How far the windows have slid aside, from 0 to its width, on the curve
+  // Hyprland slides them on, starting as they start. It is worked out from the
+  // clock each frame, rather than by a NumberAnimation, so it can run `lead`
+  // ahead: Hyprland draws the windows where they are in the frame it shows,
+  // while what the bar draws reaches the screen a frame after, so the bar is
+  // told where they will be by then. Measured on a recording, the bar lagged
+  // the windows by one frame of the screen, either way.
+  property real uncovered: 0
+  readonly property real slideTo: opened ? panelWidth : 0
+  property real slideFrom: 0
+  property double slideStart: 0
+  // With no windows to move, the sidebar slides by itself, and the bar keeps
+  // to it frame for frame.
+  property bool leading: true
+  readonly property int lead: {
+    if (!root.leading) return 0
+    var monitor = root.screen ? Hyprland.monitorFor(root.screen) : null
+    var rate = monitor && monitor.lastIpcObject ? Number(monitor.lastIpcObject.refreshRate) : 0
+    return rate > 0 ? Math.round(1000 / rate) : 8
+  }
+  // Turned around partway, Hyprland slides the windows from where they are,
+  // taking the whole time again.
+  onSlideToChanged: {
+    root.slideFrom = root.uncovered
+    root.slideStart = Date.now()
+    slide.start()
+    root.step()
+  }
+
+  function step() {
+    var duration = root.motion.duration
+    var progress = duration > 0 ? (Date.now() - root.slideStart + root.lead) / duration : 1
+    if (progress >= 1) {
+      root.uncovered = root.slideTo
+      slide.stop()
+      return
+    }
+    root.uncovered = root.slideFrom + (root.slideTo - root.slideFrom) * Spaces.ease(root.motion.bezier, progress)
+  }
+
+  FrameAnimation {
+    id: slide
+    onTriggered: root.step()
+  }
+  // Where the windows' left edge is on its screen as they slide: the bar
+  // shows the background up to it and keeps the space's tabs past it
+  // (TabsWidget.qml), so the bar parts along the same line as the screen.
+  readonly property real edge: panelWidth > 0 ? uncovered / panelWidth * windowsEdge : 0
 
   function show() {
     if (root.opened) return
     root.screen = root.focusedScreen()
+    root.leading = root.windowsToMove()
     root.opened = true
     root.zoned = true
     root.shown = true
@@ -111,6 +159,7 @@ Item {
     root.stopSearching()
     root.endNaming(false)
     root.closeMenu()
+    root.leading = root.windowsToMove()
     root.opened = false
     root.zoned = false
     slideIn.stop()

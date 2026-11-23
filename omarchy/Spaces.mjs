@@ -268,6 +268,45 @@ export function gapLeft(text) {
   return Math.max(0, left)
 }
 
+// How far along a cubic Bézier easing is at `x` (0 to 1) of its time, as
+// Hyprland and CSS ease: `bezier` is [x1, y1, x2, y2], the curve running from
+// (0, 0) to (1, 1). It solves the curve's x for its parameter, by Newton's
+// method and bisection where that stalls, then reads its y there.
+export function ease(bezier, x) {
+  if (x <= 0) return 0
+  if (x >= 1) return 1
+  const [x1, y1, x2, y2] = bezier
+  const at = (a, b, t) => 3 * a * t * (1 - t) * (1 - t) + 3 * b * t * t * (1 - t) + t * t * t
+  const slope = (a, b, t) => 3 * a * (1 - t) * (1 - t) + 6 * (b - a) * t * (1 - t) + 3 * (1 - b) * t * t
+  let t = x
+  for (let i = 0; i < 8; i++) {
+    const d = slope(x1, x2, t)
+    if (Math.abs(d) < 1e-6) break
+    const next = t - (at(x1, x2, t) - x) / d
+    if (next < 0 || next > 1) break
+    t = next
+  }
+  if (Math.abs(at(x1, x2, t) - x) > 1e-5) {
+    let lo = 0
+    let hi = 1
+    for (let i = 0; i < 40; i++) {
+      t = (lo + hi) / 2
+      if (at(x1, x2, t) < x) lo = t
+      else hi = t
+    }
+  }
+  return at(y1, y2, t)
+}
+
+// How dark a shade lies over the bar's colour where the background shows,
+// beside the space's windows and tabs: over the sidebar, and over the bar
+// above it. Given the bar's colour (0 to 1 a channel), a light one takes a
+// lighter shade, which is enough to set it back.
+export function recessAlpha(r, g, b) {
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  return luminance > 0.5 ? 0.07 : 0.3
+}
+
 // The bar's background, as Omarchy's shell config holds it: opaque, glassy
 // (see-through, blurred behind) or none (clear). Double-clicking the bar steps
 // through them. A config from before `background` says `transparent` instead.
