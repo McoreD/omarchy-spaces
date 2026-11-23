@@ -4,14 +4,13 @@ Spaces for Hyprland on Omarchy: switch projects, not workspaces.
 
 A **space** is a project: a name and a folder. Each space has its own **tabs**, and each tab is a Hyprland workspace (`ren:1`, `ren:2`, …) holding whatever windows you tile there. The plain numbered workspaces are the `home` space.
 
-The screen is a base with the workspaces on top of it. The base has the tab strip along the top, the spaces sidebar on the left (`super+p`) and Omarchy's bar on the right, and takes the bar's look: double-click the bar to cycle opaque, glassy and clear. Opening the sidebar slides the windows aside to reveal it.
+The active space's name and tabs sit on Omarchy's bar, in place of its workspaces. Click the name, or press `super+p`, for the spaces sidebar: it sits on the base under the workspaces, and opening it slides the windows aside to reveal it. It takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
 
 ## Install
 
 ```sh
-just install                 # build the space CLI into ~/.cargo/bin
-just setup                   # add the Omarchy shell plugin and the keys
-omarchy bar position right   # free the top edge for the tab strip
+just install   # build the space CLI into ~/.cargo/bin
+just setup     # add the tabs to the bar, the sidebar and the keys
 ```
 
 ## Keys
@@ -39,8 +38,8 @@ space move <n> [--silent]
 ## How it fits together
 
 - `src/` is the `space` CLI, in Rust. It keeps no state about windows: it asks Hyprland over its socket, then dispatches.
-- `omarchy/` is the Omarchy shell plugin (QML). `Base.qml` draws the tab strip and the sidebar as one surface under the windows; their logic is in `Tabs.qml`, `Sidebar.qml` and `Spaces.mjs`.
-- `hypr/renspace.lua` holds the keybindings, and the blur behind a glassy base.
+- `omarchy/` is the Omarchy shell plugin (QML): the tabs as a bar widget (`TabsWidget.qml`), and the sidebar, which `Base.qml` draws under the windows. Their logic is in `Tabs.qml`, `Sidebar.qml` and `Spaces.mjs`.
+- `hypr/renspace.lua` holds the keybindings, and the blur behind a glassy sidebar and bar.
 - A folder is a space when it has a `.renspace.toml`. `~/.config/renspace/config.toml` can set `roots`, the folders scanned for spaces (default `~/Projects` and `~/Spaces`). `~/.local/state/renspace/` is a disposable cache.
 
 ## Development

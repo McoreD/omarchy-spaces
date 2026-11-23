@@ -5,7 +5,7 @@ import Quickshell.Hyprland
 import "Spaces.mjs" as Spaces
 
 // The active space's tabs, which are its workspaces. Read live from Hyprland,
-// so the strip needs no `space` call to stay current.
+// so the tabs need no `space` call to stay current.
 Item {
   id: root
 

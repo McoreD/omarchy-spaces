@@ -1,5 +1,5 @@
--- renSpace keys. Each space's workspaces are its tabs, shown in the tab strip
--- along the top (the org.ren.renspace shell plugin in ../omarchy).
+-- renSpace keys. Each space's workspaces are its tabs, shown on the bar (the
+-- org.ren.renspace shell plugin in ../omarchy).
 --
 -- Install: link this file to ~/.config/hypr/renspace.lua and add
 --   require("hypr.renspace")
@@ -85,11 +85,11 @@ if before_name and before_name:match("^[a-z0-9][a-z0-9-]*:%d+$") then
 end
 
 -- A glassy bar (double-click it to cycle opaque, glassy, clear) has Hyprland
--- blur what is behind it. The base (tab strip and sidebar) follows its look,
--- so blur behind it too. `omarchy bar background` adds or removes this
--- toggle file and reloads Hyprland, which runs this again. With xray the blur
--- takes in only the wallpaper, not the windows next to the base and the bar,
--- which would smear into their edges like a shadow; the bar gets it too.
+-- blur what is behind it. The sidebar follows the bar's look, so blur behind
+-- it too. `omarchy bar background` adds or removes this toggle file and
+-- reloads Hyprland, which runs this again. With xray the blur takes in only
+-- the wallpaper, not the windows next to the sidebar and the bar, which would
+-- smear into their edges like a shadow; the bar gets it too.
 local glassy = io.open(require("default.hypr.paths").state_home .. "/omarchy/toggles/hypr/bar-glassy.lua")
 if glassy then
   glassy:close()

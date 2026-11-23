@@ -2,16 +2,25 @@
   "schemaVersion": 1,
   "id": "org.ren.renspace",
   "name": "renSpace",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "T4T5",
-  "description": "A tab strip for the active space's workspaces, and a sidebar for switching spaces",
+  "description": "The active space's tabs on the bar, and a sidebar for switching spaces",
   "kinds": [
     "overlay",
-    "service"
+    "service",
+    "bar-widget"
   ],
   "keepLoaded": true,
   "entryPoints": {
     "overlay": "Toggle.qml",
-    "service": "Service.qml"
+    "service": "Service.qml",
+    "barWidget": "TabsWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Space tabs",
+    "description": "The active space's name and its tabs, in place of the workspaces",
+    "category": "Compositor",
+    "allowMultiple": false,
+    "defaultSection": "left"
   }
 }

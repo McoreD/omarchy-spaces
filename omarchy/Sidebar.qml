@@ -214,8 +214,8 @@ Item {
   // A one-pixel-wide panel on a top layer, drawing nothing and taking no
   // clicks. While the sidebar is open it holds the keyboard, which the bottom
   // layer can't do the way the top layers can, and reserves the sidebar's
-  // width, which makes Hyprland move the windows. Created after the base, so
-  // it reserves room below the strip and the strip never moves.
+  // width, which makes Hyprland move the windows. The shell makes the bar
+  // first, so this reserves room below a top bar and the bar never moves.
   PanelWindow {
     id: keys
     screen: root.screen || root.focusedScreen()

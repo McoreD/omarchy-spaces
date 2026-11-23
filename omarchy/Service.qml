@@ -1,10 +1,10 @@
 import QtQuick
 import "Spaces.mjs" as Spaces
 
-// The base the workspaces sit on, loaded with the shell: the tab strip along
-// the top and the spaces sidebar on the left, drawn as one surface under the
-// windows (Base.qml). The overlay entry (Toggle.qml) opens and closes the
-// sidebar so `super+p` goes through the shell like any other plugin.
+// The spaces sidebar, loaded with the shell and drawn under the windows
+// (Base.qml). The overlay entry (Toggle.qml) opens and closes it so `super+p`
+// goes through the shell like any other plugin. The tabs are a bar widget
+// (TabsWidget.qml), which the bar loads itself.
 Item {
   id: root
 
@@ -17,13 +17,7 @@ Item {
   function openSidebar() { sidebar.open() }
   function closeSidebar() { sidebar.close() }
 
-  Tabs {
-    id: tabs
-  }
-
-  // Before the sidebar, whose panel then reserves its room below the strip.
   Base {
-    tabs: tabs
     sidebar: sidebar
     look: Spaces.barLook(root.shell ? root.shell.barConfig : null)
     bar: root.shell ? root.shell.bar : null
