@@ -28,6 +28,10 @@ enum Cmd {
         /// What it's called, or its id; 'home' for the plain workspaces.
         space: Option<String>,
     },
+    /// Go to the next space down the sidebar, wrapping around to `home`.
+    Next,
+    /// Go to the space before, up the sidebar, wrapping around to the last.
+    Prev,
     /// List spaces, the active one marked, with their window counts.
     Ls {
         /// Print JSON, for scripts.
@@ -108,6 +112,8 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Cmd::New { dir } => commands::new(dir),
         Cmd::Go { space } => commands::go(space),
+        Cmd::Next => commands::step(true),
+        Cmd::Prev => commands::step(false),
         Cmd::Ls { json } => commands::ls(json),
         Cmd::Rename { first, second } => match second {
             Some(new_name) => commands::rename(Some(first), new_name),

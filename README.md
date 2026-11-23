@@ -28,6 +28,8 @@ For agents' status, install herdr-core as its README says, so `hc` is on your PA
 | Keys | Does |
 |---|---|
 | `super+b` | Expand or collapse the spaces sidebar |
+| `super+j` / `super+k` | Next / previous space, down and up the sidebar. They wrap around, with `home` at the top |
+| `super+n` | New space, with a terminal in the folder you are in |
 | `super+p` | Find a space: type to filter, Enter to switch, Escape to stop. Expands the sidebar for the search if it's collapsed |
 | `super+enter` | Terminal in the folder you are in; on an empty tab, the space's folder |
 | `super+t` | New tab, with a terminal in the space's folder |
@@ -43,6 +45,7 @@ In `home`, the tab keys behave exactly as Omarchy's workspace keys, so a new tab
 ```sh
 space new [dir]              # open a space with a terminal, in the folder you are in or dir
 space go [space]             # go to a space where you left it
+space next / space prev      # the space below or above the active one, wrapping around
 space ls [--json]            # list spaces with window counts
 space rename [space] <name>  # name a space, the active one by default; "" for its folder's name
 space close [space]          # close a space's windows, the active one by default

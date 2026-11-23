@@ -14,6 +14,14 @@
 o.rebind("SUPER + P", "Find a space", { panel = "org.ren.renspace" })
 o.rebind("SUPER + B", "Show or hide spaces", "omarchy-shell shell call org.ren.renspace showOrHide ''")
 
+-- Spaces, down and up the sidebar, as herdr's prefix + j/k and n move
+-- between and make sessions, with Super as the prefix. They wrap around, and
+-- `home` counts as the top one. Super + J was Omarchy's split toggle and
+-- Super + K its keybindings list, which is also in the Omarchy menu.
+o.rebind("SUPER + J", "Next space", "space next")
+o.rebind("SUPER + K", "Previous space", "space prev")
+o.rebind("SUPER + N", "New space", "space new")
+
 -- A terminal in the folder you are in: the focused terminal's, as Omarchy
 -- does, but on an empty tab of a space, the space's folder rather than home.
 -- Omarchy's own launcher if `space` is missing.

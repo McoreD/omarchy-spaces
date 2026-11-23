@@ -921,6 +921,34 @@ fn go_finds_spaces_by_id_or_by_what_they_are_called() {
 }
 
 #[test]
+fn next_and_prev_move_down_and_up_the_spaces_wrapping_around() {
+    let env = Env::new();
+    env.add_terminal("s1:1", &env.dir("ren"));
+    env.add_terminal("s2:3", &env.dir("mail"));
+    env.set_active("1");
+
+    env.ok(&["next"]);
+    assert_eq!(env.active(), "s1:1");
+    env.ok(&["next"]);
+    assert_eq!(env.active(), "s2:3", "its only tab");
+    env.ok(&["next"]);
+    assert_eq!(env.active(), "1", "wraps to home");
+    env.ok(&["prev"]);
+    assert_eq!(env.active(), "s2:3", "wraps to the last");
+    env.ok(&["prev"]);
+    assert_eq!(env.active(), "s1:1");
+}
+
+#[test]
+fn next_with_only_home_stays_put() {
+    let env = Env::new();
+    env.set_active("2");
+    env.ok(&["next"]);
+    env.ok(&["prev"]);
+    assert_eq!(env.active(), "2");
+}
+
+#[test]
 fn spaces_end_with_their_windows_and_keep_the_order_they_were_made_in() {
     let env = Env::new();
     env.ok(&["new"]);

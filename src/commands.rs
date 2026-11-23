@@ -705,6 +705,30 @@ pub fn go(target: Option<String>) -> Result<()> {
     switch(&hypr, &id)
 }
 
+/// `space next` / `space prev`: the space after or before the active one in
+/// the sidebar's order (`home`, then the order they were made in), where you
+/// left it. It wraps around at either end.
+pub fn step(forward: bool) -> Result<()> {
+    let hypr = Hypr::from_env()?;
+    let (rows, _) = load_rows(Some(&hypr))?;
+    match neighbour(&rows, forward) {
+        Some(id) => switch(&hypr, &id),
+        None => Ok(()),
+    }
+}
+
+/// The space next to the active one, or `None` when there's no other.
+fn neighbour(rows: &[Row], forward: bool) -> Option<String> {
+    let here = rows.iter().position(|r| r.active)?;
+    let count = rows.len();
+    let there = if forward {
+        (here + 1) % count
+    } else {
+        (here + count - 1) % count
+    };
+    (there != here).then(|| rows[there].id.clone())
+}
+
 /// Leaves the active space, remembering where, for the target's last
 /// workspace.
 fn switch(hypr: &Hypr, target: &str) -> Result<()> {
