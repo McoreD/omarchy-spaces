@@ -31,7 +31,10 @@ import "Spaces.mjs" as Spaces
 // clicked: rename it or close it. Renaming takes the keyboard as the search
 // does, to type the name in place; an empty name has the space called after
 // its folder again. `super+shift+r` renames the space you are in the same way,
-// expanding the sidebar for it if it's collapsed, as the search does. Each runs `space`, which says why in a notification if it
+// expanding the sidebar for it if it's collapsed, as the search does.
+// `super+,`, or double-clicking a tab on the bar, names the tab the same
+// way, typed on the bar (TabsWidget.qml) with the keyboard held here; an empty
+// name has it called after its window again. Each runs `space`, which says why in a notification if it
 // can't.
 Item {
   id: root
@@ -48,11 +51,17 @@ Item {
   property bool opened: false
   property bool searching: false
   property bool searchOnly: false
-  // The id of the space being renamed, the name typed so far, and whether
-  // all of it is selected, as it starts, for typing to replace.
+  // What is being renamed, as `space rename` takes it: a space's id, or a
+  // tab's workspace (`s1:2`). The name typed so far, and whether all of it is
+  // selected, as it starts, for typing to replace. The name it had, and
+  // whether you had given it that name.
   property string renaming: ""
   property string nameText: ""
   property bool nameSelected: false
+  property string nameFrom: ""
+  property bool nameWasSet: false
+  // The active space's tabs (Tabs.qml), for what a tab is called.
+  property var tabs: null
   property double renamedAt: 0
   // Whether it was expanded only for the rename, to collapse once it ends.
   property bool renameOnly: false
@@ -352,9 +361,13 @@ Item {
     else if (id === "close") root.run(["space", "close", row.id])
   }
 
-  // Takes the keyboard to type a name over the one it has. A sidebar shown
-  // just for a search stays, as you are now using it.
+  // Takes the keyboard to type a name over the one a space has. A sidebar
+  // shown just for a search stays, as you are now using it.
   function startRename(row) {
+    root.startNaming(row.id, row.label, row.named)
+  }
+
+  function startNaming(target, label, named) {
     root.endNaming(false)
     if (root.searching) {
       root.searchOnly = false
@@ -363,10 +376,29 @@ Item {
     }
     root.renamedAt = Date.now()
     root.renameOnly = false
-    root.renaming = row.id
-    root.nameText = row.label
+    root.renaming = target
+    root.nameText = label
+    root.nameFrom = label
+    root.nameWasSet = named
     root.nameSelected = true
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  // Names a tab of the space you are in, `slot`, or the one you are on: the
+  // bar shows the name as you type it. `home`'s tabs are Omarchy's
+  // workspaces, which take no names. A sidebar shown just for a search goes.
+  function renameTab(slot) {
+    var workspace = Hyprland.focusedWorkspace
+    var here = workspace ? Spaces.locate(workspace.id, workspace.name) : null
+    if (!here || here.space === "home") return
+    var tabs = root.tabs && root.tabs.model ? root.tabs.model.tabs : []
+    var tab = tabs.find(function(t) { return t.slot === (slot || here.slot) })
+    if (!tab) return
+    var target = here.space + ":" + tab.slot
+    if (root.renaming === target) return
+    if (root.searching && root.searchOnly) root.hide()
+    root.closeMenu()
+    root.startNaming(target, tab.label, tab.named)
   }
 
   // Renames the space you are in, from the keyboard. `home` has no name to
@@ -395,14 +427,13 @@ Item {
   // for the rename collapses again.
   function endNaming(commit) {
     if (!root.naming) return
-    var id = root.renaming
-    var row = root.rows.find(function(r) { return r.id === id })
+    var target = root.renaming
     var to = root.nameText.trim()
+    var unchanged = root.nameWasSet ? to === root.nameFrom : (to === root.nameFrom || to === "")
     root.renaming = ""
     root.nameText = ""
     root.nameSelected = false
-    var changed = commit && row && !(row.named ? to === row.label : (to === row.label || to === ""))
-    if (changed) root.run(["space", "rename", id, to])
+    if (commit && !unchanged) root.run(["space", "rename", target, to])
     if (root.renameOnly) {
       root.renameOnly = false
       root.hide()
@@ -499,7 +530,7 @@ Item {
         if (!motionProc.running) motionProc.running = true
         if (!gapsProc.running) gapsProc.running = true
       }
-      if (!root.opened) return
+      if (!root.opened && !root.naming) return
       if (event.name !== "activewindowv2" && event.name !== "workspacev2") return
       if (root.naming && Date.now() - root.renamedAt >= 300) root.endNaming(false)
       if (root.searching && Date.now() - root.searchedAt >= 300) root.endSearch()

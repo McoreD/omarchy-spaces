@@ -32,4 +32,10 @@ Item {
   function rename(arg) {
     if (service) service.rename()
   }
+
+  // Name the tab you are on, typing on the bar: `super+,`. Called
+  // through `omarchy-shell shell call org.ren.renspace renameTab`.
+  function renameTab(arg) {
+    if (service) service.renameTab()
+  }
 }

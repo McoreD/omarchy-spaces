@@ -353,6 +353,8 @@ pub struct Row {
     /// What most needs you among the agents in its windows, if any is
     /// working, done or waiting.
     pub status: Option<Status>,
+    /// The names you gave its tabs, by slot.
+    pub tabs: BTreeMap<u8, String>,
 }
 
 /// A terminal window, as the bar names its tab.
@@ -422,10 +424,15 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
             let spaces = live.spaces();
             store.prune(&spaces);
             for id in &spaces {
+                let open = live.workspaces.get(id);
                 let entry = store.entry(id);
                 if entry.created == 0 {
                     entry.created = state::now();
                 }
+                // A tab's name goes with its tab.
+                entry
+                    .tabs
+                    .retain(|slot, _| open.is_some_and(|open| open.contains(slot)));
             }
             let mut ids: Vec<String> = spaces.into_iter().collect();
             ids.sort_by_key(|id| (store.get(id).map_or(0, |e| e.created), id.clone()));
@@ -438,7 +445,7 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
         }
     };
 
-    let row = |id: &str, label: String, named: bool, folder: Option<PathBuf>| {
+    let row = |id: &str, label: String, named: bool, folder: Option<PathBuf>, tabs| {
         let visit = last.get(id);
         Row {
             id: id.to_string(),
@@ -466,10 +473,11 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
                     .filter_map(|address| l.statuses.get(address).copied())
                     .max()
             }),
+            tabs,
         }
     };
 
-    let mut out = vec![row(HOME, HOME.to_string(), false, None)];
+    let mut out = vec![row(HOME, HOME.to_string(), false, None, BTreeMap::new())];
     for id in ids {
         let terminals = live
             .and_then(|l| l.terminals.get(&id))
@@ -482,7 +490,8 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
             // Without Hyprland, as last seen, changing nothing.
             None => describe(&id, &mut entry.clone(), &[]),
         };
-        out.push(row(&id, label, named, folder));
+        let tabs = entry.tabs.clone();
+        out.push(row(&id, label, named, folder, tabs));
     }
     out
 }
@@ -767,6 +776,9 @@ fn switch(hypr: &Hypr, target: &str) -> Result<()> {
 pub fn rename(target: Option<String>, new_name: String) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (rows, _) = load_rows(Some(&hypr))?;
+    if let Some((space, slot)) = target.as_deref().and_then(|t| tab_target(&rows, t)) {
+        return rename_tab(&rows, space, slot, &new_name);
+    }
     let id = match target {
         Some(target) => resolve(&rows, &target)?,
         None => rows
@@ -786,6 +798,44 @@ pub fn rename(target: Option<String>, new_name: String) -> Result<()> {
     match new_name {
         Some(new_name) => println!("Named the space '{new_name}'"),
         None => println!("The space is called after its folder again"),
+    }
+    Ok(())
+}
+
+/// A tab, `<space>:<n>` (`s1:2`, `ren:2`), unless the whole of `target` is
+/// what a space is called.
+fn tab_target<'a>(rows: &[Row], target: &'a str) -> Option<(&'a str, u8)> {
+    let (space, slot) = target.rsplit_once(':')?;
+    if resolve(rows, target).is_ok() {
+        return None;
+    }
+    Some((space, name::parse_slot(slot)?))
+}
+
+/// `space rename <space>:<n> <name>`: gives a tab a name that stays, in
+/// place of its window's. An empty name has it follow its window again.
+fn rename_tab(rows: &[Row], space: &str, slot: u8, new_name: &str) -> Result<()> {
+    let id = resolve(rows, space)?;
+    if id == HOME {
+        bail!("'home' is the plain workspaces; its tabs can't be named");
+    }
+    let row = rows.iter().find(|r| r.id == id).expect("resolved");
+    let open = row.workspaces.as_deref().unwrap_or_default();
+    if !open.contains(&slot) {
+        bail!("'{}' has no tab {slot}", row.label);
+    }
+    let new_name = spaces::clean_name(new_name)?;
+
+    let mut store = Store::load(&paths::state_dir())?;
+    let tabs = &mut store.entry(&id).tabs;
+    match &new_name {
+        Some(new_name) => tabs.insert(slot, new_name.clone()),
+        None => tabs.remove(&slot),
+    };
+    store.save()?;
+    match new_name {
+        Some(new_name) => println!("Named tab {slot} '{new_name}'"),
+        None => println!("Tab {slot} is called after its window again"),
     }
     Ok(())
 }
@@ -1160,6 +1210,7 @@ mod tests {
             left_at: 0,
             terminals: Vec::new(),
             status: None,
+            tabs: BTreeMap::new(),
         }
     }
 

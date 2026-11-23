@@ -21,6 +21,7 @@ Item {
   function endSearch() { sidebarItem.endSearch() }
   function showOrHide(screen) { sidebarItem.showOrHide(screen) }
   function rename() { sidebarItem.renameActive() }
+  function renameTab() { sidebarItem.renameTab(0) }
 
   Base {
     sidebar: sidebarItem
@@ -38,9 +39,17 @@ Item {
     id: watchItem
   }
 
+  // The active space's tabs, for what the one being renamed is called. The
+  // bar's widget keeps its own.
+  Tabs {
+    id: tabsItem
+    rows: watchItem.rows
+  }
+
   Sidebar {
     id: sidebarItem
     watch: watchItem
+    tabs: tabsItem
     // Ended from inside (a pick, Escape), so the shell stops counting the
     // overlay as open and the next toggle searches again.
     onSearchEnded: {

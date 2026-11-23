@@ -8,7 +8,7 @@ A space is called after the folder its first terminal is in: the repository's fo
 
 The spaces have their own column down the left of the screen, and the active space's tabs sit beside it on Omarchy's bar, in place of its workspaces. Collapsed, the column is a rail of badges, one per space: two letters for its name, as T3 Code marks projects, in a colour from the theme that stays with the name, with the space you're in outlined. Press `super+b`, or click the toggle at its top, to expand it into the spaces sidebar, with each space's name: your windows and the bar's tabs slide aside to reveal it, and the keyboard stays with your windows. Press `super+p` to search it.
 
-A tab is named after its most recently focused window: a terminal by what it's running (`claude`, `nvim`), or by the folder it's in when it's at its prompt, and any other app by its name.
+A tab is named after its most recently focused window: a terminal by what it's running (`claude`, `nvim`), or by the folder it's in when it's at its prompt, and any other app by its name. Name a tab yourself, by double-clicking it or with `super+,`, and it keeps that name whatever runs in it, until you clear it with an empty name or close the tab.
 
 A dot shows which spaces need you. An agent in a terminal says what it's doing, and its tab and its space's badge show it: red when it's waiting for you (a permission prompt, a question, an error), green when it finished while you were elsewhere, and a breathing dot in the text's colour while it works. A space shows whichever of its agents most needs you, and green clears once you focus the agent's window. A sound plays when an agent starts waiting for you, and when one finishes while you aren't looking at its window: Herdr's own (`assets/sounds/`), unless `[sounds]` in the config names others or sets `enabled = false`. This needs [herdr-core](https://github.com/herdrdev/herdr-core) (`hc`): the terminals renSpace opens then run in it, and any agent that reports its status through OSC 7501, as Claude Code, opencode, pi and Kimi do, shows here. Without it, terminals are plain and have no dots.
 
@@ -30,6 +30,7 @@ For agents' status, install herdr-core as its README says, so `hc` is on your PA
 | `super+b` | Expand or collapse the spaces sidebar |
 | `super+j` / `super+k` | Next / previous space, down and up the sidebar. They wrap around, with `home` at the top |
 | `super+n` | New space, with a terminal in the folder you are in |
+| `super+,` | Name the tab you are on: type over its name on the bar, Enter to keep it, Escape to stop. An empty name has it called after its window again |
 | `super+shift+r` | Rename the space you are in: type over its name in the sidebar, Enter to keep it, Escape to stop. An empty name has it called after its folder again |
 | `super+p` | Find a space: type to filter, Enter to switch, Escape to stop. Expands the sidebar for the search if it's collapsed |
 | `super+enter` | Terminal in the folder you are in; on an empty tab, the space's folder |
@@ -49,6 +50,7 @@ space go [space]             # go to a space where you left it
 space next / space prev      # the space below or above the active one, wrapping around
 space ls [--json]            # list spaces with window counts
 space rename [space] <name>  # name a space, the active one by default; "" for its folder's name
+space rename <space>:<n> <name>  # name a tab, as s1:2 or ren:2; "" for its window's name
 space close [space]          # close a space's windows, the active one by default
 space terminal               # a terminal in the folder you are in, or the space's
 space watch [--sounds]       # print the spaces as ls --json does, a line each time they change; --sounds also rings for agents

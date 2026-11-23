@@ -891,6 +891,41 @@ fn rename_gives_a_name_that_stays_until_cleared() {
 }
 
 #[test]
+fn rename_names_a_tab_until_cleared_or_closed() {
+    let env = Env::new();
+    env.add_terminal("s1:1", &env.dir("ren"));
+    let second = env.add_window("s1:2");
+    env.set_active("s1:1");
+    let tabs = |env: &Env| env.ls_json()[1]["tabs"].clone();
+
+    assert_eq!(
+        env.ok(&["rename", "s1:2", "server"]),
+        "Named tab 2 'server'\n"
+    );
+    assert_eq!(tabs(&env), serde_json::json!({ "2": "server" }));
+    env.ok(&["rename", "ren:1", "editor"]);
+    assert_eq!(
+        tabs(&env),
+        serde_json::json!({ "1": "editor", "2": "server" }),
+        "by what the space is called"
+    );
+    assert_eq!(
+        env.ok(&["rename", "s1:1", ""]),
+        "Tab 1 is called after its window again\n"
+    );
+    assert_eq!(tabs(&env), serde_json::json!({ "2": "server" }));
+
+    // The name goes with its tab, so a new tab there starts without it.
+    env.close_window(&second);
+    assert_eq!(tabs(&env), serde_json::json!({}));
+
+    let err = env.fails(&["rename", "s1:4", "x"]);
+    assert!(err.contains("'ren' has no tab 4"), "{err}");
+    let err = env.fails(&["rename", "home:1", "x"]);
+    assert!(err.contains("its tabs can't be named"), "{err}");
+}
+
+#[test]
 fn go_finds_spaces_by_id_or_by_what_they_are_called() {
     let env = Env::new();
     env.add_terminal("s1:1", &env.dir("ren"));

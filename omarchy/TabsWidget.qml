@@ -10,7 +10,8 @@ import "Spaces.mjs" as Spaces
 
 // The active space's tabs on Omarchy's bar, in place of its workspaces: a tab
 // per workspace. Clicks on tabs run `space ws`, which stays the only thing
-// that changes workspaces. On a vertical bar there is room only for the tabs'
+// that changes workspaces. Double-clicking a tab names it: the sidebar holds
+// the keyboard (Sidebar.qml) and the tab shows what you type. On a vertical bar there is room only for the tabs'
 // numbers.
 //
 // The bar parts where the windows begin, by the sidebar's rail or by the
@@ -187,10 +188,13 @@ BarWidget {
       TabButton {
         required property var modelData
         text: root.tabLabel(modelData)
+        number: String(modelData.slot)
+        editing: !!root.sidebar && root.sidebar.renaming === root.model.space + ":" + modelData.slot
         status: modelData.status
         current: modelData.active
         cap: root.tabCap
         onClicked: root.run(["space", "ws", String(modelData.slot)])
+        onDoubleClicked: if (root.sidebar) root.sidebar.renameTab(modelData.slot)
       }
     }
 
@@ -225,15 +229,20 @@ BarWidget {
     property bool current: false
     // What most needs you among the agents on the tab, if any.
     property string status: ""
+    // Its number, and whether you are typing a name for it.
+    property string number: ""
+    property bool editing: false
     signal clicked()
+    signal doubleClicked()
 
     // Room after the label for the status's dot, on a horizontal bar.
     readonly property real dotRoom: button.status !== "" && !root.vertical ? dot.width + Style.spacing.sm : 0
 
     // A share of the room before the bar's centre caps a tab, not the `+`.
     property real cap: Infinity
-    readonly property real natural: Math.min(label.implicitWidth + button.dotRoom + Style.spacing.rowPaddingX * 2, Style.space(220))
-    width: root.vertical ? root.barSize : Math.min(button.natural, button.cap)
+    readonly property real natural: Math.min((button.editing ? editor.implicitWidth : label.implicitWidth) + button.dotRoom + Style.spacing.rowPaddingX * 2, Style.space(220))
+    // Uncapped while you type a name, so you see all of it.
+    width: root.vertical ? root.barSize : (button.editing ? button.natural : Math.min(button.natural, button.cap))
     height: root.vertical ? Style.space(26) : root.barSize
 
     Rectangle {
@@ -245,6 +254,7 @@ BarWidget {
 
     Text {
       id: label
+      visible: !button.editing
       anchors.fill: parent
       anchors.leftMargin: root.vertical ? 0 : Style.spacing.rowPaddingX
       anchors.rightMargin: root.vertical ? 0 : Style.spacing.rowPaddingX + button.dotRoom
@@ -258,6 +268,65 @@ BarWidget {
       font.family: root.fontFamily
       font.pixelSize: root.fontSize
       font.bold: button.current
+    }
+
+    // A name being typed, after the tab's number, with its own selection and
+    // caret, as the sidebar's rows draw theirs: the keyboard is the sidebar's.
+    Row {
+      id: editor
+      visible: button.editing && !root.vertical
+      x: Style.spacing.rowPaddingX
+      anchors.verticalCenter: parent.verticalCenter
+
+      Text {
+        id: editNumber
+        textFormat: Text.PlainText
+        text: button.number + "  "
+        color: label.color
+        font: label.font
+      }
+
+      Text {
+        id: editName
+        readonly property real room: Style.space(220) - Style.spacing.rowPaddingX * 2 - editNumber.implicitWidth - caret.width - 1
+        width: Math.min(implicitWidth, room)
+        textFormat: Text.PlainText
+        text: button.editing && root.sidebar ? root.sidebar.nameText : ""
+        elide: Text.ElideLeft
+        color: label.color
+        font: label.font
+        readonly property bool selected: button.editing && !!root.sidebar && root.sidebar.nameSelected
+
+        Rectangle {
+          visible: editName.selected
+          z: -1
+          width: editName.contentWidth
+          height: root.fontSize + Style.spacing.xxs
+          anchors.verticalCenter: parent.verticalCenter
+          radius: Math.max(1, Style.space(2))
+          color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.3)
+        }
+
+        Rectangle {
+          id: caret
+          visible: button.editing && !editName.selected
+          x: editName.contentWidth + 1
+          width: Math.max(1, Style.space(2))
+          height: root.fontSize + Style.spacing.xxs
+          anchors.verticalCenter: parent.verticalCenter
+          color: root.accent
+
+          SequentialAnimation on opacity {
+            running: button.editing
+            loops: Animation.Infinite
+            alwaysRunToEnd: false
+            NumberAnimation { to: 1; duration: 0 }
+            PauseAnimation { duration: 530 }
+            NumberAnimation { to: 0; duration: 0 }
+            PauseAnimation { duration: 530 }
+          }
+        }
+      }
     }
 
     // After the label on a horizontal bar; on a vertical one, on the
@@ -276,8 +345,9 @@ BarWidget {
       id: mouse
       anchors.fill: parent
       hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onClicked: button.clicked()
+      cursorShape: button.editing ? Qt.IBeamCursor : Qt.PointingHandCursor
+      onClicked: if (!button.editing) button.clicked()
+      onDoubleClicked: if (!button.editing) button.doubleClicked()
     }
   }
 }

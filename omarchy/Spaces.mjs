@@ -21,10 +21,21 @@ export function parseRows(text) {
       windows: typeof row.windows === "number" ? row.windows : -1,
       leftAt: typeof row.left_at === "number" ? row.left_at : 0,
       status: status(row.status),
+      tabs: tabNames(row.tabs),
       terminals: (Array.isArray(row.terminals) ? row.terminals : [])
         .filter((t) => t && typeof t.address === "string" && typeof t.label === "string")
         .map((t) => ({ address: t.address, label: t.label, status: status(t.status) })),
     }))
+}
+
+// The names you gave a space's tabs, by slot: `{ 2: "server" }`.
+function tabNames(value) {
+  const names = {}
+  if (!value || typeof value !== "object") return names
+  for (const [slot, name] of Object.entries(value)) {
+    if (/^([1-9]|10)$/.test(slot) && typeof name === "string" && name) names[slot] = name
+  }
+  return names
 }
 
 // What an agent is doing, least to most in need of you; "" when idle.
@@ -176,9 +187,11 @@ export function terminalsByAddress(rows) {
 //   active:     { id, name } of the focused workspace
 //   terminals:  terminalsByAddress(rows), which name terminals better than
 //               their class, and say what their agents are doing
-// Returns { space, tabs: [{ slot, label, status, windows, active }] } in slot
-// order, a tab's status the one most in need of you among its windows.
-export function tabsFor(workspaces, windows, active, terminals) {
+//   names:      the names you gave the space's tabs, by slot (its row's tabs)
+// Returns { space, tabs: [{ slot, label, named, status, windows, active }] }
+// in slot order, a tab's status the one most in need of you among its
+// windows. A name you gave a tab is its label, and makes it `named`.
+export function tabsFor(workspaces, windows, active, terminals, names) {
   const here = locate(active ? active.id : 0, active ? active.name : "")
   const block = (id) => Math.floor((id - 1) / SLOTS)
   const activeBlock = block(active && active.id > 0 ? active.id : 1)
@@ -220,13 +233,17 @@ export function tabsFor(workspaces, windows, active, terminals) {
     space: here.space,
     tabs: [...tabs.values()]
       .sort((a, b) => a.slot - b.slot)
-      .map((tab) => ({
-        slot: tab.slot,
-        label: tab.label || "New tab",
-        status: tab.status,
-        windows: tab.windows,
-        active: tab.slot === here.slot,
-      })),
+      .map((tab) => {
+        const name = names && Object.prototype.hasOwnProperty.call(names, tab.slot) ? names[tab.slot] : ""
+        return {
+          slot: tab.slot,
+          label: name || tab.label || "New tab",
+          named: !!name,
+          status: tab.status,
+          windows: tab.windows,
+          active: tab.slot === here.slot,
+        }
+      }),
   }
 }
 

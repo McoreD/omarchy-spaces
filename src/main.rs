@@ -38,9 +38,10 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Name a space, the active one unless you say which. An empty name has
-    /// it called after its folder again.
-    #[command(override_usage = "space rename [SPACE] <NAME>")]
+    /// Name a space, the active one unless you say which, or a tab, as
+    /// `<space>:<n>`. An empty name has a space called after its folder
+    /// again, and a tab after its window.
+    #[command(override_usage = "space rename [SPACE | SPACE:N] <NAME>")]
     Rename {
         #[arg(value_name = "SPACE")]
         first: String,

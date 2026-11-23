@@ -13,7 +13,7 @@ const json = JSON.stringify([
 test("parses space ls --json", () => {
   const rows = parseRows(json)
   assert.equal(rows.length, 4)
-  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, folder: "", active: false, windows: 4, leftAt: 1000, status: "", terminals: [] })
+  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, folder: "", active: false, windows: 4, leftAt: 1000, status: "", tabs: {}, terminals: [] })
   assert.equal(rows[3].windows, -1, "no count without Hyprland")
   assert.equal(rows[3].named, true)
   assert.throws(() => parseRows("space: error"), /unexpected/)
@@ -85,10 +85,24 @@ test("builds the active space's tabs", () => {
   assert.deepEqual(tabsFor(workspaces, windows, { id: -1338, name: "ren:3" }), {
     space: "ren",
     tabs: [
-      { slot: 1, label: "Chromium", status: "", windows: 2, active: false },
-      { slot: 3, label: "Nvim", status: "", windows: 1, active: true },
+      { slot: 1, label: "Chromium", named: false, status: "", windows: 2, active: false },
+      { slot: 3, label: "Nvim", named: false, status: "", windows: 1, active: true },
     ],
   })
+})
+
+test("a name you gave a tab wins over its window's", () => {
+  const rows = parseRows(JSON.stringify([
+    { id: "ren", tabs: { 3: "server", 0: "bad", 4: 7 } },
+  ]))
+  assert.deepEqual(rows[0].tabs, { 3: "server" })
+  const workspaces = [{ id: -1337, name: "ren:1" }, { id: -1338, name: "ren:3" }]
+  const windows = [
+    { workspaceId: -1337, windowClass: "kitty", focus: 1 },
+    { workspaceId: -1338, windowClass: "nvim", focus: 0 },
+  ]
+  const tabs = tabsFor(workspaces, windows, { id: -1338, name: "ren:3" }, {}, rows[0].tabs).tabs
+  assert.deepEqual(tabs.map((t) => [t.label, t.named]), [["Kitty", false], ["server", true]])
 })
 
 test("names a terminal's tab by what it runs, else its folder", () => {

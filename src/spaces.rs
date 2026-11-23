@@ -34,6 +34,11 @@ pub struct Entry {
     /// the order you made them, so they keep their places as names change.
     #[serde(default)]
     pub created: u64,
+    /// The names you gave its tabs, by slot. A tab without one is called
+    /// after its most recently focused window. A name lasts as long as its
+    /// tab: when Hyprland drops the workspace, the name goes with it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tabs: BTreeMap<u8, String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -109,7 +114,7 @@ impl Store {
 pub fn clean_name(raw: &str) -> Result<Option<String>> {
     let name = raw.trim();
     if name.chars().any(char::is_control) {
-        anyhow::bail!("a space name has to fit on one line");
+        anyhow::bail!("a name has to fit on one line");
     }
     if name.chars().count() > 64 {
         anyhow::bail!("'{name}' is longer than 64 characters");
@@ -128,6 +133,7 @@ mod tests {
         assert!(store.spaces.is_empty());
         store.entry("s1").name = Some("Japanese".into());
         store.entry("s2").folder = Some("/p/mail".into());
+        store.entry("s2").tabs.insert(3, "server".into());
         store.save().unwrap();
 
         let mut store = Store::load(dir.path()).unwrap();
@@ -136,6 +142,7 @@ mod tests {
             store.get("s2").unwrap().folder,
             Some(PathBuf::from("/p/mail"))
         );
+        assert_eq!(store.get("s2").unwrap().tabs[&3], "server");
 
         let live: BTreeSet<String> = ["s2".to_string(), "s4".to_string()].into();
         store.prune(&live);

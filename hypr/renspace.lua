@@ -17,6 +17,12 @@ o.rebind("SUPER + B", "Show or hide spaces", "omarchy-shell shell call org.ren.r
 -- sidebar as its right-click menu's Rename does: Enter keeps it, Escape drops
 -- it, and an empty name has it called after its folder again.
 o.rebind("SUPER + SHIFT + R", "Rename space", "omarchy-shell shell call org.ren.renspace rename ''")
+-- Super + , names the tab you are on, as tmux's prefix + , names a window,
+-- typing over its name on the bar, as double-clicking the tab does. Named, a
+-- tab keeps the name whatever runs in it, until you clear it with an empty
+-- name or close the tab. Super + , was Omarchy's notification dismiss, which
+-- Super + Shift + , (dismiss all) and Super + Alt + , (the last) still do.
+o.rebind("SUPER + COMMA", "Rename tab", "omarchy-shell shell call org.ren.renspace renameTab ''")
 
 -- Spaces, down and up the sidebar, as herdr's prefix + j/k and n move
 -- between and make sessions, with Super as the prefix. They wrap around, and
