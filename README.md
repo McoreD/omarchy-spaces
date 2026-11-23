@@ -4,7 +4,7 @@ Spaces for Hyprland on Omarchy: switch projects, not workspaces.
 
 A **space** is a project: a name and a folder. Each space has its own **tabs**, and each tab is a Hyprland workspace (`ren:1`, `ren:2`, …) holding whatever windows you tile there. The plain numbered workspaces are the `home` space.
 
-The screen is a base with the workspaces on top of it. The base has the tab strip along the top, the spaces sidebar on the left (`super+p`) and Omarchy's bar on the right. Opening the sidebar slides the windows aside to reveal it.
+The screen is a base with the workspaces on top of it. The base has the tab strip along the top, the spaces sidebar on the left (`super+p`) and Omarchy's bar on the right, and takes the bar's look: double-click the bar to cycle opaque, glassy and clear. Opening the sidebar slides the windows aside to reveal it.
 
 ## Install
 
@@ -39,8 +39,8 @@ space move <n> [--silent]
 ## How it fits together
 
 - `src/` is the `space` CLI, in Rust. It keeps no state about windows: it asks Hyprland over its socket, then dispatches.
-- `omarchy/` is the Omarchy shell plugin (QML): the tab strip, the sidebar, and their logic in `Spaces.mjs`.
-- `hypr/renspace.lua` holds the keybindings.
+- `omarchy/` is the Omarchy shell plugin (QML). `Base.qml` draws the tab strip and the sidebar as one surface under the windows; their logic is in `Tabs.qml`, `Sidebar.qml` and `Spaces.mjs`.
+- `hypr/renspace.lua` holds the keybindings, and the blur behind a glassy base.
 - A folder is a space when it has a `.renspace.toml`. `~/.config/renspace/config.toml` can set `roots`, the folders scanned for spaces (default `~/Projects` and `~/Spaces`). `~/.local/state/renspace/` is a disposable cache.
 
 ## Development

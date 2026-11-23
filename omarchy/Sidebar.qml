@@ -6,13 +6,11 @@ import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
-import qs.Commons as Commons
 import "Spaces.mjs" as Spaces
 
-// The spaces list, part of the base the workspaces sit on: the left edge,
-// below the tab strip, in the same colour as the strip and the bar. It lives
-// on the layer under the windows, never over them. Opening it claims its
-// width, so Hyprland slides the windows aside and they uncover it; closing
+// The spaces sidebar: its rows, filter and cursor, and when it shows. The base
+// (Base.qml) draws it by the left edge, under the windows. Opening it claims
+// its width, so Hyprland slides the windows aside and they uncover it; closing
 // slides them back over it. With no windows to uncover it, it slides in and
 // out by itself. Picking a space runs `space go`, which stays the only thing
 // that knows how spaces map to workspaces.
@@ -29,6 +27,10 @@ Item {
   // draws the list, which stays drawn until the windows have covered it.
   property bool zoned: false
   property bool shown: false
+  // How far the list sits left of its place, while it slides by itself.
+  property real offset: -panelWidth
+  // The screen it opened on.
+  property var screen: null
   // Hyprland's window motion, read from `hyprctl animations -j`.
   property var motion: ({ duration: 379, bezier: [0.23, 1, 0.32, 1] })
   readonly property var curve: [motion.bezier[0], motion.bezier[1], motion.bezier[2], motion.bezier[3], 1, 1]
@@ -40,30 +42,14 @@ Item {
   property double openedAt: 0
   readonly property string home: Quickshell.env("HOME") || ""
 
-  // The bar's background look: opaque, glassy or none (Spaces.barLook).
-  property string look: "opaque"
-
   readonly property int panelWidth: Style.space(260)
-  readonly property color background: surface.background
-  readonly property color foreground: surface.foreground
-  readonly property color accent: Commons.Color.accent
-  readonly property color selectedBackground: Commons.Color.menu.selectedBackground
-  readonly property string fontFamily: Style.font.family
-  readonly property int rowHeight: Math.round((Style.font.title + Style.font.bodySmall) * 1.35) + Style.spacing.controlPaddingY * 2
-  readonly property int headerHeight: Math.max(Style.space(30), Style.font.subtitle + Style.spacing.controlPaddingY * 2)
-
-  BarSurface {
-    id: surface
-    look: root.look
-    edge: "left"
-    size: root.panelWidth
-  }
 
   function open() {
     if (root.opened) return
     root.filterText = ""
     root.error = ""
     root.openedAt = Date.now()
+    root.screen = root.focusedScreen()
     root.opened = true
     root.zoned = true
     root.shown = true
@@ -71,7 +57,7 @@ Item {
     slideOut.stop()
     if (root.windowsToMove()) {
       slideIn.stop()
-      content.x = 0
+      root.offset = 0
     } else {
       slideIn.restart()
     }
@@ -112,9 +98,6 @@ Item {
       root.selectedIndex = root.filterText ? 0 : Spaces.initialIndex(root.shownRows)
     }
     if (root.selectedIndex >= root.shownRows.length) root.selectedIndex = Math.max(0, root.shownRows.length - 1)
-    Qt.callLater(function() {
-      if (root.shownRows.length > 0) list.positionViewAtIndex(root.selectedIndex, ListView.Contain)
-    })
   }
 
   function setFilter(next) {
@@ -126,7 +109,6 @@ Item {
     var count = root.shownRows.length
     if (count === 0) return
     root.selectedIndex = (root.selectedIndex + delta + count) % count
-    list.positionViewAtIndex(root.selectedIndex, ListView.Contain)
   }
 
   function activate(index) {
@@ -186,8 +168,8 @@ Item {
   // the same curve the windows would move on.
   NumberAnimation {
     id: slideIn
-    target: content
-    property: "x"
+    target: root
+    property: "offset"
     from: -root.panelWidth
     to: 0
     duration: root.motion.duration
@@ -197,8 +179,8 @@ Item {
 
   NumberAnimation {
     id: slideOut
-    target: content
-    property: "x"
+    target: root
+    property: "offset"
     to: -root.panelWidth
     duration: root.motion.duration
     easing.type: Easing.BezierSpline
@@ -229,178 +211,14 @@ Item {
     }
   }
 
-  PanelWindow {
-    id: panel
-
-    // Under the windows, on the bottom layer, from the very top of the screen
-    // to the bottom. Mapped for good and never moved or resized: it reserves
-    // no room itself (the `keys` panel does), because Hyprland lays out panels
-    // that reserve room first, and switching between the two would reshape it
-    // mid-animation. While closed it draws nothing and lets every click
-    // through.
-    screen: root.focusedScreen()
-    anchors { left: true; top: true; bottom: true }
-    implicitWidth: root.panelWidth
-    mask: root.shown ? null : noInput
-    exclusionMode: ExclusionMode.Ignore
-    color: "transparent"
-    WlrLayershell.namespace: "renspace-sidebar"
-    WlrLayershell.layer: WlrLayer.Bottom
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-
-    Region { id: noInput }
-
-    Rectangle {
-      id: content
-      width: parent.width
-      height: parent.height
-      x: -width
-      visible: root.shown
-      color: "transparent"
-
-      // The tab strip runs across the top, over this panel. Start below it,
-      // or a see-through strip would show this through it, twice as dark.
-      Rectangle {
-        anchors.fill: parent
-        anchors.topMargin: Style.bar.sizeHorizontal
-        color: root.background
-      }
-
-      Column {
-        anchors.fill: parent
-        anchors.margins: Style.spacing.md
-        // The tab strip runs across the top, over this panel.
-        anchors.topMargin: Style.bar.sizeHorizontal + Style.spacing.md
-        spacing: Style.spacing.sm
-
-        Text {
-          width: parent.width
-          height: root.headerHeight
-          leftPadding: Style.spacing.rowPaddingX
-          verticalAlignment: Text.AlignVCenter
-          textFormat: Text.PlainText
-          text: root.filterText || "Spaces"
-          color: root.foreground
-          opacity: root.filterText ? 1 : 0.5
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.subtitle
-          elide: Text.ElideRight
-        }
-
-        Item {
-          width: parent.width
-          height: parent.height - root.headerHeight - parent.spacing
-
-          ListView {
-            id: list
-            anchors.fill: parent
-            model: root.shownRows
-            clip: true
-            spacing: Style.spacing.xxs
-            boundsBehavior: Flickable.StopAtBounds
-
-            delegate: Rectangle {
-              id: rowItem
-              required property var modelData
-              required property int index
-              readonly property bool selected: index === root.selectedIndex
-
-              width: ListView.view.width
-              height: root.rowHeight
-              radius: Style.cornerRadius
-              color: selected ? root.selectedBackground : "transparent"
-
-              // The space you're in.
-              Rectangle {
-                visible: rowItem.modelData.active
-                width: Math.max(2, Style.space(3))
-                height: parent.height - Style.spacing.md * 2
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-                radius: width / 2
-                color: root.accent
-              }
-
-              Column {
-                anchors.left: parent.left
-                anchors.right: windowCount.left
-                anchors.leftMargin: Style.spacing.rowPaddingX
-                anchors.rightMargin: Style.spacing.controlGap
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.spacing.xxs
-
-                Text {
-                  width: parent.width
-                  textFormat: Text.PlainText
-                  text: rowItem.modelData.name
-                  color: rowItem.selected ? root.accent : root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.title
-                  font.bold: rowItem.modelData.active
-                  elide: Text.ElideRight
-                }
-
-                Text {
-                  width: parent.width
-                  textFormat: Text.PlainText
-                  text: root.subtitle(rowItem.modelData)
-                  color: root.foreground
-                  opacity: 0.5
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  elide: Text.ElideMiddle
-                }
-              }
-
-              Text {
-                id: windowCount
-                anchors.right: parent.right
-                anchors.rightMargin: Style.spacing.rowPaddingX
-                anchors.verticalCenter: parent.verticalCenter
-                textFormat: Text.PlainText
-                text: rowItem.modelData.windows >= 0 ? String(rowItem.modelData.windows) : ""
-                color: root.foreground
-                opacity: rowItem.modelData.windows > 0 ? 0.7 : 0.35
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-              }
-
-              MouseArea {
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onContainsMouseChanged: if (containsMouse) root.selectedIndex = rowItem.index
-                onClicked: root.activate(rowItem.index)
-              }
-            }
-          }
-
-          Text {
-            anchors.centerIn: parent
-            width: parent.width
-            visible: root.shownRows.length === 0 && (root.error !== "" || root.filterText !== "")
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.Wrap
-            textFormat: Text.PlainText
-            text: root.error !== "" ? root.error : "No space matches “" + root.filterText + "”"
-            color: root.foreground
-            opacity: 0.7
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-          }
-        }
-      }
-    }
-  }
-
   // A one-pixel-wide panel on a top layer, drawing nothing and taking no
   // clicks. While the sidebar is open it holds the keyboard, which the bottom
   // layer can't do the way the top layers can, and reserves the sidebar's
-  // width, which makes Hyprland move the windows. Created after the tab strip,
-  // so it reserves room below the strip and the strip never moves.
+  // width, which makes Hyprland move the windows. Created after the base, so
+  // it reserves room below the strip and the strip never moves.
   PanelWindow {
     id: keys
-    screen: panel.screen
+    screen: root.screen || root.focusedScreen()
     anchors { left: true; top: true; bottom: true }
     implicitWidth: 1
     exclusionMode: ExclusionMode.Normal
