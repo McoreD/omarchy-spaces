@@ -24,6 +24,10 @@ Item {
     bar: root.shell ? root.shell.bar : null
   }
 
+  SpaceMenu {
+    sidebar: sidebar
+  }
+
   Sidebar {
     id: sidebar
     // Ended from inside (a pick, Escape), so the shell stops counting the

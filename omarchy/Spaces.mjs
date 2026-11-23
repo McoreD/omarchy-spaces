@@ -85,26 +85,44 @@ export function withNewRow(shown, rows, query) {
   return shown.concat([{ name, dir: "", active: false, windows: -1, leftAt: 0, create: true }])
 }
 
-// Which of a row's actions (its right-click menu) apply, and why not when
-// one doesn't. `home` and the new-space row have none.
+// A row's right-click menu: which actions apply, and why not when one
+// doesn't. `home` and the new-space row have none. Icons are Nerd Font
+// glyphs: a pencil, a cross, and a folder with a cross (the folder stays, so
+// not a bin).
 export function rowActions(row) {
   if (!row || row.create || row.name === "home") return []
   const windows = row.windows > 0 ? row.windows : 0
   return [
-    { id: "rename", label: "Rename", enabled: true, hint: "" },
+    { id: "rename", icon: "\u{f0cb6}", label: "Rename", enabled: true, hint: "", separatorBefore: false },
     {
       id: "close",
+      icon: "\u{f0156}",
       label: windows === 1 ? "Close 1 window" : "Close " + (windows || "its") + " windows",
       enabled: windows > 0,
       hint: windows > 0 ? "" : "None open",
+      separatorBefore: true,
     },
     {
       id: "remove",
+      icon: "\u{f0b9e}",
       label: "Remove space",
       enabled: windows === 0 && !!row.dir,
       hint: !row.dir ? "No folder" : windows > 0 ? "Close windows first" : "Keeps the folder",
+      separatorBefore: false,
     },
   ]
+}
+
+// The next enabled action going `by` (1 or -1) from `from`, wrapping; from
+// nothing (-1), the first or the last. -1 when none is enabled.
+export function stepAction(actions, from, by) {
+  const count = actions.length
+  let index = from < 0 ? (by > 0 ? -1 : count) : from
+  for (let i = 0; i < count; i++) {
+    index = (index + by + count) % count
+    if (actions[index].enabled) return index
+  }
+  return -1
 }
 
 // The new name while renaming, after typing `text`: only what a space name

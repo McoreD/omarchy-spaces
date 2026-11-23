@@ -22,9 +22,9 @@ import "Spaces.mjs" as Spaces
 // just for the search hides again with it. A search no space matches offers to
 // make a space of that name.
 //
-// Right-clicking a space opens its menu: rename it, close its windows, or
-// remove it. Renaming takes the keyboard as the search does, to type the new
-// name in place. Each runs `space`, which says why in a notification if it
+// Right-clicking a space opens its menu (SpaceMenu.qml), floating where you
+// clicked: rename it, close its windows, or remove it. Renaming takes the
+// keyboard as the search does, to type the new name in place. Each runs `space`, which says why in a notification if it
 // can't.
 Item {
   id: root
@@ -44,8 +44,11 @@ Item {
   property double renamedAt: 0
   // Whatever holds the keyboard: the search or a rename.
   readonly property bool typing: searching || renaming !== ""
-  // The space whose menu is open.
+  // The space whose menu is open, its row, and where on the screen it opens.
   property string menuFor: ""
+  readonly property var menuRow: menuFor ? rows.find(function(row) { return row.name === menuFor }) || null : null
+  property real menuX: 0
+  property real menuY: 0
   // `zoned` claims the width, which makes Hyprland move the windows; `shown`
   // draws the list, which stays drawn until the windows have covered it.
   property bool zoned: false
@@ -232,9 +235,18 @@ Item {
     return row.name === "home" ? "Plain workspaces" : "Folder not found"
   }
 
-  function openMenu(name) {
+  // Opens a space's menu at a point on the sidebar's screen. The menu takes
+  // the keyboard, so a search ends, leaving the sidebar open.
+  function openMenu(name, x, y) {
     root.endRename(false)
-    root.menuFor = root.menuFor === name ? "" : name
+    if (root.searching) {
+      root.searchOnly = false
+      root.stopSearching()
+      root.searchEnded()
+    }
+    root.menuX = x
+    root.menuY = y
+    root.menuFor = name
   }
 
   function closeMenu() {

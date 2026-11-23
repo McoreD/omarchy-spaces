@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, barLook, displayDir, filterRows, freshen, initialIndex, locate, parseRows, renameInput, rowActions, score, slugify, tabsFor, windowMotion, withNewRow } from "../Spaces.mjs"
+import { appName, barLook, displayDir, filterRows, freshen, initialIndex, locate, parseRows, renameInput, rowActions, score, slugify, stepAction, tabsFor, windowMotion, withNewRow } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { name: "home", dir: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -197,4 +197,16 @@ test("takes only what a space name takes while renaming", () => {
   assert.equal(renameInput("ren", " 2"), "ren-2")
   assert.equal(renameInput("", "-a_b!"), "a-b")
   assert.equal(renameInput("x".repeat(64), "y"), "x".repeat(64))
+})
+
+test("steps through the enabled actions", () => {
+  const actions = rowActions({ name: "ren", dir: "/p/ren", windows: 2 })
+  assert.deepEqual(actions.map((a) => a.enabled), [true, true, false])
+  assert.equal(stepAction(actions, -1, 1), 0, "down from nothing: the first")
+  assert.equal(stepAction(actions, -1, -1), 1, "up from nothing: the last enabled")
+  assert.equal(stepAction(actions, 1, 1), 0, "skips the disabled one and wraps")
+  assert.equal(stepAction(actions, 0, -1), 1)
+  assert.equal(stepAction([{ enabled: false }], -1, 1), -1)
+  assert.equal(stepAction([], -1, 1), -1)
+  assert.deepEqual(actions.map((a) => a.separatorBefore), [false, true, false])
 })
