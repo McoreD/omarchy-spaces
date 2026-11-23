@@ -17,9 +17,10 @@ import "Spaces.mjs" as Spaces
 // space, the `+` and the search, each centred on the rail by what it draws,
 // in line with the menu on the bar above. What highlights a row ends just
 // short of the cut, so collapsed it is a square around the icon, and it
-// grows as the windows slide aside. On the rail, the other spaces' badges
-// are dimmed, leaving the one you're in at full strength; as the sidebar
-// expands, they come up and its row's highlight fades in instead.
+// grows as the windows slide aside. On the rail, the space you're in has its
+// badge bordered in the theme's foreground, and the others' badges are
+// dimmed; as the sidebar expands, the border fades, they come up, and its
+// row's highlight fades in instead.
 Item {
   id: root
 
@@ -217,6 +218,19 @@ Item {
             radius: root.sidebar.badgeRadius
             color: Qt.rgba(rowItem.hue.r, rowItem.hue.g, rowItem.hue.b, rowItem.home ? 0.1 : 0.16)
             opacity: rowItem.modelData.active ? 1 : 1 - 0.45 * (1 - root.expansion)
+
+            // The space you're in, on the rail: bordered in the theme's
+            // foreground, fading as the sidebar expands. Drawn over the badge
+            // rather than as its border, which would leave the badge's tint
+            // a ring short as it faded.
+            Rectangle {
+              anchors.fill: parent
+              visible: rowItem.modelData.active && root.expansion < 1
+              radius: parent.radius
+              color: "transparent"
+              border.width: 1
+              border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.6 * (1 - root.expansion))
+            }
 
             Glyph {
               anchors.fill: parent

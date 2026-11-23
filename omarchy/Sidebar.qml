@@ -97,6 +97,8 @@ Item {
   //     `+`, the search) highlights a smaller box, `controlSize`, between a
   //     badge and a cell, centred in its cell. The search's box stretches
   //     from there with the sidebar, as far short of the cut as it starts in.
+  //  5. On the rail, the space you're in has its badge bordered in the
+  //     theme's foreground.
   readonly property real axis: Style.space(8) + Style.bar.iconSlot / 2
   readonly property int railWidth: Math.round(axis * 2)
   readonly property int inset: Style.spacing.sm
@@ -105,6 +107,7 @@ Item {
   readonly property int badgeSize: Math.round(cell * badgeScale)
   readonly property int badgeRadius: Math.round(badgeSize / 4)
   readonly property int controlSize: Math.round((badgeSize + cell) / 2)
+
   // The search's magnifier, drawn larger than the rail's other icons.
   readonly property int searchIconSize: Math.round(badgeSize * 0.72)
   // Hyprland's outer gap on the left, from `hyprctl getoption`.
