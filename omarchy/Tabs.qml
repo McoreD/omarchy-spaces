@@ -2,12 +2,20 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell.Hyprland
+import Quickshell.Io
 import "Spaces.mjs" as Spaces
 
-// The active space's tabs, which are its workspaces. Read live from Hyprland,
-// so the tabs need no `space` call to stay current.
+// The active space's tabs, which are its workspaces, read live from Hyprland,
+// and what the space is called. Its workspaces are named after its id (`s1`);
+// what to call it, the name you gave it or its terminal's folder, comes from
+// `space ls`, asked after workspace changes and every couple of seconds, as a
+// terminal changing folder tells Hyprland nothing.
 Item {
   id: root
+
+  // Space ids to what they're called.
+  property var labels: ({})
+  readonly property string label: root.labels[root.model.space] || root.model.space
 
   // Bumped after Hyprland has answered a refresh, for anything bindings miss.
   property int revision: 0
@@ -58,7 +66,32 @@ Item {
   Timer {
     id: settle
     interval: 120
-    onTriggered: root.revision++
+    onTriggered: {
+      root.revision++
+      root.relabel()
+    }
+  }
+
+  function relabel() {
+    if (!lsProc.running) lsProc.running = true
+  }
+
+  Process {
+    id: lsProc
+    command: ["space", "ls", "--json"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var labels = Spaces.labels(text)
+        if (Object.keys(labels).length > 0) root.labels = labels
+      }
+    }
+  }
+
+  Timer {
+    interval: 2000
+    repeat: true
+    running: true
+    onTriggered: root.relabel()
   }
 
   Component.onCompleted: refresh.restart()

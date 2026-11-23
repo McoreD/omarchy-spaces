@@ -47,7 +47,7 @@ BarWidget {
 
     // The space's name; click it to show or hide the sidebar.
     TabButton {
-      text: root.model.space
+      text: tabs.label
       bold: true
       onClicked: root.run(["omarchy-shell", "shell", "call", "org.ren.renspace", "showOrHide", ""])
     }

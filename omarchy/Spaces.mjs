@@ -11,10 +11,12 @@ export function parseRows(text) {
   }
   if (!Array.isArray(rows)) throw new Error("space ls --json printed something unexpected")
   return rows
-    .filter((row) => row && typeof row.name === "string" && row.name !== "")
+    .filter((row) => row && typeof row.id === "string" && row.id !== "")
     .map((row) => ({
-      name: row.name,
-      dir: typeof row.dir === "string" ? row.dir : "",
+      id: row.id,
+      label: typeof row.label === "string" && row.label ? row.label : row.id,
+      named: row.named === true,
+      folder: typeof row.folder === "string" ? row.folder : "",
       active: row.active === true,
       windows: typeof row.windows === "number" ? row.windows : -1,
       leftAt: typeof row.left_at === "number" ? row.left_at : 0,
@@ -53,68 +55,45 @@ export function score(query, name) {
   return 100 - gaps
 }
 
-// The rows matching `query`, best first. With no query, every row in the
-// order `space ls` gives (home, then by name), so each space keeps its place.
+// The rows matching `query` by what they're called, best first. With no
+// query, every row in the order `space ls` gives (home, then the order they
+// were made in), so each space keeps its place.
 export function filterRows(rows, query) {
   const q = String(query || "").trim()
   if (!q) return rows.slice()
   return rows
-    .map((row, index) => ({ row, index, score: score(q, row.name) }))
+    .map((row, index) => ({ row, index, score: score(q, row.label) }))
     .filter((entry) => entry.score >= 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .map((entry) => entry.row)
 }
 
-// A valid space name made from what you type: `My Trip` is `my-trip`. The
-// same rule as `space` (src/name.rs).
-export function slugify(raw) {
-  let out = ""
-  for (const c of String(raw || "").toLowerCase()) {
-    if ((c >= "a" && c <= "z") || (c >= "0" && c <= "9")) out += c
-    else if (out && !out.endsWith("-")) out += "-"
+// The id-to-label map from `space ls --json` text, for the bar: `{}` when
+// it can't be read, so the bar falls back to ids.
+export function labels(text) {
+  try {
+    const out = {}
+    for (const row of parseRows(text)) out[row.id] = row.label
+    return out
+  } catch (e) {
+    return {}
   }
-  return out.replace(/-+$/, "").slice(0, 64)
-}
-
-// The filtered rows, and after them a row offering to make a space of the
-// query's name when no space has it: `{ name, create: true }`. Activating it
-// runs `space new <name> --in-roots`.
-export function withNewRow(shown, rows, query) {
-  const name = slugify(String(query || "").trim())
-  if (!name || name === "home" || rows.some((row) => row.name === name)) return shown
-  return shown.concat([{ name, dir: "", active: false, windows: -1, leftAt: 0, create: true }])
-}
-
-// The row the `+` by the title adds at the end of the list, to type a new
-// space's name into. Its name is what you have typed so far.
-export function draftRow() {
-  return { name: "", dir: "", active: false, windows: -1, leftAt: 0, create: true, draft: true }
 }
 
 // A row's right-click menu: which actions apply, and why not when one
-// doesn't. `home` and the new-space row have none. Icons are Nerd Font
-// glyphs: a pencil, a cross, and a folder with a cross (the folder stays, so
-// not a bin).
+// doesn't. `home` has none. Icons are Nerd Font glyphs: a pencil, a cross.
 export function rowActions(row) {
-  if (!row || row.create || row.name === "home") return []
+  if (!row || row.id === "home") return []
   const windows = row.windows > 0 ? row.windows : 0
   return [
     { id: "rename", icon: "\u{f0cb6}", label: "Rename", enabled: true, hint: "", separatorBefore: false },
     {
       id: "close",
       icon: "\u{f0156}",
-      label: windows === 1 ? "Close 1 window" : "Close " + (windows || "its") + " windows",
+      label: "Close space",
       enabled: windows > 0,
-      hint: windows > 0 ? "" : "None open",
+      hint: windows === 1 ? "1 window" : windows > 1 ? windows + " windows" : "No windows",
       separatorBefore: true,
-    },
-    {
-      id: "remove",
-      icon: "\u{f0b9e}",
-      label: "Remove space",
-      enabled: windows === 0 && !!row.dir,
-      hint: !row.dir ? "No folder" : windows > 0 ? "Close windows first" : "Keeps the folder",
-      separatorBefore: false,
     },
   ]
 }
@@ -131,15 +110,10 @@ export function stepAction(actions, from, by) {
   return -1
 }
 
-// The new name while renaming, after typing `text`: only what a space name
-// takes, uppercase lowered and spaces or `_` as `-`, never leading.
-export function renameInput(name, text) {
-  let out = name
-  for (const c of String(text || "").toLowerCase()) {
-    const ch = c === " " || c === "_" ? "-" : c
-    if ((ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || (ch === "-" && out)) out += ch
-  }
-  return out.slice(0, 64)
+// A name being typed, after typing `text`: anything printable, up to 64
+// characters, as `space rename` takes.
+export function nameInput(name, text) {
+  return Array.from(String(name || "") + String(text || "")).slice(0, 64).join("")
 }
 
 // Where the cursor starts: on the space you left most recently, so opening
@@ -290,11 +264,11 @@ export function barLook(config) {
 
 // The rows from the last time the sidebar was open, brought up to date with
 // the space you are in now, so the cursor starts in the right place before
-// `space ls` answers: `here` is the active one, and the one that was active
-// before was left just now.
+// `space ls` answers: `here` (an id) is the active one, and the one that was
+// active before was left just now.
 export function freshen(rows, here, now) {
   return rows.map((row) => {
-    const active = row.name === here
+    const active = row.id === here
     const leftAt = row.active && !active ? now : row.leftAt
     // Not `{ ...row }`: QML's JavaScript has no object spread, and Node does.
     return Object.assign({}, row, { active, leftAt })

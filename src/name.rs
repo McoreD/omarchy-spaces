@@ -1,11 +1,10 @@
-//! Space names, and the `name:n` workspace names that tie windows to spaces.
+//! Space ids, and the `<id>:n` workspace names that tie windows to spaces.
 //!
-//! The workspace name is the data: a window belongs to the space whose name
+//! The workspace name is the data: a window belongs to the space whose id
 //! prefixes its workspace, and the active space is read from the focused
-//! workspace every time. Keep the format strict, since anything else is
-//! treated as `home`.
-
-use anyhow::{Result, bail};
+//! workspace every time. What a space is called is separate (`spaces.rs`),
+//! so it can follow a folder without renaming workspaces. Keep the format
+//! strict, since anything else is treated as `home`.
 
 /// The implicit space holding the plain numbered workspaces.
 pub const HOME: &str = "home";
@@ -13,42 +12,17 @@ pub const HOME: &str = "home";
 /// Workspaces per space, as Omarchy gives every monitor 1-10.
 pub const SLOTS: u8 = 10;
 
-/// Lowercase letters, digits and `-`, starting with a letter or digit. No
-/// `:`, which separates the space from the workspace number.
-pub fn validate(name: &str) -> Result<()> {
-    if name.is_empty() {
-        bail!("a space name can't be empty");
-    }
-    if name.len() > 64 {
-        bail!("space name '{name}' is longer than 64 characters");
-    }
-    if let Some(bad) = name
-        .chars()
-        .find(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-'))
-    {
-        bail!("space name '{name}' can't contain '{bad}': use lowercase letters, digits and '-'");
-    }
-    if name.starts_with('-') {
-        bail!("space name '{name}' can't start with '-'");
-    }
-    Ok(())
-}
-
-/// A valid name made from a folder name: `My Project` becomes `my-project`.
-pub fn slugify(raw: &str) -> String {
-    let mut out = String::new();
-    for c in raw.chars().flat_map(char::to_lowercase) {
-        if c.is_ascii_lowercase() || c.is_ascii_digit() {
-            out.push(c);
-        } else if !out.is_empty() && !out.ends_with('-') {
-            out.push('-');
-        }
-    }
-    while out.ends_with('-') {
-        out.pop();
-    }
-    out.truncate(64);
-    out
+/// Whether `id` can be a space's id: lowercase letters, digits and `-`,
+/// starting with a letter or digit, so no `:`, which separates it from the
+/// workspace number. renSpace makes `s1`, `s2`, ...; workspaces named by
+/// hand, or by an older renSpace (`ren:1`), count too.
+pub fn is_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && !id.starts_with('-')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// A workspace slot, 1-10.
@@ -59,7 +33,7 @@ pub fn parse_slot(raw: &str) -> Option<u8> {
     raw.parse::<u8>().ok().filter(|n| (1..=SLOTS).contains(n))
 }
 
-/// The Hyprland workspace name for a space's slot: `ren:3`.
+/// The Hyprland workspace name for a space's slot: `s1:3`.
 pub fn workspace_name(space: &str, slot: u8) -> String {
     format!("{space}:{slot}")
 }
@@ -94,7 +68,7 @@ impl Location {
 /// Reads a Hyprland workspace's id and name.
 pub fn locate(id: i64, name: &str) -> Location {
     if let Some((space, slot)) = name.rsplit_once(':')
-        && validate(space).is_ok()
+        && is_id(space)
         && space != HOME
         && let Some(slot) = parse_slot(slot)
     {
@@ -148,9 +122,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validates_names() {
-        for good in ["ren", "tax-2026", "a", "2026"] {
-            assert!(validate(good).is_ok(), "{good}");
+    fn recognizes_ids() {
+        for good in ["s1", "ren", "tax-2026", "a", "2026"] {
+            assert!(is_id(good), "{good}");
         }
         for bad in [
             "",
@@ -161,17 +135,8 @@ mod tests {
             "ré",
             &"x".repeat(65),
         ] {
-            assert!(validate(bad).is_err(), "{bad}");
+            assert!(!is_id(bad), "{bad}");
         }
-    }
-
-    #[test]
-    fn slugifies_folder_names() {
-        assert_eq!(slugify("renspace"), "renspace");
-        assert_eq!(slugify("My Project"), "my-project");
-        assert_eq!(slugify("  Tax_Return 2026!! "), "tax-return-2026");
-        assert_eq!(slugify("--x--"), "x");
-        assert_eq!(slugify("日本"), "");
     }
 
     #[test]

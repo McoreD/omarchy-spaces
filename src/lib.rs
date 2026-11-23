@@ -1,5 +1,6 @@
-//! renSpace: spaces for Hyprland. A space is a project, a name and a folder,
-//! with its own set of workspaces, `name:1` to `name:10`. See the README.
+//! renSpace: spaces for Hyprland. A space is a place you work, called after
+//! the folder its terminal is in, with its own set of workspaces, `<id>:1` to
+//! `<id>:10`. See the README.
 
 pub mod commands;
 pub mod config;
@@ -8,3 +9,4 @@ pub mod name;
 pub mod paths;
 pub mod spaces;
 pub mod state;
+pub mod terminal;

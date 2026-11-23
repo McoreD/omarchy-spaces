@@ -14,6 +14,11 @@
 o.rebind("SUPER + P", "Find a space", { panel = "org.ren.renspace" })
 o.rebind("SUPER + B", "Show or hide spaces", "omarchy-shell shell call org.ren.renspace showOrHide ''")
 
+-- A terminal in the folder you are in: the focused terminal's, as Omarchy
+-- does, but on an empty tab of a space, the space's folder rather than home.
+-- Omarchy's own launcher if `space` is missing.
+o.rebind("SUPER + RETURN", "Terminal", "space terminal || omarchy-launch-terminal")
+
 -- Tabs, like a browser's. Super + T was Omarchy's floating toggle; Super + Tab
 -- cycled every workspace on the monitor, leaving the space.
 o.rebind("SUPER + T", "New tab", "space ws new")

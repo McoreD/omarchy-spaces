@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "org.ren.renspace",
   "name": "renSpace",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "author": "T4T5",
-  "description": "The active space's tabs on the bar, and a sidebar for switching spaces",
+  "description": "The active space's tabs on the bar, and a sidebar of spaces named after their folders",
   "kinds": [
     "overlay",
     "service",

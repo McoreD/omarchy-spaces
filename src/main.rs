@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 
 use renspace::{commands, name};
 
-/// Spaces for Hyprland: switch projects, not workspaces.
+/// Spaces for Hyprland: a set of tabs for each thing you work on.
 #[derive(Parser)]
 #[command(name = "space", version)]
 struct Cli {
@@ -16,21 +16,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Make a folder a space and go to it.
+    /// Open a new space with a terminal, in the folder you are in (the
+    /// focused terminal's, else the active space's, else home). It is called
+    /// after the folder its terminal is in.
     New {
-        /// Lowercase letters, digits and '-'. Defaults to the folder name.
-        name: Option<String>,
-        /// Defaults to the current folder. Created if it doesn't exist.
+        /// Open it here instead.
         dir: Option<PathBuf>,
-        /// Instead of a folder, use the one of that name in your roots, or
-        /// make one in the first root (~/Projects by default).
-        #[arg(long, requires = "name", conflicts_with = "dir")]
-        in_roots: bool,
     },
-    /// Go to a space where you left it. With no name, pick one.
+    /// Go to a space where you left it. With none named, pick one.
     Go {
-        /// A space, or 'home' for the plain workspaces.
-        name: Option<String>,
+        /// What it's called, or its id; 'home' for the plain workspaces.
+        space: Option<String>,
     },
     /// List spaces, the active one marked, with their window counts.
     Ls {
@@ -38,18 +34,19 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Rename a space, the active one unless you name it. Its windows stay.
-    #[command(override_usage = "space rename [OLD] <NEW>")]
+    /// Name a space, the active one unless you say which. An empty name has
+    /// it called after its folder again.
+    #[command(override_usage = "space rename [SPACE] <NAME>")]
     Rename {
-        #[arg(value_name = "OLD")]
+        #[arg(value_name = "SPACE")]
         first: String,
-        #[arg(value_name = "NEW")]
+        #[arg(value_name = "NAME")]
         second: Option<String>,
     },
-    /// Close every window of a space, the active one unless you name it.
-    Close { name: Option<String> },
-    /// Stop a folder being a space: removes its .renspace.toml, not the folder.
-    Rm { name: String },
+    /// Close every window of a space, the active one unless you say which.
+    Close { space: Option<String> },
+    /// Open a terminal in the folder you are in, or the active space's.
+    Terminal,
     /// Go to a workspace (tab) of the active space: 1-10, new, next or prev.
     Ws {
         #[arg(value_parser = target)]
@@ -92,26 +89,15 @@ fn main() -> ExitCode {
     let unseen = !matches!(cli.command, Cmd::Ls { .. }) && !std::io::stderr().is_terminal();
 
     let result = match cli.command {
-        Cmd::New {
-            name,
-            dir,
-            in_roots,
-        } => commands::new(
-            name,
-            if in_roots {
-                commands::NewDir::InRoots
-            } else {
-                commands::NewDir::Path(dir)
-            },
-        ),
+        Cmd::New { dir } => commands::new(dir),
+        Cmd::Go { space } => commands::go(space),
+        Cmd::Ls { json } => commands::ls(json),
         Cmd::Rename { first, second } => match second {
-            Some(new) => commands::rename(Some(first), new),
+            Some(new_name) => commands::rename(Some(first), new_name),
             None => commands::rename(None, first),
         },
-        Cmd::Close { name } => commands::close(name),
-        Cmd::Rm { name } => commands::remove(name),
-        Cmd::Go { name } => commands::go(name),
-        Cmd::Ls { json } => commands::ls(json),
+        Cmd::Close { space } => commands::close(space),
+        Cmd::Terminal => commands::open_terminal(),
         Cmd::Ws { target } => commands::ws(target),
         Cmd::Move { n, silent } => commands::move_window(n, silent),
     };

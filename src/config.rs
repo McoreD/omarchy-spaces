@@ -1,7 +1,7 @@
 //! `~/.config/renspace/config.toml`, the global config.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -20,25 +20,20 @@ pub const DEFAULT_PICKERS: &[(&str, &str)] = &[
     ("walker", "walker --dmenu --placeholder 'Switch space'"),
 ];
 
-#[derive(Debug, Clone, Deserialize)]
+/// Opens a terminal in `$RENSPACE_DIR` the way Omarchy's `super+enter`
+/// does (`omarchy-launch-terminal`), so it is the terminal you chose in
+/// Omarchy. Outside a uwsm session, without the app scope.
+const OMARCHY_TERMINAL: &str = "exec setsid uwsm-app -- xdg-terminal-exec --dir=\"$RENSPACE_DIR\"";
+const PLAIN_TERMINAL: &str = "exec xdg-terminal-exec --dir=\"$RENSPACE_DIR\"";
+
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    /// Directories scanned for folders containing `.renspace.toml`.
-    pub roots: Vec<String>,
-    /// How many levels below each root to look.
-    pub scan_depth: usize,
     /// A dmenu-style command for `space go` with no name.
     pub picker: Option<String>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            roots: vec!["~/Projects".into(), "~/Spaces".into()],
-            scan_depth: 3,
-            picker: None,
-        }
-    }
+    /// How to open a terminal: a command for `sh -c`, run in the folder with
+    /// `RENSPACE_DIR` set to it.
+    pub terminal: Option<String>,
 }
 
 impl Config {
@@ -57,8 +52,13 @@ impl Config {
         }
     }
 
-    pub fn root_dirs(&self) -> Vec<PathBuf> {
-        self.roots.iter().map(|root| paths::expand(root)).collect()
+    /// The configured terminal command, or Omarchy's way.
+    pub fn terminal(&self) -> String {
+        match &self.terminal {
+            Some(terminal) => terminal.clone(),
+            None if on_path("uwsm-app") => OMARCHY_TERMINAL.to_string(),
+            None => PLAIN_TERMINAL.to_string(),
+        }
     }
 
     /// The configured picker, or the first installed default.
@@ -86,27 +86,25 @@ mod tests {
     fn missing_file_gives_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let config = Config::load_from(&dir.path().join("config.toml")).unwrap();
-        assert_eq!(config.roots, ["~/Projects", "~/Spaces"]);
-        assert_eq!(config.scan_depth, 3);
         assert_eq!(config.picker, None);
+        assert!(config.terminal().contains("xdg-terminal-exec"));
     }
 
     #[test]
     fn reads_partial_config() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        fs::write(&path, "roots = [\"~/dev\"]\npicker = \"vicinae dmenu\"\n").unwrap();
+        fs::write(&path, "picker = \"vicinae dmenu\"\n").unwrap();
         let config = Config::load_from(&path).unwrap();
-        assert_eq!(config.roots, ["~/dev"]);
-        assert_eq!(config.scan_depth, 3);
         assert_eq!(config.picker(), Some("vicinae dmenu".into()));
+        assert!(config.terminal().contains("xdg-terminal-exec"));
     }
 
     #[test]
     fn rejects_unknown_keys() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        fs::write(&path, "root = [\"~/dev\"]\n").unwrap();
+        fs::write(&path, "roots = [\"~/dev\"]\n").unwrap();
         assert!(Config::load_from(&path).is_err());
     }
 }

@@ -1,23 +1,25 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, barLook, displayDir, filterRows, freshen, initialIndex, locate, parseRows, draftRow, renameInput, rowActions, score, slugify, stepAction, tabsFor, windowMotion, withNewRow } from "../Spaces.mjs"
+import { appName, barLook, displayDir, filterRows, freshen, initialIndex, labels, locate, nameInput, parseRows, rowActions, score, stepAction, tabsFor, windowMotion } from "../Spaces.mjs"
 
 const json = JSON.stringify([
-  { name: "home", dir: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
-  { name: "ren", dir: "/home/me/Projects/ren", active: true, windows: 3, workspaces: [1], last: 1, left_at: 3000 },
-  { name: "renspace", dir: "/home/me/dev/ren/renspace", active: false, windows: 0, workspaces: [], last: 1, left_at: 2000 },
-  { name: "tax-2026", dir: "/home/me/Spaces/tax", active: false, windows: null, workspaces: null, last: 1, left_at: 0 },
+  { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
+  { id: "s1", label: "ren", named: false, folder: "/home/me/Projects/ren", active: true, windows: 3, workspaces: [1], last: 1, left_at: 3000 },
+  { id: "s2", label: "renspace", named: false, folder: "/home/me/dev/ren/renspace", active: false, windows: 0, workspaces: [], last: 1, left_at: 2000 },
+  { id: "s3", label: "Tax 2026", named: true, folder: "/home/me/tax", active: false, windows: null, workspaces: null, last: 1, left_at: 0 },
 ])
 
 test("parses space ls --json", () => {
   const rows = parseRows(json)
   assert.equal(rows.length, 4)
-  assert.deepEqual(rows[0], { name: "home", dir: "", active: false, windows: 4, leftAt: 1000 })
+  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, folder: "", active: false, windows: 4, leftAt: 1000 })
   assert.equal(rows[3].windows, -1, "no count without Hyprland")
+  assert.equal(rows[3].named, true)
   assert.throws(() => parseRows("space: error"), /unexpected/)
   assert.throws(() => parseRows("{}"), /unexpected/)
-  assert.deepEqual(parseRows("[{\"dir\":\"/x\"}]"), [], "rows without a name are dropped")
+  assert.deepEqual(parseRows("[{\"folder\":\"/x\"}]"), [], "rows without an id are dropped")
+  assert.equal(parseRows("[{\"id\":\"s9\"}]")[0].label, "s9", "no label: the id")
 })
 
 test("shortens home folders", () => {
@@ -39,20 +41,21 @@ test("scores prefix over word start over substring over letters in order", () =>
 
 test("filters and ranks, keeping the list order with no query", () => {
   const rows = parseRows(json)
-  const names = (query) => filterRows(rows, query).map((row) => row.name)
-  assert.deepEqual(names(""), ["home", "ren", "renspace", "tax-2026"])
-  assert.deepEqual(names("  "), ["home", "ren", "renspace", "tax-2026"])
+  const names = (query) => filterRows(rows, query).map((row) => row.label)
+  assert.deepEqual(names(""), ["home", "ren", "renspace", "Tax 2026"])
+  assert.deepEqual(names("  "), ["home", "ren", "renspace", "Tax 2026"])
   assert.deepEqual(names("ren"), ["ren", "renspace"])
   assert.deepEqual(names("spc"), ["renspace"])
-  assert.deepEqual(names("2026"), ["tax-2026"])
+  assert.deepEqual(names("2026"), ["Tax 2026"])
+  assert.deepEqual(names("tax"), ["Tax 2026"], "ignoring case")
   assert.deepEqual(names("qq"), [])
 })
 
 test("starts on the space left most recently", () => {
   const rows = parseRows(json)
-  assert.equal(rows[initialIndex(rows)].name, "renspace", "ren is active, so not it")
+  assert.equal(rows[initialIndex(rows)].label, "renspace", "ren is active, so not it")
   const fresh = rows.map((row) => ({ ...row, leftAt: 0 }))
-  assert.equal(fresh[initialIndex(fresh)].name, "ren", "nothing left yet: the active one")
+  assert.equal(fresh[initialIndex(fresh)].label, "ren", "nothing left yet: the active one")
   assert.equal(initialIndex([]), 0)
 })
 
@@ -144,76 +147,45 @@ test("reads the bar's background look", () => {
 
 test("freshens the last rows for the space you are in now", () => {
   const rows = parseRows(json)
-  // The last list was taken in ren; since then you went to renspace.
-  const fresh = freshen(rows, "renspace", 9000)
+  // The last list was taken in ren (s1); since then you went to renspace (s2).
+  const fresh = freshen(rows, "s2", 9000)
   assert.deepEqual(fresh.map((row) => row.active), [false, false, true, false])
   assert.equal(fresh[1].leftAt, 9000, "ren was left just now")
   assert.equal(fresh[0].leftAt, 1000)
-  assert.equal(rows[initialIndex(fresh)].name, "ren", "the cursor starts on the space you came from")
-  assert.equal(rows[initialIndex(rows)].name, "renspace", "the stale rows would start on the space you are in")
-  assert.deepEqual(freshen(rows, "ren", 9000), rows, "nothing changed while it was closed")
+  assert.equal(rows[initialIndex(fresh)].label, "ren", "the cursor starts on the space you came from")
+  assert.equal(rows[initialIndex(rows)].label, "renspace", "the stale rows would start on the space you are in")
+  assert.deepEqual(freshen(rows, "s1", 9000), rows, "nothing changed while it was closed")
 })
 
-test("slugifies like space does", () => {
-  assert.equal(slugify("renspace"), "renspace")
-  assert.equal(slugify("My Project"), "my-project")
-  assert.equal(slugify("  Tax_Return 2026!! "), "tax-return-2026")
-  assert.equal(slugify("--x--"), "x")
-  assert.equal(slugify("日本"), "")
+test("maps ids to labels for the bar", () => {
+  assert.deepEqual(labels(json), { home: "home", s1: "ren", s2: "renspace", s3: "Tax 2026" })
+  assert.deepEqual(labels("space: error"), {})
 })
 
-test("offers a new space when no space has the name typed", () => {
+test("offers rename and close, saying why close doesn't apply", () => {
   const rows = parseRows(json)
-  const names = (query) => withNewRow(filterRows(rows, query), rows, query).map((row) => (row.create ? "+" : "") + row.name)
-  assert.deepEqual(names(""), ["home", "ren", "renspace", "tax-2026"])
-  assert.deepEqual(names("ren"), ["ren", "renspace"], "ren exists")
-  assert.deepEqual(names("re"), ["ren", "renspace", "+re"])
-  assert.deepEqual(names("My Trip"), ["+my-trip"])
-  assert.deepEqual(names("home"), ["home"])
-  assert.deepEqual(names("!!"), [])
-})
-
-test("lists a row's actions with why one doesn't apply", () => {
-  const rows = parseRows(json)
-  const actions = (row) => rowActions(row).map((a) => [a.id, a.enabled, a.label, a.hint])
+  const actions = (row) => rowActions(row).map((a) => [a.id, a.enabled, a.hint])
   assert.deepEqual(rowActions(rows[0]), [], "home has none")
-  assert.deepEqual(rowActions({ name: "x", create: true }), [])
-  assert.deepEqual(actions(rows[1]), [
-    ["rename", true, "Rename", ""],
-    ["close", true, "Close 3 windows", ""],
-    ["remove", false, "Remove space", "Close windows first"],
-  ])
-  assert.deepEqual(actions(rows[2]).slice(1), [
-    ["close", false, "Close its windows", "None open"],
-    ["remove", true, "Remove space", "Keeps the folder"],
-  ])
-  assert.equal(rowActions({ name: "a", dir: "/a", windows: 1 })[1].label, "Close 1 window")
-  assert.equal(rowActions({ name: "old", dir: "", windows: 0 })[2].hint, "No folder")
+  assert.deepEqual(actions(rows[1]), [["rename", true, ""], ["close", true, "3 windows"]])
+  assert.deepEqual(actions(rows[2])[1], ["close", false, "No windows"])
+  assert.equal(rowActions({ id: "s4", windows: 1 })[1].hint, "1 window")
   assert.equal(rowActions(rows[3])[1].enabled, false, "no count without Hyprland")
-})
-
-test("takes only what a space name takes while renaming", () => {
-  assert.equal(renameInput("ren", "Space"), "renspace")
-  assert.equal(renameInput("ren", " 2"), "ren-2")
-  assert.equal(renameInput("", "-a_b!"), "a-b")
-  assert.equal(renameInput("x".repeat(64), "y"), "x".repeat(64))
+  assert.deepEqual(rowActions(rows[1]).map((a) => a.separatorBefore), [false, true])
 })
 
 test("steps through the enabled actions", () => {
-  const actions = rowActions({ name: "ren", dir: "/p/ren", windows: 2 })
-  assert.deepEqual(actions.map((a) => a.enabled), [true, true, false])
+  const actions = [{ enabled: true }, { enabled: true }, { enabled: false }]
   assert.equal(stepAction(actions, -1, 1), 0, "down from nothing: the first")
   assert.equal(stepAction(actions, -1, -1), 1, "up from nothing: the last enabled")
   assert.equal(stepAction(actions, 1, 1), 0, "skips the disabled one and wraps")
   assert.equal(stepAction(actions, 0, -1), 1)
   assert.equal(stepAction([{ enabled: false }], -1, 1), -1)
   assert.equal(stepAction([], -1, 1), -1)
-  assert.deepEqual(actions.map((a) => a.separatorBefore), [false, true, false])
 })
 
-test("the + adds a draft row with no actions", () => {
-  const draft = draftRow()
-  assert.equal(draft.draft, true)
-  assert.equal(draft.name, "")
-  assert.deepEqual(rowActions(draft), [])
+test("takes any name up to 64 characters", () => {
+  assert.equal(nameInput("Japan", "ese"), "Japanese")
+  assert.equal(nameInput("", "Tax 2026"), "Tax 2026")
+  assert.equal(nameInput("日本", "語"), "日本語")
+  assert.equal(nameInput("x".repeat(64), "y"), "x".repeat(64))
 })

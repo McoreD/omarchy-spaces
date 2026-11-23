@@ -27,6 +27,8 @@ pub struct Workspace {
 pub struct Client {
     #[serde(default)]
     pub address: String,
+    #[serde(default)]
+    pub pid: i64,
     pub workspace: WorkspaceRef,
 }
 
@@ -100,6 +102,16 @@ impl Hypr {
         Ok(window.get("address").is_some())
     }
 
+    /// The process of the focused window, if a window has focus.
+    pub fn active_window_pid(&self) -> Result<Option<u32>> {
+        let window: serde_json::Value = self.query("activewindow")?;
+        Ok(window
+            .get("pid")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|pid| u32::try_from(pid).ok())
+            .filter(|&pid| pid > 0))
+    }
+
     /// Runs a Lua dispatch expression, such as
     /// `hl.dsp.focus({ workspace = "name:ren:1" })`.
     pub fn dispatch(&self, expression: &str) -> Result<()> {
@@ -143,15 +155,6 @@ pub fn move_window(selector: &str, follow: bool) -> String {
     )
 }
 
-/// Rename a workspace by selector.
-pub fn rename_workspace(selector: &str, name: &str) -> String {
-    format!(
-        "hl.dsp.workspace.rename({{ workspace = {}, name = {} }})",
-        lua_string(selector),
-        lua_string(name)
-    )
-}
-
 /// Ask a window to close, by its address, as `super+w` does: the app can
 /// still ask about unsaved work.
 pub fn close_window(address: &str) -> String {
@@ -190,10 +193,6 @@ mod tests {
             r#"hl.dsp.window.move({ workspace = "name:ren:2", follow = false })"#
         );
         assert_eq!(lua_string(r#"a"b\c"#), r#""a\"b\\c""#);
-        assert_eq!(
-            rename_workspace("name:ren:2", "tax:2"),
-            r#"hl.dsp.workspace.rename({ workspace = "name:ren:2", name = "tax:2" })"#
-        );
         assert_eq!(
             close_window("0x55a4"),
             r#"hl.dsp.window.close({ window = "address:0x55a4" })"#

@@ -19,13 +19,15 @@ import "Spaces.mjs" as Spaces
 // keyboard stays with the windows, and the list keeps up with the spaces until
 // you hide it. Searching it (`super+p`) takes the keyboard to filter the list;
 // a pick, Escape, or focus moving to a window ends the search. A sidebar shown
-// just for the search hides again with it. A search no space matches offers to
-// make a space of that name.
+// just for the search hides again with it.
 //
+// Each space is called after the folder its first terminal is in, unless you
+// name it, so the list follows your terminals as they change folder. The `+`
+// by the title opens a new space with a terminal in the folder you are in.
 // Right-clicking a space opens its menu (SpaceMenu.qml), floating where you
-// clicked: rename it, close its windows, or remove it. Renaming takes the
-// keyboard as the search does, to type the new name in place. The `+` by the
-// title does the same in a new row at the end, to make a space. Each runs `space`, which says why in a notification if it
+// clicked: rename it or close it. Renaming takes the keyboard as the search
+// does, to type the name in place; an empty name has the space called after
+// its folder again. Each runs `space`, which says why in a notification if it
 // can't.
 Item {
   id: root
@@ -39,18 +41,17 @@ Item {
   property bool opened: false
   property bool searching: false
   property bool searchOnly: false
-  // The space being renamed, or whether a new one is being named (the `+`),
-  // and the name typed so far.
+  // The id of the space being renamed, and the name typed so far.
   property string renaming: ""
-  property bool creating: false
   property string nameText: ""
   property double renamedAt: 0
-  readonly property bool naming: renaming !== "" || creating
+  readonly property bool naming: renaming !== ""
   // Whatever holds the keyboard: the search or a name being typed.
   readonly property bool typing: searching || naming
-  // The space whose menu is open, its row, and where on the screen it opens.
+  // The id of the space whose menu is open, its row, and where on the screen
+  // it opens.
   property string menuFor: ""
-  readonly property var menuRow: menuFor ? rows.find(function(row) { return row.name === menuFor }) || null : null
+  readonly property var menuRow: menuFor ? rows.find(function(row) { return row.id === menuFor }) || null : null
   property real menuX: 0
   property real menuY: 0
   // `zoned` claims the width, which makes Hyprland move the windows; `shown`
@@ -173,7 +174,7 @@ Item {
 
   function loaded(text, exitCode, stderr) {
     var selected = root.shownRows[root.selectedIndex]
-    var keep = root.touched && selected ? selected.name : ""
+    var keep = root.touched && selected ? selected.id : ""
     try {
       if (exitCode !== 0) throw new Error(stderr.trim() || "space ls exited with " + exitCode)
       root.rows = Spaces.parseRows(text)
@@ -184,7 +185,7 @@ Item {
     }
     root.applyFilter(!keep)
     if (keep) {
-      var index = root.shownRows.findIndex(function(row) { return row.name === keep })
+      var index = root.shownRows.findIndex(function(row) { return row.id === keep })
       if (index >= 0) root.selectedIndex = index
     }
     if (root.pending) {
@@ -194,9 +195,7 @@ Item {
   }
 
   function applyFilter(resetCursor) {
-    root.shownRows = root.creating
-      ? root.rows.concat([Spaces.draftRow()])
-      : Spaces.withNewRow(Spaces.filterRows(root.rows, root.filterText), root.rows, root.filterText)
+    root.shownRows = Spaces.filterRows(root.rows, root.filterText)
     if (resetCursor) {
       root.selectedIndex = root.filterText ? 0 : Spaces.initialIndex(root.shownRows)
     }
@@ -230,21 +229,27 @@ Item {
     root.closeMenu()
     root.endSearch()
     // It says why in a notification if it can't.
-    if (row.create) Quickshell.execDetached(["space", "new", row.name, "--in-roots"])
-    else Quickshell.execDetached(["space", "go", row.name])
+    Quickshell.execDetached(["space", "go", row.id])
   }
 
   function subtitle(row) {
-    if (row.draft) return "Enter to make it, Esc to cancel"
-    if (root.renaming && row.name === root.renaming) return "Enter to rename, Esc to cancel"
-    if (row.create) return root.searching ? "Enter to make it" : "Click to make it"
-    if (row.dir) return Spaces.displayDir(row.dir, root.home)
-    return row.name === "home" ? "Plain workspaces" : "Folder not found"
+    if (root.renaming && row.id === root.renaming) {
+      return row.named ? "Enter to rename, empty for the folder's name" : "Enter to name it, Esc to cancel"
+    }
+    if (row.id === "home") return "Plain workspaces"
+    return row.folder ? Spaces.displayDir(row.folder, root.home) : "No terminal yet"
+  }
+
+  // The `+`: a new space with a terminal in the folder you are in.
+  function newSpace() {
+    root.closeMenu()
+    root.endNaming(false)
+    root.run(["space", "new"])
   }
 
   // Opens a space's menu at a point on the sidebar's screen. The menu takes
   // the keyboard, so a search ends, leaving the sidebar open.
-  function openMenu(name, x, y) {
+  function openMenu(id, x, y) {
     root.endNaming(false)
     if (root.searching) {
       root.searchOnly = false
@@ -253,7 +258,7 @@ Item {
     }
     root.menuX = x
     root.menuY = y
-    root.menuFor = name
+    root.menuFor = id
   }
 
   function closeMenu() {
@@ -263,33 +268,13 @@ Item {
   // An action from a space's menu (Spaces.rowActions).
   function act(id, row) {
     root.closeMenu()
-    if (id === "rename") root.startRename(row.name)
-    else if (id === "close") root.run(["space", "close", row.name])
-    else if (id === "remove") root.run(["space", "rm", row.name])
+    if (id === "rename") root.startRename(row)
+    else if (id === "close") root.run(["space", "close", row.id])
   }
 
-  // Takes the keyboard to type a new name over the old one. A sidebar shown
+  // Takes the keyboard to type a name over the one it has. A sidebar shown
   // just for a search stays, as you are now using it.
-  function startRename(name) {
-    root.startNaming()
-    root.renaming = name
-    root.nameText = name
-  }
-
-  // The `+`: a new row at the end of the list to type a new space's name
-  // into, made in a folder of that name in the roots, as the search's
-  // new-space row does.
-  function startCreate() {
-    if (root.creating) return
-    root.closeMenu()
-    root.startNaming()
-    root.creating = true
-    root.nameText = ""
-    root.applyFilter(false)
-    root.selectedIndex = root.shownRows.length - 1
-  }
-
-  function startNaming() {
+  function startRename(row) {
     root.endNaming(false)
     if (root.searching) {
       root.searchOnly = false
@@ -297,28 +282,28 @@ Item {
       root.searchEnded()
     }
     root.renamedAt = Date.now()
+    root.renaming = row.id
+    root.nameText = row.label
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
-  // Enter commits the name typed, Escape (`commit` false) drops it.
+  // Enter commits the name typed, Escape (`commit` false) drops it. Leaving
+  // an unnamed space's folder name as it was changes nothing; an empty name
+  // has a named space called after its folder again.
   function endNaming(commit) {
     if (!root.naming) return
-    var from = root.renaming
-    var creating = root.creating
-    var to = root.nameText.replace(/-+$/, "")
+    var id = root.renaming
+    var row = root.rows.find(function(r) { return r.id === id })
+    var to = root.nameText.trim()
     root.renaming = ""
-    root.creating = false
     root.nameText = ""
-    if (creating) {
-      root.applyFilter(false)
-      if (commit && to) root.run(["space", "new", to, "--in-roots"])
-    } else if (commit && to && to !== from) {
-      root.run(["space", "rename", from, to])
-    }
+    if (!commit || !row) return
+    if (row.named ? to === row.label : (to === row.label || to === "")) return
+    root.run(["space", "rename", id, to])
   }
 
   // Runs a `space` command that changes the spaces, then lists them again:
-  // a renamed or removed space changes no window, so nothing else would.
+  // a renamed space changes no window, so nothing else would.
   function run(args) {
     if (actionProc.running) return
     actionProc.command = args
@@ -443,6 +428,15 @@ Item {
     onTriggered: if (root.opened) root.refresh()
   }
 
+  // A terminal changing folder renames its space, and tells Hyprland nothing,
+  // so look again now and then while the list shows.
+  Timer {
+    interval: 2000
+    repeat: true
+    running: root.opened
+    onTriggered: root.refresh()
+  }
+
   // A one-pixel-wide panel on a top layer, drawing nothing and taking no
   // clicks. During a search it holds the keyboard, which the bottom
   // layer can't do the way the top layers can, and reserves the sidebar's
@@ -475,7 +469,7 @@ Item {
           if (event.key === Qt.Key_Escape) root.endNaming(false)
           else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) root.endNaming(true)
           else if (Util.editsFilter(event, root.nameText)) root.nameText = Util.editedFilter(event, root.nameText)
-          else if (printable) root.nameText = Spaces.renameInput(root.nameText, event.text)
+          else if (printable) root.nameText = Spaces.nameInput(root.nameText, event.text)
           else return
           event.accepted = true
           return

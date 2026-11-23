@@ -38,7 +38,7 @@ Item {
     anchors.margins: Style.spacing.md
     spacing: Style.spacing.sm
 
-    // The title, and the `+` that makes a new space.
+    // The title, and the `+` that opens a new space in the folder you are in.
     Item {
       width: parent.width
       height: root.headerHeight
@@ -64,15 +64,15 @@ Item {
         width: parent.height
         height: parent.height
         radius: Style.cornerRadius
-        color: plusMouse.containsMouse || root.sidebar.creating ? root.selectedBackground : "transparent"
+        color: plusMouse.containsMouse ? root.selectedBackground : "transparent"
 
         Text {
           anchors.centerIn: parent
           textFormat: Text.PlainText
           // A plus (nf-md-plus).
           text: "\u{f0415}"
-          color: plusMouse.containsMouse || root.sidebar.creating ? root.accent : root.foreground
-          opacity: plusMouse.containsMouse || root.sidebar.creating ? 1 : 0.5
+          color: plusMouse.containsMouse ? root.accent : root.foreground
+          opacity: plusMouse.containsMouse ? 1 : 0.5
           font.family: root.fontFamily
           font.pixelSize: Style.font.icon
         }
@@ -82,7 +82,7 @@ Item {
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onClicked: root.sidebar.startCreate()
+          onClicked: root.sidebar.newSpace()
         }
       }
     }
@@ -105,10 +105,9 @@ Item {
           required property var modelData
           required property int index
           readonly property bool selected: index === root.sidebar.selectedIndex
-          // Its name is being typed: a rename, or the row the `+` added.
-          readonly property bool renaming: modelData.draft === true
-            || (root.sidebar.renaming !== "" && root.sidebar.renaming === modelData.name)
-          readonly property bool menuOpen: root.sidebar.menuFor !== "" && root.sidebar.menuFor === modelData.name
+          // Its name is being typed.
+          readonly property bool renaming: root.sidebar.renaming !== "" && root.sidebar.renaming === modelData.id
+          readonly property bool menuOpen: root.sidebar.menuFor !== "" && root.sidebar.menuFor === modelData.id
 
           width: ListView.view.width
           height: root.rowHeight
@@ -144,26 +143,13 @@ Item {
               id: nameText
               width: parent.width
               textFormat: Text.PlainText
-              text: rowItem.renaming ? root.sidebar.nameText
-                : rowItem.modelData.create ? "New space “" + rowItem.modelData.name + "”"
-                : rowItem.modelData.name
-              color: rowItem.selected || rowItem.modelData.create ? root.accent : root.foreground
+              text: rowItem.renaming ? root.sidebar.nameText : rowItem.modelData.label
+              color: rowItem.selected ? root.accent : root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
               font.bold: rowItem.modelData.active
               elide: rowItem.renaming ? Text.ElideLeft : Text.ElideRight
 
-              Text {
-                visible: rowItem.modelData.draft === true && root.sidebar.nameText === ""
-                x: Style.spacing.xs
-                anchors.verticalCenter: parent.verticalCenter
-                textFormat: Text.PlainText
-                text: "Name the new space"
-                color: root.foreground
-                opacity: 0.4
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-              }
 
               // The keyboard reaches the rename through the sidebar's
               // panel, so the name draws its own caret.
@@ -228,7 +214,7 @@ Item {
                 // The base covers the screen, so its coordinates are the
                 // screen's, which the menu's surface shares.
                 var at = rowMouse.mapToItem(null, mouse.x, mouse.y)
-                root.sidebar.openMenu(rowItem.modelData.name, at.x, at.y)
+                root.sidebar.openMenu(rowItem.modelData.id, at.x, at.y)
               }
             }
           }

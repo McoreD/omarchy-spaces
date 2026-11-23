@@ -1,10 +1,9 @@
-//! Where renSpace keeps its files, and `~` in paths shown to or written by
-//! the user.
+//! Where renSpace keeps its files, and `~` in paths shown to the user.
 
 use std::env;
 use std::path::{Path, PathBuf};
 
-fn home() -> PathBuf {
+pub fn home() -> PathBuf {
     env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"))
@@ -27,17 +26,6 @@ pub fn state_dir() -> PathBuf {
     xdg("XDG_STATE_HOME", ".local/state").join("renspace")
 }
 
-/// Expands a leading `~` to the home directory.
-pub fn expand(path: &str) -> PathBuf {
-    if path == "~" {
-        home()
-    } else if let Some(rest) = path.strip_prefix("~/") {
-        home().join(rest)
-    } else {
-        PathBuf::from(path)
-    }
-}
-
 /// Shortens a path under the home directory to `~/...` for display.
 pub fn tilde(path: &Path) -> String {
     let home = home();
@@ -57,11 +45,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn expands_and_shortens_home() {
+    fn shortens_home() {
         let home = home();
-        assert_eq!(expand("~/Projects"), home.join("Projects"));
-        assert_eq!(expand("~"), home);
-        assert_eq!(expand("/srv/x"), PathBuf::from("/srv/x"));
         assert_eq!(tilde(&home.join("Projects/ren")), "~/Projects/ren");
         assert_eq!(tilde(Path::new("/srv/x")), "/srv/x");
     }
