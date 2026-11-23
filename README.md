@@ -14,25 +14,33 @@ Build and install the `space` binary into `~/.cargo/bin`, which is on Hyprland's
 cargo install --path ~/dev/ren/renspace
 ```
 
-Link the keybinds into your Hyprland config and load them after Omarchy's defaults:
+Add the picker key, `super+alt+p`, which fuzzy-finds a space and jumps to it. It adds one binding and changes none of Omarchy's:
 
 ```sh
 ln -s ~/dev/ren/renspace/hypr/renspace.lua ~/.config/hypr/renspace.lua
 echo 'require("hypr.renspace")' >> ~/.config/hypr/bindings.lua
 ```
 
-Hyprland reloads the config by itself. To undo it, delete that line from `bindings.lua`.
+Hyprland reloads the config by itself. To undo it, delete that line from `bindings.lua`. `super+p` (the plan's placeholder) is Omarchy's pseudo window and `super+shift+p` its Google Photos web app, hence `super+alt+p`.
 
-| Keys | Does |
-|---|---|
-| `super+1..0` | Workspace 1–10 of the active space (`space ws N`) |
-| `super+shift+1..0` | Move the focused window there and follow it (`space move N`) |
-| `super+shift+alt+1..0` | Move it there silently (`space move --silent N`) |
-| `super+alt+p` | Switch space with a picker (`space go`) |
+With only the picker, `super+1..0` are still Omarchy's, so pressing one inside a space takes you back to a plain workspace. Each space then lives on its first workspace, `name:1`.
 
-In `home` the workspace keys behave exactly as Omarchy's, because `space` hands them to Omarchy's own `o.workspaces.focus` and `o.workspaces.move_window`.
+### Optional: workspaces inside a space
 
-`super+p` (the plan's placeholder) is Omarchy's pseudo window and `super+shift+p` its Google Photos web app, so the picker is on `super+alt+p`.
+To give each space workspaces of its own, also load `renspace-workspaces.lua`:
+
+```sh
+ln -s ~/dev/ren/renspace/hypr/renspace-workspaces.lua ~/.config/hypr/renspace-workspaces.lua
+echo 'require("hypr.renspace-workspaces")' >> ~/.config/hypr/bindings.lua
+```
+
+| Keys | In a space | In `home` |
+|---|---|---|
+| `super+1..0` | Workspace N of the space | Omarchy's workspace N |
+| `super+shift+1..0` | Move the window there and follow it | Omarchy's move |
+| `super+shift+alt+1..0` | Move it there silently | Omarchy's silent move |
+
+These keys are plain Lua running inside Hyprland, not calls to `space`, so they can't leave you stuck. Outside a space they call Omarchy's own functions, the ones Omarchy binds to the same keys, and they keep working even if `space` is missing or broken. Inside a space, `super+alt+p` or `space go home` leads back to the plain workspaces. The `space ws` and `space move` commands do the same from a shell or a script.
 
 ## Use
 
@@ -90,7 +98,7 @@ Everything under `~/.local/state/renspace/` is disposable cache and can be delet
 
 **The workspace name is the data.** A window belongs to the space whose name prefixes its workspace (`ren:3`). The active space is read from the focused workspace on every command, never stored. New windows open on the focused workspace, so they land in the active space with no extra handling. A space whose folder is gone still shows in `space ls` and `space go` while its workspaces have windows.
 
-**Fast keypresses.** `space` talks to Hyprland's IPC socket directly rather than shelling out to `hyprctl`. Hyprland 0.56 takes Lua for `dispatch`, so for example `space ws 2` in `ren` sends `dispatch hl.dsp.focus({ workspace = "name:ren:2" })`. On the target laptop `space ws` takes about 0.5 ms from spawn to exit, against 3 ms for a single `hyprctl -j activeworkspace`. The workspace keys don't read config or scan roots. Scanning `~/Projects` for `space ls` takes about 2 ms.
+**Fast keypresses.** `space` talks to Hyprland's IPC socket directly rather than shelling out to `hyprctl`. Hyprland 0.56 takes Lua for `dispatch`, so for example `space ws 2` in `ren` sends `dispatch hl.dsp.focus({ workspace = "name:ren:2" })`. On the target laptop `space ws` takes about 0.5 ms from spawn to exit, against 3 ms for a single `hyprctl -j activeworkspace`. `space ws` and `space move` don't read config or scan roots, and the optional workspace keys skip the binary altogether. Scanning `~/Projects` for `space ls` takes about 2 ms.
 
 The code is small: `name.rs` (names, the `name:n` format, typo suggestions), `hypr.rs` (socket client), `spaces.rs` (`.renspace.toml`, scanning, index), `state.rs` (`last`), `commands.rs` (the five commands), `main.rs` (CLI).
 
@@ -102,7 +110,7 @@ Checked on Hyprland 0.56.2 and the Omarchy of 2026-11-23:
 - **Omarchy's bar hides them.** `Workspaces.qml` skips ids `<= 0`, so inside a space the bar still shows home's numbers with none highlighted. It's not broken, just not informative. A bar integration is in the plan's later steps.
 - **Omarchy's per-monitor logic leaves named workspaces' windows alone.** `monitor-workspaces.lua` only renumbers or moves "regular" workspaces (`id > 0`). The numeric fallback in the plan (space k owns `k*100+1..k*100+10`) would be worse: Omarchy treats those ids as guests from an unplugged monitor and renumbers them into 1–10. Named workspaces are the right choice.
 - **But a config reload drops you out of your space.** Verified: on `renspike:2`, `hyprctl reload` landed on `1`. Omarchy's `config.reloaded` handler puts every monitor back on one of its numbered workspaces. Reloads happen whenever a Hypr config file is saved or the theme changes. `hypr/renspace.lua` works around it by noting the workspace while the config is re-read and going back to it after Omarchy's handler. That workaround is not yet verified live; see below.
-- **The binds override Omarchy's.** `o.rebind` (unbind then bind) on the same keys, loaded from `bindings.lua` after Omarchy's defaults.
+- **The optional workspace keys override Omarchy's.** `o.rebind` (unbind then bind) on the same keys, loaded from `bindings.lua` after Omarchy's defaults. Tested through `hyprctl eval`: in `home`, `super+2` runs Omarchy's own focus; in a space, `super+3` goes to `name:3`; and a move with no window does nothing.
 
 ## Testing
 
@@ -114,7 +122,7 @@ The unit tests cover names, parsing, scanning, the index and the state files. `t
 
 ## Known gaps
 
-- `super+tab` and `super+mouse_wheel` cycle through every workspace on the monitor (`m+1`), so they leave the space.
+- With the optional workspace keys, `super+tab` and `super+mouse_wheel` still cycle through every workspace on the monitor (`m+1`), so they leave the space.
 - Windows opened while the wrong workspace is focused land in the wrong space. `space move` fixes them by hand.
 - Anything that renames a workspace breaks the mapping. Keep the `name:n` format strict: anything else counts as `home`.
 - The bar doesn't show a space's workspaces (see above).

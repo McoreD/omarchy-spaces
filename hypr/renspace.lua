@@ -1,23 +1,11 @@
--- renSpace keybinds: Super + N and Super + Shift + N stay inside the active
--- space. In `home` (the plain numbered workspaces) they behave exactly as
--- Omarchy's defaults, since `space` hands them to Omarchy's own per-monitor
--- workspace logic.
+-- renSpace: one key to fuzzy-find a space and jump to it. Super + 1..0 stay
+-- Omarchy's; for keys that stay inside the active space, see
+-- renspace-workspaces.lua.
 --
--- Install: copy this file to ~/.config/hypr/renspace.lua and add
+-- Install: link this file to ~/.config/hypr/renspace.lua and add
 --   require("hypr.renspace")
 -- at the end of ~/.config/hypr/bindings.lua, which loads after Omarchy's
--- defaults. Remove that line to go back to Omarchy's workspaces.
-
-for n = 1, 10 do
-  local key = "code:" .. tostring(n + 9)
-  o.rebind("SUPER + " .. key, "Switch to workspace " .. n .. " in this space", "space ws " .. n)
-  o.rebind("SUPER + SHIFT + " .. key, "Move window to workspace " .. n .. " in this space", "space move " .. n)
-  o.rebind(
-    "SUPER + SHIFT + ALT + " .. key,
-    "Move window silently to workspace " .. n .. " in this space",
-    "space move --silent " .. n
-  )
-end
+-- defaults. Remove that line to undo it.
 
 -- Super + P is Omarchy's pseudo window and Super + Shift + P its Google Photos
 -- web app, so the switcher goes on Super + Alt + P (for project).
