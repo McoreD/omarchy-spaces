@@ -16,11 +16,31 @@ use crate::paths;
 use crate::spaces::{self, Registry};
 use crate::state::Last;
 
-/// `space ws <n>`: workspace `n` of the active space.
-pub fn ws(slot: u8) -> Result<()> {
+/// Where `space ws` goes. A space's workspaces are its tabs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    Slot(u8),
+    /// A new tab, after the last one.
+    New,
+    Next,
+    Prev,
+}
+
+/// `space ws <n|new|next|prev>`: a workspace of the active space.
+pub fn ws(target: Target) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
+    let slot = match target {
+        Target::Slot(slot) => slot,
+        _ => {
+            let open = open_slots(&hypr.workspaces()?, &active, &here);
+            match pick_slot(target, &open, here.slot())? {
+                Some(slot) => slot,
+                None => return Ok(()),
+            }
+        }
+    };
     if here.slot() == Some(slot) {
         return Ok(());
     }
@@ -28,6 +48,63 @@ pub fn ws(slot: u8) -> Result<()> {
     focus(&hypr, here.space(), slot)?;
     remember(here.space(), slot);
     Ok(())
+}
+
+/// The slots of the active space that have a workspace now, in order, the
+/// focused one included. In `home`, those of the focused monitor's block of
+/// ten, as Omarchy numbers them.
+fn open_slots(
+    workspaces: &[hypr::Workspace],
+    active: &hypr::Workspace,
+    here: &Location,
+) -> Vec<u8> {
+    let block = |id: i64| (id - 1).div_euclid(i64::from(name::SLOTS));
+    let mut open: BTreeSet<u8> = workspaces
+        .iter()
+        .filter_map(|ws| {
+            let location = name::locate(ws.id, &ws.name);
+            let same_space = match (&location, here) {
+                (Location::Space { name: a, .. }, Location::Space { name: b, .. }) => a == b,
+                (Location::Home { .. }, Location::Home { .. }) => {
+                    ws.id > 0 && block(ws.id) == block(active.id.max(1))
+                }
+                _ => false,
+            };
+            if same_space { location.slot() } else { None }
+        })
+        .collect();
+    open.extend(here.slot());
+    open.into_iter().collect()
+}
+
+/// The slot `new`, `next` or `prev` leads to from `current`, given the open
+/// ones; `None` when there's nowhere else to go.
+fn pick_slot(target: Target, open: &[u8], current: Option<u8>) -> Result<Option<u8>> {
+    let position = current.and_then(|c| open.iter().position(|&s| s == c));
+    Ok(match target {
+        Target::Slot(slot) => Some(slot),
+        Target::New => {
+            let after_last = open.last().map_or(1, |&last| last + 1);
+            let slot = if after_last <= name::SLOTS {
+                Some(after_last)
+            } else {
+                (1..=name::SLOTS).find(|s| !open.contains(s))
+            };
+            match slot {
+                Some(slot) => Some(slot),
+                None => bail!("all {} tabs are open; close one first", name::SLOTS),
+            }
+        }
+        Target::Next | Target::Prev if open.len() < 2 && position.is_some() => None,
+        Target::Next => match position {
+            Some(i) => Some(open[(i + 1) % open.len()]),
+            None => open.first().copied(),
+        },
+        Target::Prev => match position {
+            Some(i) => Some(open[(i + open.len() - 1) % open.len()]),
+            None => open.last().copied(),
+        },
+    })
 }
 
 /// `space move <n>`: the focused window to workspace `n` of the active space,
@@ -482,6 +559,26 @@ mod tests {
         live.workspaces.insert(HOME.into(), [1].into());
         live.workspaces.insert("old".into(), [4].into());
         live
+    }
+
+    #[test]
+    fn picks_new_next_and_prev_tabs() {
+        use Target::*;
+        let pick = |t, open: &[u8], cur| pick_slot(t, open, cur).unwrap();
+        assert_eq!(pick(New, &[1], Some(1)), Some(2));
+        assert_eq!(pick(New, &[1, 2, 5], Some(2)), Some(6));
+        assert_eq!(
+            pick(New, &[2, 10], Some(10)),
+            Some(1),
+            "a gap once 10 is taken"
+        );
+        assert!(pick_slot(New, &(1..=10).collect::<Vec<_>>(), Some(1)).is_err());
+        assert_eq!(pick(Next, &[1, 3, 4], Some(3)), Some(4));
+        assert_eq!(pick(Next, &[1, 3, 4], Some(4)), Some(1), "wraps");
+        assert_eq!(pick(Prev, &[1, 3, 4], Some(1)), Some(4), "wraps");
+        assert_eq!(pick(Prev, &[1, 3, 4], Some(3)), Some(1));
+        assert_eq!(pick(Next, &[2], Some(2)), None, "only one tab");
+        assert_eq!(pick(Next, &[2, 5], None), Some(2));
     }
 
     #[test]

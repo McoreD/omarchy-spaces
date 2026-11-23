@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { displayDir, filterRows, initialIndex, parseRows, score } from "../Spaces.mjs"
+import { appName, displayDir, filterRows, initialIndex, locate, parseRows, score, tabsFor } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { name: "home", dir: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -54,4 +54,59 @@ test("starts on the space left most recently", () => {
   const fresh = rows.map((row) => ({ ...row, leftAt: 0 }))
   assert.equal(fresh[initialIndex(fresh)].name, "ren", "nothing left yet: the active one")
   assert.equal(initialIndex([]), 0)
+})
+
+test("locates workspaces like space does", () => {
+  assert.deepEqual(locate(-1337, "ren:3"), { space: "ren", slot: 3 })
+  assert.deepEqual(locate(-1338, "tax-2026:10"), { space: "tax-2026", slot: 10 })
+  assert.deepEqual(locate(13, "13"), { space: "home", slot: 3 })
+  for (const name of ["chat", "Ren:1", "ren:0", "ren:11", "ren:01", "home:1"]) {
+    assert.deepEqual(locate(-5, name), { space: "home", slot: 0 }, name)
+  }
+})
+
+test("names apps from window classes", () => {
+  assert.equal(appName("chromium"), "Chromium")
+  assert.equal(appName("org.omarchy.quick-terminal"), "Quick-terminal")
+  assert.equal(appName("com.mitchellh.ghostty"), "Ghostty")
+  assert.equal(appName("chrome-app.hey.com__-Default"), "Hey.com")
+  assert.equal(appName(""), "")
+})
+
+test("builds the active space's tabs", () => {
+  const workspaces = [
+    { id: 1, name: "1" },
+    { id: -1337, name: "ren:1" },
+    { id: -1338, name: "ren:3" },
+    { id: -1339, name: "tax:1" },
+  ]
+  const windows = [
+    { workspaceId: -1337, windowClass: "kitty", focus: 4 },
+    { workspaceId: -1337, windowClass: "chromium", focus: 1 },
+    { workspaceId: -1338, windowClass: "nvim", focus: 2 },
+    { workspaceId: 1, windowClass: "Slack", focus: 0 },
+  ]
+  assert.deepEqual(tabsFor(workspaces, windows, { id: -1338, name: "ren:3" }), {
+    space: "ren",
+    tabs: [
+      { slot: 1, label: "Chromium", windows: 2, active: false },
+      { slot: 3, label: "Nvim", windows: 1, active: true },
+    ],
+  })
+})
+
+test("a new tab is empty until something opens on it", () => {
+  const tabs = tabsFor([{ id: -1337, name: "ren:1" }], [], { id: -1340, name: "ren:2" })
+  assert.deepEqual(tabs.tabs.map((t) => [t.slot, t.label, t.active]), [
+    [1, "New tab", false],
+    [2, "New tab", true],
+  ])
+})
+
+test("home's tabs are the focused monitor's plain workspaces", () => {
+  const workspaces = [{ id: 1, name: "1" }, { id: 2, name: "2" }, { id: 12, name: "12" }, { id: -1337, name: "ren:1" }]
+  const tabs = tabsFor(workspaces, [], { id: 2, name: "2" })
+  assert.equal(tabs.space, "home")
+  assert.deepEqual(tabs.tabs.map((t) => t.slot), [1, 2])
+  assert.deepEqual(tabsFor(workspaces, [], { id: 12, name: "12" }).tabs.map((t) => t.slot), [2])
 })

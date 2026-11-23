@@ -2,7 +2,7 @@
 
 Spaces for Hyprland on Omarchy: switch projects, not workspaces.
 
-A **space** is a project: a name, a folder, and its own Hyprland workspaces `name:1` to `name:10`. You switch spaces with `space go`, and `super+1..9` moves between the workspaces of the space you're in. The plain numbered workspaces are the `home` space, so nothing changes until you create a space.
+A **space** is a project: a name, a folder, and its own tabs. Each tab is a Hyprland workspace, `name:1` to `name:10`, holding whatever windows you tile there. A strip along the top of the screen shows the current space's tabs. You switch spaces with `super+p`, and switch tabs within a space as in a browser. The plain numbered workspaces are the `home` space, whose tabs work like Omarchy's workspaces.
 
 This is the proof of concept from the renSpace plan (`~/Projects/ren/products/renspace/RENSPACE_PLAN.md`). It answers one question: does switching between spaces feel better than switching between workspaces?
 
@@ -10,12 +10,31 @@ This is the proof of concept from the renSpace plan (`~/Projects/ren/products/re
 
 ```sh
 just install   # build the space binary into ~/.cargo/bin, which is on Hyprland's PATH
-just setup     # add the sidebar to the Omarchy shell and bind it to super+p
+just setup     # add the tab strip and sidebar to the Omarchy shell, and the keys
 ```
 
-`just setup` links `omarchy/` into `~/.config/omarchy/plugins/` as `org.ren.renspace` and enables it (`omarchy plugin enable` asks you to confirm). It also links `hypr/renspace.lua` into `~/.config/hypr/` and loads it from `bindings.lua`. That adds one binding and changes none of Omarchy's. It's safe to run again.
+`just setup` links `omarchy/` into `~/.config/omarchy/plugins/` as `org.ren.renspace` and enables it (`omarchy plugin enable` asks you to confirm). It also links `hypr/renspace.lua` into `~/.config/hypr/` and loads it from `bindings.lua`. It's safe to run again. Hyprland reloads the config by itself; to undo the keys, delete that line from `bindings.lua`.
 
-Hyprland reloads the config by itself. To undo it, delete that line from `bindings.lua`. `super+p` replaces Omarchy's pseudo window toggle, which keeps a tiled window at its own size inside its tile.
+The strip takes the top edge, so the layout is meant for Omarchy's bar on the right: `omarchy bar position right`.
+
+A file added to the plugin while the shell is running doesn't load until the shell restarts (`omarchy-restart-shell`). The shell reports it as "File name case mismatch". Edits to existing files reload by themselves.
+
+| Keys | Does |
+|---|---|
+| `super+p` | Switch space (the sidebar) |
+| `super+t` | New tab, after the last one |
+| `super+1..0` | Go to tab N |
+| `super+tab` / `super+shift+tab` | Next / previous tab |
+| `super+shift+1..0` | Move the focused window to tab N and follow it |
+| `super+shift+alt+1..0` | Move it there without following |
+
+Closing a tab means closing its windows: Hyprland removes an empty workspace once you leave it.
+
+These keys replace Omarchy's: `super+p` was the pseudo window toggle, `super+t` the floating toggle, and `super+tab` cycled every workspace on the monitor. `super+1..0` and `super+shift+1..0` are plain Lua inside Hyprland, not calls to `space`, so they can't leave you stuck. In `home` they run the very functions Omarchy binds to those keys, and they keep working even if `space` is missing or broken. `super+t` and `super+tab` run `space ws new|next|prev`.
+
+### The tab strip
+
+The strip shows the space's name, then a tab for each of its workspaces: its number, the app you used last on it, and `+N` for any other windows there. A new tab reads "New tab" until something opens on it. The current tab is underlined. Click a tab to go there, `+` for a new one, or the space's name to open the sidebar. The strip follows Hyprland live, and clicks run `space ws`.
 
 ### The sidebar
 
@@ -24,25 +43,6 @@ Hyprland reloads the config by itself. To undo it, delete that line from `bindin
 Type to filter. A prefix match beats a match at a word start, which beats letters in order: `spc` finds `renspace`. Up/down, Tab or `ctrl+n`/`ctrl+p` move the cursor. Enter or a click jumps there. Esc clears the filter, then closes. A click outside also closes.
 
 The sidebar only reads `space ls --json` and runs `space go <name>`, so the `space` binary stays the only thing that knows about spaces. `space go` with no name still opens the centered vicinae or walker picker from a terminal.
-
-With only the picker, `super+1..0` are still Omarchy's, so pressing one inside a space takes you back to a plain workspace. Each space then lives on its first workspace, `name:1`.
-
-### Optional: workspaces inside a space
-
-To give each space workspaces of its own, also load `renspace-workspaces.lua`:
-
-```sh
-ln -s ~/dev/ren/renspace/hypr/renspace-workspaces.lua ~/.config/hypr/renspace-workspaces.lua
-echo 'require("hypr.renspace-workspaces")' >> ~/.config/hypr/bindings.lua
-```
-
-| Keys | In a space | In `home` |
-|---|---|---|
-| `super+1..0` | Workspace N of the space | Omarchy's workspace N |
-| `super+shift+1..0` | Move the window there and follow it | Omarchy's move |
-| `super+shift+alt+1..0` | Move it there silently | Omarchy's silent move |
-
-These keys are plain Lua running inside Hyprland, not calls to `space`, so they can't leave you stuck. Outside a space they call Omarchy's own functions, the ones Omarchy binds to the same keys, and they keep working even if `space` is missing or broken. Inside a space, `super+p` or `space go home` leads back to the plain workspaces. The `space ws` and `space move` commands do the same from a shell or a script.
 
 ## Use
 
@@ -54,8 +54,9 @@ space go home                       # back to the plain workspaces
 space go                            # pick one
 space ls                            # list spaces, active one marked, window counts
 space ls --json                     # the same for scripts
-space ws 3                          # workspace 3 of the active space
-space move 2 [--silent]             # focused window to workspace 2 of the active space
+space ws 3                          # tab 3 of the active space
+space ws new|next|prev              # a new tab after the last, or the next / previous one
+space move 2 [--silent]             # focused window to tab 2 of the active space
 ```
 
 ```
@@ -125,11 +126,12 @@ The unit tests cover names, parsing, scanning, the index and the state files. `t
 
 ## Known gaps
 
-- With the optional workspace keys, `super+tab` and `super+mouse_wheel` still cycle through every workspace on the monitor (`m+1`), so they leave the space.
+- `super+mouse_wheel` still cycles through every workspace on the monitor (`m+1`), so it leaves the space.
 - Windows opened while the wrong workspace is focused land in the wrong space. `space move` fixes them by hand.
 - Anything that renames a workspace breaks the mapping. Keep the `name:n` format strict: anything else counts as `home`.
-- The bar doesn't show a space's workspaces (see above).
-- Not yet tried live: the sidebar in the running Omarchy shell (it passes qmllint, and its logic runs in both Node and Qt's JS engine), the reload workaround in `hypr/renspace.lua`, and the vicinae picker.
+- Omarchy's workspace widget in the bar doesn't show a space's workspaces (see above); the tab strip does. Drop the widget from the bar if it's redundant.
+- Tabs have numbers and app names but no names of their own, and can't be reordered. The strip shows the focused monitor's tabs on every monitor.
+- Not yet tried live: the reload workaround in `hypr/renspace.lua`, and the vicinae picker.
 - One monitor. A second monitor's numbered workspaces count as `home` too, but a space's workspaces don't follow monitors.
 
 ## What to note while living in it

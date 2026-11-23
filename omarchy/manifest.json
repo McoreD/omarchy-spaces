@@ -2,14 +2,15 @@
   "schemaVersion": 1,
   "id": "org.ren.renspace",
   "name": "renSpace",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "T4T5",
-  "description": "A sidebar for switching between renSpace spaces",
+  "description": "A tab strip for the active space's workspaces, and a sidebar for switching spaces",
   "kinds": [
-    "overlay"
+    "overlay",
+    "service"
   ],
-  "keepLoaded": true,
   "entryPoints": {
-    "overlay": "Sidebar.qml"
+    "overlay": "Sidebar.qml",
+    "service": "Tabs.qml"
   }
 }

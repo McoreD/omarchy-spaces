@@ -34,10 +34,10 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Go to workspace N of the active space.
+    /// Go to a workspace (tab) of the active space: 1-10, new, next or prev.
     Ws {
-        #[arg(value_parser = slot)]
-        n: u8,
+        #[arg(value_parser = target)]
+        target: commands::Target,
     },
     /// Move the focused window to workspace N of the active space.
     Move {
@@ -53,6 +53,22 @@ fn slot(raw: &str) -> Result<u8, String> {
     name::parse_slot(raw).ok_or_else(|| format!("'{raw}' isn't a workspace: use 1-{}", name::SLOTS))
 }
 
+fn target(raw: &str) -> Result<commands::Target, String> {
+    match raw {
+        "new" => Ok(commands::Target::New),
+        "next" => Ok(commands::Target::Next),
+        "prev" => Ok(commands::Target::Prev),
+        _ => name::parse_slot(raw)
+            .map(commands::Target::Slot)
+            .ok_or_else(|| {
+                format!(
+                    "'{raw}' isn't a workspace: use 1-{}, new, next or prev",
+                    name::SLOTS
+                )
+            }),
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     // Run from a keybind, nobody sees stderr, so say it in a notification.
@@ -65,7 +81,7 @@ fn main() -> ExitCode {
         Cmd::New { name, dir } => commands::new(name, dir),
         Cmd::Go { name } => commands::go(name),
         Cmd::Ls { json } => commands::ls(json),
-        Cmd::Ws { n } => commands::ws(n),
+        Cmd::Ws { target } => commands::ws(target),
         Cmd::Move { n, silent } => commands::move_window(n, silent),
     };
 

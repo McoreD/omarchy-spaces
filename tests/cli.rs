@@ -566,3 +566,40 @@ fn go_without_a_name_opens_the_picker() {
     env.ok(&["go"]);
     assert_eq!(env.active(), "trip:1");
 }
+
+#[test]
+fn ws_new_next_and_prev_move_between_a_spaces_tabs() {
+    let env = Env::new();
+    env.add_window("ren:1");
+    env.add_window("ren:3");
+    env.add_window("other:2");
+    env.set_active("ren:1");
+
+    env.ok(&["ws", "next"]);
+    assert_eq!(env.active(), "ren:3");
+    env.ok(&["ws", "next"]);
+    assert_eq!(env.active(), "ren:1", "wraps, skipping other spaces");
+    env.ok(&["ws", "prev"]);
+    assert_eq!(env.active(), "ren:3");
+    env.ok(&["ws", "new"]);
+    assert_eq!(env.active(), "ren:4", "after the last tab");
+
+    // The empty new tab goes away when left, as Hyprland does.
+    env.ok(&["ws", "1"]);
+    env.ok(&["ws", "new"]);
+    assert_eq!(env.active(), "ren:4");
+}
+
+#[test]
+fn ws_new_in_home_uses_omarchys_next_free_workspace() {
+    let env = Env::new();
+    env.add_window("1");
+    env.add_window("2");
+    env.ok(&["ws", "new"]);
+    assert_eq!(env.dispatched(), ["o.workspaces.focus(3)"]);
+
+    // A single tab has no next.
+    let env = Env::new();
+    env.ok(&["ws", "next"]);
+    assert!(env.dispatched().is_empty());
+}

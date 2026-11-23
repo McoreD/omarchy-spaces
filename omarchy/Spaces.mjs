@@ -77,3 +77,86 @@ export function initialIndex(rows) {
   const active = rows.findIndex((row) => row.active)
   return active >= 0 ? active : 0
 }
+
+// ---------------------------------------------------------------- tabs
+//
+// A space's workspaces are its tabs: `ren:1`, `ren:2`, ... The rules match
+// `space` (src/name.rs): a strict `name:n`, anything else is `home`, whose
+// tabs are the plain numbered workspaces of the monitor's block of ten.
+
+const SLOTS = 10
+const SPACE_WORKSPACE = /^([a-z0-9][a-z0-9-]*):(\d+)$/
+
+// `{ space, slot }` for a workspace; slot is 0 when it has none.
+export function locate(id, name) {
+  const match = SPACE_WORKSPACE.exec(String(name || ""))
+  if (match && match[1] !== "home") {
+    const slot = Number(match[2])
+    if (String(slot) === match[2] && slot >= 1 && slot <= SLOTS) return { space: match[1], slot }
+  }
+  return { space: "home", slot: id > 0 ? ((id - 1) % SLOTS) + 1 : 0 }
+}
+
+// A short app name from a window class: `org.omarchy.quick-terminal` is
+// `Quick-terminal`, Omarchy's `chrome-app.hey.com__-Default` web apps are
+// `Hey.com`.
+export function appName(windowClass) {
+  let name = String(windowClass || "")
+  const webApp = /^(?:chrome|chromium|brave)-(.+?)__/.exec(name)
+  if (webApp) name = webApp[1].replace(/^(app|www)\./, "")
+  else if (name.includes(".")) name = name.slice(name.lastIndexOf(".") + 1)
+  return name ? name[0].toUpperCase() + name.slice(1) : ""
+}
+
+// The active space's tabs from Hyprland's workspaces and windows.
+//   workspaces: [{ id, name }]
+//   windows:    [{ workspaceId, windowClass, focus }]  (focus: lower is more recent)
+//   active:     { id, name } of the focused workspace
+// Returns { space, tabs: [{ slot, label, windows, active }] } in slot order.
+export function tabsFor(workspaces, windows, active) {
+  const here = locate(active ? active.id : 0, active ? active.name : "")
+  const block = (id) => Math.floor((id - 1) / SLOTS)
+  const activeBlock = block(active && active.id > 0 ? active.id : 1)
+
+  const tabs = new Map()
+  const tabOf = (workspace) => {
+    const where = locate(workspace.id, workspace.name)
+    if (where.space !== here.space || where.slot === 0) return null
+    if (where.space === "home" && block(workspace.id) !== activeBlock) return null
+    return where.slot
+  }
+
+  for (const workspace of workspaces || []) {
+    const slot = tabOf(workspace)
+    if (slot === null || tabs.has(slot)) continue
+    tabs.set(slot, { id: workspace.id, slot, label: "", windows: 0, active: false, focus: Infinity })
+  }
+  if (here.slot > 0 && !tabs.has(here.slot)) {
+    tabs.set(here.slot, { id: active.id, slot: here.slot, label: "", windows: 0, active: false, focus: Infinity })
+  }
+
+  const byId = new Map([...tabs.values()].map((tab) => [tab.id, tab]))
+  for (const window of windows || []) {
+    const tab = byId.get(window.workspaceId)
+    if (!tab) continue
+    tab.windows++
+    const focus = typeof window.focus === "number" ? window.focus : Infinity
+    // The most recently focused window names the tab.
+    if (!tab.label || focus < tab.focus) {
+      tab.label = appName(window.windowClass)
+      tab.focus = focus
+    }
+  }
+
+  return {
+    space: here.space,
+    tabs: [...tabs.values()]
+      .sort((a, b) => a.slot - b.slot)
+      .map((tab) => ({
+        slot: tab.slot,
+        label: tab.label || "New tab",
+        windows: tab.windows,
+        active: tab.slot === here.slot,
+      })),
+  }
+}
