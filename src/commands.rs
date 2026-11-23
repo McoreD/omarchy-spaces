@@ -694,6 +694,65 @@ pub fn close(target: Option<String>) -> Result<()> {
     Ok(())
 }
 
+/// `space emptied <workspace>`, run by Hyprland (`hypr/renspace.lua`) when
+/// closing a window left the workspace you are on empty. An emptied tab
+/// doesn't linger: you go to the space's next tab with windows, else the one
+/// before; with none left, the space ends and you go back to the space you
+/// were in before it, or `home`. Tabs made empty on purpose (`space ws new`)
+/// never get here. Nothing happens if things moved on since: you left that
+/// workspace, or something opened on it.
+pub fn emptied(workspace: &str) -> Result<()> {
+    let hypr = Hypr::from_env()?;
+    let active = hypr.active_workspace()?;
+    if active.name != workspace {
+        return Ok(());
+    }
+    let Location::Space { name: id, slot } = name::locate(active.id, &active.name) else {
+        return Ok(());
+    };
+    let workspaces = hypr.workspaces()?;
+    let mut tabs: BTreeMap<u8, u32> = BTreeMap::new();
+    for ws in &workspaces {
+        if let Location::Space { name, slot } = name::locate(ws.id, &ws.name)
+            && name == id
+        {
+            tabs.insert(slot, ws.windows);
+        }
+    }
+    if tabs.get(&slot).copied().unwrap_or(0) > 0 {
+        return Ok(());
+    }
+
+    let has_windows = |(_, windows): &(&u8, &u32)| **windows > 0;
+    let after = tabs.range(slot + 1..).find(has_windows).map(|(s, _)| *s);
+    let before = tabs.range(..slot).rev().find(has_windows).map(|(s, _)| *s);
+    if let Some(next) = after.or(before) {
+        focus(&hypr, &id, next)?;
+        remember(&id, next);
+        return Ok(());
+    }
+
+    let snapshot = snapshot(&hypr)?;
+    let others: BTreeSet<&str> = snapshot
+        .space_windows
+        .iter()
+        .map(|w| w.space.as_str())
+        .filter(|space| *space != id)
+        .collect();
+    let to = Last::load(&paths::state_dir())?
+        .latest_except(&id, |s| s == HOME || others.contains(s))
+        .unwrap_or(HOME)
+        .to_string();
+    switch(&hypr, &to)?;
+    // The space is gone (switching noted where you left it): nothing to go
+    // back to.
+    if let Ok(mut last) = Last::load(&paths::state_dir()) {
+        last.remove(&id);
+        save(&last);
+    }
+    Ok(())
+}
+
 /// `space ls`: every space, the active one marked, with a window count.
 pub fn ls(json: bool) -> Result<()> {
     let hypr = match Hypr::from_env() {

@@ -76,6 +76,26 @@ for n = 1, 10 do
   o.rebind("SUPER + SHIFT + ALT + " .. key, "Move window silently to tab " .. n, move_window(n, false))
 end
 
+-- A tab emptied by closing its last window doesn't linger, however the
+-- window went (super+w, `exit` in a terminal, an app quitting): `space
+-- emptied` goes on to another of the space's tabs, or, with none left, ends
+-- the space and goes back to where you were before it. Tabs made empty on
+-- purpose (super+t) stay, as only a close gets here. The closing window
+-- still counts until the next loop, so look then.
+hl.on("window.close", function(window)
+  local workspace = window and window.workspace
+  local name = workspace and workspace.name
+  if not name or not name:match("^[a-z0-9][a-z0-9-]*:%d+$") or name:match("^home:") then
+    return
+  end
+  hl.timer(function()
+    local active = hl.get_active_workspace()
+    if active and active.name == name and active.windows == 0 then
+      hl.dispatch(hl.dsp.exec_cmd("space emptied " .. name))
+    end
+  end, { timeout = 1, type = "oneshot" })
+end)
+
 -- On a config reload, Omarchy's per-monitor workspace logic
 -- (default/hypr/monitor-workspaces.lua) puts every monitor back on a numbered
 -- workspace, which drops you out of your space. Hyprland re-reads this file

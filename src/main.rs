@@ -49,6 +49,10 @@ enum Cmd {
     Terminal,
     /// Print the spaces as `ls --json` does, a line each time they change.
     Watch,
+    /// Run by Hyprland when closing a window empties the workspace you are
+    /// on: go to another tab, or end the space.
+    #[command(hide = true)]
+    Emptied { workspace: String },
     /// Go to a workspace (tab) of the active space: 1-10, new, next or prev.
     Ws {
         #[arg(value_parser = target)]
@@ -104,6 +108,7 @@ fn main() -> ExitCode {
         Cmd::Close { space } => commands::close(space),
         Cmd::Terminal => commands::open_terminal(),
         Cmd::Watch => watch::watch(),
+        Cmd::Emptied { workspace } => commands::emptied(&workspace),
         Cmd::Ws { target } => commands::ws(target),
         Cmd::Move { n, silent } => commands::move_window(n, silent),
     };

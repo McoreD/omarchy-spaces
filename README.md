@@ -4,7 +4,7 @@ Spaces for Hyprland on Omarchy: a set of tabs for each thing you work on.
 
 A **space** holds one piece of work. Each space has its own **tabs**, and each tab is a Hyprland workspace (`s1:1`, `s1:2`, …) holding whatever windows you tile there. The plain numbered workspaces are the `home` space.
 
-A space is called after the folder its first terminal is in: the repository's folder when it's in one, `~` for home. It follows that terminal as it changes folder. Name a space when you want a name that stays. A space lasts as long as its windows: close the last one, and once you leave, the space is gone.
+A space is called after the folder its first terminal is in: the repository's folder when it's in one, `~` for home. It follows that terminal as it changes folder. Name a space when you want a name that stays. A space lasts as long as its windows: close the last one, however it goes (`super+w`, `exit`, the app quitting), and the space ends, taking you back to the space you were in before. Closing the last window on one of a space's tabs takes you to its next tab, or the one before.
 
 The active space's name and tabs sit on Omarchy's bar, in place of its workspaces. Click the name, or press `super+b`, to show or hide the spaces sidebar: it sits on the base under the workspaces, and showing it slides the windows aside to reveal it. It keeps up as you switch spaces and tabs, and leaves the keyboard with your windows. Press `super+p` to search it. Click the `+` by its title to open a new space with a terminal in the folder you are in, or home if you aren't in one: the terminal opens there first, and you go there once it's up, so you never see the space empty. Right-click a space to rename or close it. It takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
 
@@ -49,7 +49,7 @@ A space can be given by what it's called or by its id (`s1`, as `space ls` shows
 
 - `src/` is the `space` CLI, in Rust. It keeps no state about windows: it asks Hyprland over its socket, then dispatches. It finds a terminal's folder from its shell, in `/proc`, as Omarchy's `omarchy-cmd-terminal-cwd` does.
 - `omarchy/` is the Omarchy shell plugin (QML): the tabs as a bar widget (`TabsWidget.qml`), and the sidebar, which `Base.qml` draws under the windows. Their logic is in `Tabs.qml`, `Sidebar.qml` and `Spaces.mjs`. Both read the spaces from one `space watch` that the plugin's service runs (`Watch.qml`) and restarts when it ends, as it does when Hyprland restarts or `space` is reinstalled. It reads Hyprland again only when Hyprland's events say something changed. A shell changing folder sends no event, so it reads the active space's terminals' folders five times a second, the rest every two seconds, and all of them when a window's title changes, as terminals retitle themselves on `cd`.
-- `hypr/renspace.lua` holds the keybindings, and the blur behind a glassy sidebar and bar.
+- `hypr/renspace.lua` holds the keybindings, the hook that moves on from a tab emptied by closing its last window (`space emptied`), and the blur behind a glassy sidebar and bar.
 - `~/.local/state/renspace/spaces.json` holds what Hyprland can't about each live space: the name you gave it, the terminal it follows and that terminal's last folder. `~/.config/renspace/config.toml` can set `terminal`, the command that opens one (default: Omarchy's, `xdg-terminal-exec`), and `picker`, for `space go` with no space named.
 
 ## Development
