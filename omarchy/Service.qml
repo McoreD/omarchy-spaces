@@ -12,21 +12,23 @@ Item {
   property var shell: null
   property var manifest: null
 
-  readonly property bool searching: sidebar.searching
+  readonly property bool searching: sidebarItem.searching
   readonly property var watch: watchItem
+  // The sidebar, which the tabs on the bar line up beside while it shows.
+  readonly property var sidebar: sidebarItem
 
-  function search() { sidebar.search() }
-  function endSearch() { sidebar.endSearch() }
-  function showOrHide() { sidebar.showOrHide() }
+  function search() { sidebarItem.search() }
+  function endSearch() { sidebarItem.endSearch() }
+  function showOrHide() { sidebarItem.showOrHide() }
 
   Base {
-    sidebar: sidebar
+    sidebar: sidebarItem
     look: Spaces.barLook(root.shell ? root.shell.barConfig : null)
     bar: root.shell ? root.shell.bar : null
   }
 
   SpaceMenu {
-    sidebar: sidebar
+    sidebar: sidebarItem
   }
 
   // The spaces, kept current by `space watch`: the sidebar's list, and what
@@ -36,7 +38,7 @@ Item {
   }
 
   Sidebar {
-    id: sidebar
+    id: sidebarItem
     watch: watchItem
     // Ended from inside (a pick, Escape), so the shell stops counting the
     // overlay as open and the next toggle searches again.

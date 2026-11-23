@@ -248,6 +248,26 @@ export function windowMotion(text) {
   }
 }
 
+// The left of Hyprland's outer gaps, from `hyprctl getoption general:gaps_out
+// -j`: the windows' distance from what reserves the screen's edge. Hyprland
+// prints the four sides as CSS does (`css`, or `custom` before it), or one
+// number for all (`int`). Null when the output can't be read.
+export function gapLeft(text) {
+  let data
+  try {
+    data = JSON.parse(String(text || ""))
+  } catch (e) {
+    return null
+  }
+  if (!data || typeof data !== "object") return null
+  if (typeof data.int === "number") return Math.max(0, data.int)
+  const sides = String(data.css ?? data.custom ?? "").trim().split(/\s+/).map(Number)
+  if (sides.length === 0 || sides.some((n) => !Number.isFinite(n))) return null
+  // CSS order: top, right, bottom, left; fewer values repeat as CSS repeats them.
+  const left = sides.length === 4 ? sides[3] : sides.length >= 2 ? sides[1] : sides[0]
+  return Math.max(0, left)
+}
+
 // The bar's background, as Omarchy's shell config holds it: opaque, glassy
 // (see-through, blurred behind) or none (clear). Double-clicking the bar steps
 // through them. A config from before `background` says `transparent` instead.

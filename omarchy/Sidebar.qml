@@ -82,6 +82,11 @@ Item {
   readonly property string home: Quickshell.env("HOME") || ""
 
   readonly property int panelWidth: Style.space(260)
+  // Hyprland's outer gap on the left, from `hyprctl getoption`.
+  property int gapLeft: 0
+  // How far from its screen's left edge the windows begin while it shows:
+  // where the tabs on the bar line up (TabsWidget.qml).
+  readonly property int windowsEdge: panelWidth + gapLeft
 
   function show() {
     if (root.opened) return
@@ -378,14 +383,31 @@ Item {
     }
   }
 
-  Component.onCompleted: motionProc.running = true
+  Process {
+    id: gapsProc
+    command: ["hyprctl", "getoption", "general:gaps_out", "-j"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var gap = Spaces.gapLeft(text)
+        if (gap !== null) root.gapLeft = gap
+      }
+    }
+  }
+
+  Component.onCompleted: {
+    motionProc.running = true
+    gapsProc.running = true
+  }
 
   // A click on a window or a switch of tab during a search or a rename moves
   // the keyboard there, which ends it.
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (event.name === "configreloaded" && !motionProc.running) motionProc.running = true
+      if (event.name === "configreloaded") {
+        if (!motionProc.running) motionProc.running = true
+        if (!gapsProc.running) gapsProc.running = true
+      }
       if (!root.opened) return
       if (event.name !== "activewindowv2" && event.name !== "workspacev2") return
       if (root.naming && Date.now() - root.renamedAt >= 300) root.endNaming(false)

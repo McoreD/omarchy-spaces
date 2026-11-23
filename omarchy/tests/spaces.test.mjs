@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, barLook, displayDir, filterRows, freshen, initialIndex, labels, locate, nameInput, parseRows, rowActions, score, stepAction, tabsFor, windowMotion } from "../Spaces.mjs"
+import { appName, barLook, displayDir, filterRows, freshen, gapLeft, initialIndex, labels, locate, nameInput, parseRows, rowActions, score, stepAction, tabsFor, windowMotion } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -134,6 +134,17 @@ test("reads Hyprland's window motion", () => {
   const off = JSON.stringify([[{ name: "global", overridden: true, bezier: "default", enabled: false, speed: 10 }], []])
   assert.equal(windowMotion(off).duration, 0)
   assert.equal(windowMotion("hyprctl: error"), null)
+})
+
+test("reads the left of Hyprland's outer gaps", () => {
+  assert.equal(gapLeft('{"option": "general:gaps_out", "css": "10 20 30 40", "set": true}'), 40)
+  assert.equal(gapLeft('{"option": "general:gaps_out", "css": "0 0 0 0", "set": true}'), 0)
+  assert.equal(gapLeft('{"option": "general:gaps_out", "custom": "5 6 7 8"}'), 8)
+  assert.equal(gapLeft('{"css": "10 20"}'), 20, "two values: vertical, then horizontal")
+  assert.equal(gapLeft('{"css": "12"}'), 12)
+  assert.equal(gapLeft('{"int": 7}'), 7)
+  assert.equal(gapLeft('{"css": "a b c d"}'), null)
+  assert.equal(gapLeft("hyprctl: no such option"), null)
 })
 
 test("reads the bar's background look", () => {
