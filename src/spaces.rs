@@ -36,6 +36,8 @@ pub struct Entry {
     pub anchor: Option<String>,
     /// When it was made, in Unix milliseconds: the sidebar lists spaces in
     /// the order you made them, so they keep their places as names change.
+    /// Moving a space (`space reorder`) hands these times out again, in the
+    /// new order.
     #[serde(default)]
     pub created: u64,
     /// The names you gave its tabs, by slot. A tab without one is called

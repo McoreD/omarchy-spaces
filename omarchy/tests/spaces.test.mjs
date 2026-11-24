@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, barToggle, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, statusColors, tabsFor, terminalsByAddress, moreUrgent, windowMotion } from "../Spaces.mjs"
+import { appName, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, barToggle, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, statusColors, tabsFor, terminalsByAddress, moreUrgent, windowMotion, startsDrag, dropIndex, dragShift, moveRow } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -393,4 +393,19 @@ test("offers an icon, and its removal once there is one", () => {
   assert.deepEqual(ids({ id: "s1", icon: "", windows: 1 }), ["rename", "icon", "close"])
   assert.deepEqual(ids({ id: "s1", icon: "🚀", windows: 1 }), ["rename", "icon", "clear-icon", "close"])
   assert.equal(rowActions({ id: "s1", icon: "🚀" })[1].label, "Change icon")
+})
+
+test("drags spaces, never home, only past the threshold", () => {
+  assert.equal(startsDrag({ id: "s1" }, 3, 12), false, "a wobble is a click")
+  assert.equal(startsDrag({ id: "s1" }, -12, 12), true)
+  assert.equal(startsDrag({ id: "home" }, 40, 12), false)
+  assert.equal(dropIndex(1, 0, 30, 4), 1)
+  assert.equal(dropIndex(1, 44, 30, 4), 2, "past half a row")
+  assert.equal(dropIndex(1, 500, 30, 4), 3, "no further than last")
+  assert.equal(dropIndex(3, -500, 30, 4), 1, "never above home")
+  assert.deepEqual([0, 1, 2, 3].map((i) => dragShift(i, 1, 3, 30)), [0, 0, -30, -30])
+  assert.deepEqual([0, 1, 2, 3].map((i) => dragShift(i, 3, 1, 30)), [0, 30, 30, 0])
+  assert.deepEqual([0, 1, 2].map((i) => dragShift(i, -1, 1, 30)), [0, 0, 0], "no drag")
+  assert.deepEqual(moveRow(["h", "a", "b", "c"], 1, 3), ["h", "b", "c", "a"])
+  assert.deepEqual(moveRow(["h", "a", "b", "c"], 3, 1), ["h", "c", "a", "b"])
 })

@@ -21,6 +21,11 @@ import "Spaces.mjs" as Spaces
 // badge bordered in the theme's foreground, and the others' badges are
 // dimmed; as the sidebar expands, the border fades, they come up, and its
 // row's highlight fades in instead.
+//
+// Drag a space up or down to move it. A press turns into a drag only once it
+// has moved a good part of a row, so a click stays a click; the rows between
+// slide aside to show where it will drop. `home` stays first, and a search's
+// list, in the search's order, can't be dragged.
 Item {
   id: root
 
@@ -61,6 +66,21 @@ Item {
   Behavior on textShown { NumberAnimation { duration: Style.duration(120) } }
   // Where a row's text starts, past its icon.
   readonly property int textX: root.slot + root.sidebar.textGap
+
+  // The row being dragged, where it would drop, and how far it has moved.
+  property int dragFrom: -1
+  property int dragTo: -1
+  property real dragDy: 0
+  // From one row to the next.
+  readonly property real pitch: root.rowHeight + list.spacing
+  // How far a press has to move up or down to become a drag.
+  readonly property real dragThreshold: Math.round(root.rowHeight * 0.4)
+
+  function endDrag() {
+    root.dragFrom = -1
+    root.dragTo = -1
+    root.dragDy = 0
+  }
 
   function reveal() {
     if (root.sidebar.shownRows.length > 0) list.positionViewAtIndex(root.sidebar.selectedIndex, ListView.Contain)
@@ -209,6 +229,7 @@ Item {
         clip: true
         spacing: Style.spacing.xxs
         boundsBehavior: Flickable.StopAtBounds
+        interactive: root.dragFrom < 0
 
         delegate: Item {
           id: rowItem
@@ -225,15 +246,21 @@ Item {
           readonly property bool home: modelData.id === "home"
           readonly property color hue: rowItem.home ? root.foreground
             : (Spaces.badgeColor(rowItem.modelData.label, root.sidebar.palette) || root.foreground)
+          readonly property bool dragged: root.dragFrom === index
+          // Aside, to open the gap a dragged row would drop into.
+          property real shift: Spaces.dragShift(index, root.dragFrom, root.dragTo, root.pitch)
+          Behavior on shift { NumberAnimation { duration: Style.duration(120); easing.type: Easing.OutCubic } }
 
           width: ListView.view.width
           height: root.rowHeight
+          z: dragged ? 1 : 0
+          transform: Translate { y: rowItem.dragged ? root.dragDy : rowItem.shift }
 
           // The cursor shows while searching; otherwise only under the
           // pointer, or while the row is being renamed or has its menu open.
           Highlight {
             held: rowItem.modelData.active
-            lit: rowItem.renaming || rowItem.menuOpen || rowItem.picking
+            lit: rowItem.renaming || rowItem.menuOpen || rowItem.picking || rowItem.dragged
               || (!root.sidebar.menuRow && !root.sidebar.iconRow && rowItem.selected && (root.sidebar.searching || rowMouse.containsMouse))
             border.width: rowItem.renaming ? 1 : 0
             border.color: root.accent
@@ -346,16 +373,50 @@ Item {
             }
           }
 
-          // Click to go there, right-click for the space's menu.
+          // Click to go there, right-click for the space's menu, drag to
+          // move it.
           MouseArea {
             id: rowMouse
+            // Where the press was, in the list, which doesn't move with the
+            // row; and whether it became a drag, which isn't a click.
+            property real pressY: 0
+            property bool wasDrag: false
             anchors.fill: parent
             hoverEnabled: true
+            preventStealing: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            cursorShape: rowItem.renaming ? Qt.IBeamCursor : Qt.PointingHandCursor
-            onContainsMouseChanged: if (containsMouse) root.sidebar.select(rowItem.index)
+            cursorShape: rowItem.renaming ? Qt.IBeamCursor
+              : rowItem.dragged ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+            onContainsMouseChanged: if (containsMouse && root.dragFrom < 0) root.sidebar.select(rowItem.index)
+            onPressed: function(mouse) {
+              rowMouse.wasDrag = false
+              rowMouse.pressY = rowMouse.mapToItem(list, mouse.x, mouse.y).y
+            }
+            onPositionChanged: function(mouse) {
+              if (!(rowMouse.pressedButtons & Qt.LeftButton)) return
+              var dy = rowMouse.mapToItem(list, mouse.x, mouse.y).y - rowMouse.pressY
+              if (root.dragFrom < 0) {
+                if (rowItem.renaming || root.sidebar.filterText !== ""
+                    || !Spaces.startsDrag(rowItem.modelData, dy, root.dragThreshold)) return
+                root.sidebar.closeMenu()
+                root.dragFrom = rowItem.index
+                rowMouse.wasDrag = true
+              }
+              if (!rowItem.dragged) return
+              root.dragDy = dy
+              root.dragTo = Spaces.dropIndex(rowItem.index, dy, root.pitch, list.count)
+            }
+            onReleased: {
+              if (!rowItem.dragged) return
+              var from = root.dragFrom
+              var to = root.dragTo
+              root.endDrag()
+              // Later: the new order makes new rows, this one among them.
+              Qt.callLater(root.sidebar.reorder, from, to)
+            }
+            onCanceled: if (rowItem.dragged) root.endDrag()
             onClicked: function(mouse) {
-              if (rowItem.renaming) return
+              if (rowItem.renaming || rowMouse.wasDrag) return
               if (mouse.button !== Qt.RightButton) {
                 root.sidebar.activate(rowItem.index)
               } else if (Spaces.rowActions(rowItem.modelData).length > 0) {

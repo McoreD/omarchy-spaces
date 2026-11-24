@@ -921,6 +921,56 @@ pub fn icon(target: Option<String>, new_icon: String) -> Result<()> {
     Ok(())
 }
 
+/// `space reorder <space> <position>`: moves a space to `position` in the
+/// sidebar, counting from 1 below `home`, which stays first. Past the end
+/// puts it last.
+pub fn reorder(target: String, position: usize) -> Result<()> {
+    let hypr = Hypr::from_env()?;
+    let (rows, _) = load_rows(Some(&hypr))?;
+    let id = resolve(&rows, &target)?;
+    if id == HOME {
+        bail!("'home' is the plain workspaces; it stays first");
+    }
+    if position == 0 {
+        bail!("positions start at 1, the first space below home");
+    }
+    let mut store = Store::load(&paths::state_dir())?;
+    let order: Vec<String> = rows
+        .into_iter()
+        .map(|r| r.id)
+        .filter(|r| r != HOME)
+        .collect();
+    let order = moved(order, &id, position - 1);
+    restamp(&mut store, &order);
+    store.save()?;
+    Ok(())
+}
+
+/// `order` with `id` taken out and put back at `index`, or last.
+fn moved(mut order: Vec<String>, id: &str, index: usize) -> Vec<String> {
+    order.retain(|other| other != id);
+    let index = index.min(order.len());
+    order.insert(index, id.to_string());
+    order
+}
+
+/// Gives the spaces `created` times in `order`, from the times they have:
+/// the same times, handed out in the new order, made to rise strictly so no
+/// two tie. New spaces, stamped now, still come after them all.
+fn restamp(store: &mut Store, order: &[String]) {
+    let mut times: Vec<u64> = order
+        .iter()
+        .map(|id| store.get(id).map_or(0, |e| e.created))
+        .collect();
+    times.sort_unstable();
+    let mut last = 0;
+    for (id, time) in order.iter().zip(times) {
+        let time = time.max(last + 1);
+        store.entry(id).created = time;
+        last = time;
+    }
+}
+
 /// A tab, `<space>:<n>` (`s1:2`, `ren:2`), unless the whole of `target` is
 /// what a space is called.
 fn tab_target<'a>(rows: &[Row], target: &'a str) -> Option<(&'a str, u8)> {
@@ -1354,6 +1404,25 @@ mod tests {
         );
         let err = resolve(&rows, "rne").unwrap_err().to_string();
         assert!(err.contains("Did you mean ren?"), "{err}");
+    }
+
+    #[test]
+    fn reorders_spaces() {
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let order = ids(&["s1", "s2", "s3"]);
+        assert_eq!(moved(order.clone(), "s3", 0), ids(&["s3", "s1", "s2"]));
+        assert_eq!(moved(order.clone(), "s1", 1), ids(&["s2", "s1", "s3"]));
+        assert_eq!(moved(order.clone(), "s1", 9), ids(&["s2", "s3", "s1"]));
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::load(dir.path()).unwrap();
+        store.entry("s1").created = 10;
+        store.entry("s2").created = 10;
+        store.entry("s3").created = 30;
+        restamp(&mut store, &ids(&["s3", "s1", "s2"]));
+        let created = |id| store.get(id).unwrap().created;
+        assert!(created("s3") < created("s1") && created("s1") < created("s2"));
+        assert!(created("s2") <= 30, "{}", created("s2"));
     }
 
     #[test]

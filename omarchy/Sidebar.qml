@@ -344,6 +344,21 @@ Item {
     Quickshell.execDetached(["space", "go", row.id])
   }
 
+  // Moves the space at `from` in the list to `to`, where a drag dropped it.
+  // The list shows the new order at once rather than waiting for `space
+  // watch` to print it, so the row doesn't jump back first. Only the whole
+  // list is dragged, never a search's, whose order is the search's own.
+  function reorder(from, to) {
+    if (from === to || root.filterText !== "") return
+    var row = root.shownRows[from]
+    if (!row || row.id === "home" || to < 1) return
+    root.rows = Spaces.moveRow(root.rows, from, to)
+    root.applyFilter(false)
+    root.selectedIndex = to
+    // Positions count from the first space below home.
+    root.run(["space", "reorder", row.id, String(to)])
+  }
+
   // The `+`: a new space with a terminal in the folder you are in.
   function newSpace() {
     root.closeMenu()

@@ -537,3 +537,33 @@ export function freshen(rows, here, now) {
     return Object.assign({}, row, { active, leftAt })
   })
 }
+
+// Dragging a space up or down the sidebar. A press becomes a drag only once
+// it has moved `threshold` up or down, so a click that wobbles stays a click.
+// `home` stays first: nothing drags it, and nothing drops above it.
+export function startsDrag(row, dy, threshold) {
+  return !!row && row.id !== "home" && Math.abs(dy) >= threshold
+}
+
+// Where a row dragged `dy` from `from` would drop, rows being `pitch` apart.
+export function dropIndex(from, dy, pitch, count) {
+  const to = from + Math.round(dy / Math.max(1, pitch))
+  return Math.max(1, Math.min(count - 1, to))
+}
+
+// How far the row at `index` moves aside while another is dragged from
+// `from` to `to`, to open the gap it would drop into.
+export function dragShift(index, from, to, pitch) {
+  if (from < 0 || index === from) return 0
+  if (from < to && index > from && index <= to) return -pitch
+  if (to < from && index >= to && index < from) return pitch
+  return 0
+}
+
+// The rows with the one at `from` moved to `to`.
+export function moveRow(rows, from, to) {
+  const out = rows.slice()
+  const [row] = out.splice(from, 1)
+  out.splice(to, 0, row)
+  return out
+}

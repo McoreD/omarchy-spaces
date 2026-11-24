@@ -12,7 +12,7 @@ A tab is named after its most recently focused window: a terminal by what it's r
 
 A dot shows which spaces need you. An agent in a terminal says what it's doing, and its tab and its space's badge show it: red when it's waiting for you (a permission prompt, a question, an error), green when it finished while you were elsewhere, and a breathing dot in the text's colour while it works. A space shows whichever of its agents most needs you, and green clears once you focus the agent's window. A sound plays when an agent starts waiting for you, and when one finishes while you aren't looking at its window: Herdr's own (`assets/sounds/`), unless `[sounds]` in the config names others or sets `enabled = false`. This needs [herdr-core](https://github.com/herdrdev/herdr-core) (`hc`): the terminals renSpace opens then run in it, and any agent that reports its status through OSC 7501, as Claude Code, opencode, pi and Kimi do, shows here. Without it, terminals are plain and have no dots.
 
-Click `+` at the end of the list to open a new space with a terminal in the folder you are in, or home if you aren't in one: you go there once the terminal is up, so you never see the space empty. A new tab, from the `+` after the tabs or `space ws new`, opens the same way, with a terminal in the space's folder. Right-click a space to rename it, change its icon or close it. The sidebar takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
+Click `+` at the end of the list to open a new space with a terminal in the folder you are in, or home if you aren't in one: you go there once the terminal is up, so you never see the space empty. A new tab, from the `+` after the tabs or `space ws new`, opens the same way, with a terminal in the space's folder. Right-click a space to rename it, change its icon or close it. Drag a space up or down to move it; a press has to move a good part of a row before it becomes a drag, so clicks stay clicks. `home` stays first. The sidebar takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
 
 ## Install
 
@@ -88,6 +88,7 @@ space ls [--json]            # list spaces with window counts
 space rename [space] <name>  # name a space, the active one by default; "" for its folder's name
 space rename <space>:<n> <name>  # name a tab, as s1:2 or ren:2; "" for its window's name
 space icon [space] <icon>    # a glyph or emoji for a space's badge, the active one by default; "" for its letters
+space reorder <space> <n>    # move a space to position n in the sidebar, 1 being the first below home
 space close [space]          # close a space's windows, the active one by default
 space terminal               # a terminal in the folder you are in, or the space's
 space watch [--sounds]       # print the spaces as ls --json does, a line each time they change; --sounds also rings for agents

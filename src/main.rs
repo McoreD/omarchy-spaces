@@ -58,6 +58,13 @@ enum Cmd {
         #[arg(value_name = "ICON")]
         second: Option<String>,
     },
+    /// Move a space up or down the sidebar, to a position counting from 1
+    /// below `home`, which stays first.
+    Reorder {
+        /// What it's called, or its id.
+        space: String,
+        position: usize,
+    },
     /// Close every window of a space, the active one unless you say which.
     Close { space: Option<String> },
     /// Open a terminal in the folder you are in, or the active space's.
@@ -153,6 +160,7 @@ fn main() -> ExitCode {
             Some(icon) => commands::icon(Some(first), icon),
             None => commands::icon(None, first),
         },
+        Cmd::Reorder { space, position } => commands::reorder(space, position),
         Cmd::Close { space } => commands::close(space),
         Cmd::Terminal => commands::open_terminal(),
         Cmd::Watch { sounds } => watch::watch(sounds),
