@@ -6,7 +6,7 @@ A **space** holds one piece of work. Each space has its own **tabs**, and each t
 
 A space is called after the folder its first terminal is in: the repository's folder when it's in one, `~` for home. It follows that terminal as it changes folder. Name a space when you want a name that stays. A space lasts as long as its windows: close the last one, however it goes (`super+w`, `exit`, the app quitting), and the space ends, taking you back to the space you were in before. Closing the last window on one of a space's tabs takes you to its next tab, or the one before.
 
-The spaces have their own column down the left of the screen, and the active space's tabs sit beside it on Omarchy's bar, in place of its workspaces. Collapsed, the column is a rail of badges, one per space: two letters for its name, as T3 Code marks projects, in a colour from the theme that stays with the name, with the space you're in outlined. Right-click a space to give its badge an icon instead, a Nerd Font glyph or an emoji: Tab to switch between them, or type to search both at once, and the badge shows the icon under the cursor until you pick one. Press `super+b`, or click the toggle at its top, to expand it into the spaces sidebar, with each space's name: your windows and the bar's tabs slide aside to reveal it, and the keyboard stays with your windows. Press `super+p` to search it.
+The spaces have their own column down the left of the screen, and the active space's tabs sit beside it on Omarchy's bar, in place of its workspaces. Collapsed, the column is a rail of badges, one per space: two letters for its name, as T3 Code marks projects, in a colour from the theme that stays with the name, with the space you're in outlined. Right-click a space to give its badge an icon instead, a Nerd Font glyph or an emoji: Tab to switch between them, or type to search both at once, and the badge shows the icon under the cursor until you pick one. Click the toggle at its top, or press a key you bind to it (`super+b` in [Keys](#keys)), to expand it into the spaces sidebar, with each space's name: your windows and the bar's tabs slide aside to reveal it, and the keyboard stays with your windows. Another key (`super+p`) searches it.
 
 A tab is named after its most recently focused window: a terminal by what it's running (`claude`, `nvim`), or by the folder it's in when it's at its prompt, and any other app by its name. Name a tab yourself, by double-clicking it or with a key bound to `renameTab` (see Keys), and it keeps that name whatever runs in it, until you clear it with an empty name or close the tab. `home`'s tabs show just their numbers, as Omarchy's workspaces do, until you name one; each monitor's are named on their own.
 
@@ -16,10 +16,84 @@ Click `+` at the end of the list to open a new space with a terminal in the fold
 
 ## Install
 
+Spaces has two parts: the `space` command, in Rust, and an Omarchy shell plugin that draws the tabs and the sidebar. Each step below does only what it says, and [Undo](#undo) reverses each one. Nothing binds keys for you.
+
+You need Omarchy 4.5 or newer, and Rust: check with `cargo --version`, and if it's missing, `sudo pacman -S rust`.
+
+1. Get the code, and build `space` into `~/.local/bin`, which Omarchy has on its PATH. Keep the folder: the plugin is linked from it.
+
+   ```sh
+   git clone <repo-url> ~/.local/share/omarchy-spaces
+   cd ~/.local/share/omarchy-spaces
+   cargo build --release
+   install -Dm755 target/release/space ~/.local/bin/space
+   ```
+
+2. Link the plugin into Omarchy's plugins and have the shell look for it:
+
+   ```sh
+   ln -sfn ~/.local/share/omarchy-spaces/omarchy ~/.config/omarchy/plugins/com.t4t5.spaces
+   omarchy-shell shell rescanPlugins
+   ```
+
+3. Turn it on, with the tabs after Omarchy's menu, and turn off Omarchy's workspaces, which the tabs replace. If the first command says the plugin is unknown, the rescan hasn't finished: wait a second and run it again.
+
+   ```sh
+   omarchy plugin enable com.t4t5.spaces --after omarchy.menu
+   omarchy plugin disable omarchy.workspaces
+   ```
+
+   The rail of spaces appears down the left of the screen and the tabs on the bar.
+
+4. Link the Hyprland part. It ends a tab when you close its last window, and holds the tab actions for your keys:
+
+   ```sh
+   ln -sfn ~/.local/share/omarchy-spaces/hypr/omarchy-spaces.lua ~/.config/hypr/omarchy-spaces.lua
+   ```
+
+   Then add this line at the end of `~/.config/hypr/bindings.lua`, with the keys you want after it (see [Keys](#keys)):
+
+   ```lua
+   local spaces = require("hypr.omarchy-spaces")
+   ```
+
+### Update
+
 ```sh
-just install   # build the space CLI into ~/.cargo/bin
-just setup     # add the tabs to the bar, the sidebar and the Hyprland hooks
+cd ~/.local/share/omarchy-spaces
+git pull
+cargo build --release
+install -Dm755 target/release/space ~/.local/bin/space
+omarchy restart shell
 ```
+
+### Undo
+
+1. Bring back any windows you want to keep from your spaces: from each one, `space send home`. Once the plugin is off, Omarchy's workspace keys can't reach windows still in a space.
+
+2. Turn the plugin off, which takes the tabs off the bar, and put Omarchy's workspaces back:
+
+   ```sh
+   omarchy plugin disable com.t4t5.spaces
+   omarchy plugin enable omarchy.workspaces --after omarchy.menu
+   rm ~/.config/omarchy/plugins/com.t4t5.spaces
+   omarchy-shell shell rescanPlugins
+   ```
+
+   If you took `omarchy.menu` off the bar for the [toggle](#toggle-in-place-of-the-menu), put it back first with `omarchy plugin enable omarchy.menu --section left --index 0`.
+
+3. Take the `require("hypr.omarchy-spaces")` line and the Spaces keys out of `~/.config/hypr/bindings.lua`, and save. Only then remove the file it loads, so Hyprland's config never points at a missing file:
+
+   ```sh
+   rm ~/.config/hypr/omarchy-spaces.lua
+   ```
+
+4. Remove the command, what it remembers, and the code. Take out any `space status` hooks you added to your agents too.
+
+   ```sh
+   rm ~/.local/bin/space
+   rm -rf ~/.local/state/omarchy-spaces ~/.config/omarchy-spaces ~/.local/share/omarchy-spaces
+   ```
 
 Spaces opens plain Omarchy terminals (`xdg-terminal-exec`) by default. To get agent status dots and sounds in any native terminal, wire up your agent's hooks to `space status` (below). If you prefer [herdr-core](https://github.com/herdrdev/herdr-core) (`hc`), install it on your `PATH` and Spaces uses it automatically (set `herdr_core = false` in `config.toml` to keep plain terminals even when `hc` is installed).
 
@@ -62,29 +136,25 @@ It needs the bar along the top or bottom of the screen, with the tabs first in i
 
 ## Keys
 
-Spaces binds no keys, so it never takes one of Omarchy's or yours. Bind the ones you want in `~/.config/hypr/bindings.lua`, after the `require` that `just setup` adds, using `o.rebind` for a key Omarchy already binds. For example:
+Spaces binds no keys, so it never takes one of Omarchy's or yours. Bind the ones you want in `~/.config/hypr/bindings.lua`, after the `require` line from [Install](#install). These are the ones you'll most likely want:
 
 ```lua
 local spaces = require("hypr.omarchy-spaces")
 
 o.rebind("SUPER + B", "Show or hide spaces", "omarchy-shell shell call com.t4t5.spaces showOrHide ''")
 o.rebind("SUPER + P", "Find a space", { panel = "com.t4t5.spaces" })
-o.rebind("SUPER + SHIFT + R", "Rename space", "omarchy-shell shell call com.t4t5.spaces rename ''")
-o.rebind("SUPER + COMMA", "Rename tab", "omarchy-shell shell call com.t4t5.spaces renameTab ''")
+o.rebind("SUPER + N", "New space", "space new")
 o.rebind("SUPER + SHIFT + J", "Next space", "space next")
 o.rebind("SUPER + SHIFT + K", "Previous space", "space prev")
-o.rebind("SUPER + N", "New space", "space new")
-o.rebind("SUPER + RETURN", "Terminal", "space terminal || omarchy-launch-terminal")
 o.rebind("SUPER + T", "New tab", "space ws new")
-o.rebind("SUPER + TAB", "Next tab", "space ws next")
-o.rebind("SUPER + SHIFT + TAB", "Previous tab", "space ws prev")
 for n = 1, 10 do
   local key = "code:" .. tostring(n + 9)
   o.rebind("SUPER + " .. key, "Go to tab " .. n, spaces.go_to_tab(n))
   o.rebind("SUPER + SHIFT + " .. key, "Move window to tab " .. n, spaces.move_window_to_tab(n))
-  o.rebind("SUPER + SHIFT + ALT + " .. key, "Move window silently to tab " .. n, spaces.move_window_to_tab(n, false))
 end
 ```
+
+`o.rebind` replaces whatever Omarchy binds to that key, so pick others if you use those; `omarchy menu keybindings --print` lists what's taken. The number keys do exactly what Omarchy's workspace keys do while you're in `home`. Everything else you can bind is below, as `"space …"` commands or `omarchy-shell shell call com.t4t5.spaces <action> ''`.
 
 | Action | Does |
 |---|---|
@@ -141,5 +211,7 @@ The icon picker's glyphs, `omarchy/glyphs.json`, come from Nerd Fonts' list of g
 ```sh
 cargo test
 node --test omarchy/tests/*.test.mjs
-omarchy-restart-shell   # after changing the plugin; the shell doesn't reload it by itself
+just reload             # after changing the plugin; the shell doesn't reload it by itself
 ```
+
+The justfile's `install` and `setup` do Install's steps for a clone you work in, building into `~/.cargo/bin` and adding the `require` line for you.
