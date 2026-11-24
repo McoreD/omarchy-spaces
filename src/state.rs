@@ -3,7 +3,7 @@
 //! names, icons, where each space was last left and the session to restore.
 
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, File};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,8 +12,9 @@ use anyhow::{Context, Result};
 
 use crate::name;
 
-/// Replaces a file in one step, so a reader never sees half of it and two
-/// `space` processes racing on a keypress leave one whole version.
+/// Replaces a file in one step, so a reader never sees half of it. Writing
+/// back what was read takes a lock too (`lock`), so two `space` processes
+/// racing on a keypress don't undo each other's change.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<()> {
     let dir = path.parent().expect("state files live in a directory");
     fs::create_dir_all(dir).with_context(|| format!("can't create {}", dir.display()))?;
@@ -33,6 +34,26 @@ pub fn read_optional(path: &Path) -> Result<String> {
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(String::new()),
         Err(e) => Err(e).with_context(|| format!("can't read {}", path.display())),
     }
+}
+
+/// Opens a file to lock, making it if needed.
+pub fn lock_file(dir: &Path, name: &str) -> Result<File> {
+    fs::create_dir_all(dir).with_context(|| format!("can't create {}", dir.display()))?;
+    let path = dir.join(name);
+    File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("can't open {}", path.display()))
+}
+
+/// Waits for a lock, held until it's dropped.
+pub fn lock(dir: &Path, name: &str) -> Result<File> {
+    let file = lock_file(dir, name)?;
+    file.lock()
+        .with_context(|| format!("can't lock {}", dir.join(name).display()))?;
+    Ok(file)
 }
 
 /// When a space was last left, and on which workspace.
@@ -96,7 +117,15 @@ impl Last {
             .map(|(space, _)| space.as_str())
     }
 
-    pub fn save(&self) -> Result<()> {
+    /// Changes what's saved, so that changes made at once are all kept.
+    pub fn update(state_dir: &Path, change: impl FnOnce(&mut Self)) -> Result<()> {
+        let _lock = lock(state_dir, ".last.lock")?;
+        let mut last = Self::load(state_dir)?;
+        change(&mut last);
+        last.save()
+    }
+
+    fn save(&self) -> Result<()> {
         let mut out = String::new();
         for (space, visit) in &self.visits {
             out.push_str(&format!("{space}\t{}\t{}\n", visit.slot, visit.at));

@@ -72,18 +72,16 @@ pub fn watch(sounds: bool) -> Result<()> {
     let state_dir = paths::state_dir();
     let status_dir = paths::status_dir();
 
+    // What spaces.json held before the snapshot was taken.
+    let mut known = Store::load(&state_dir)?.spaces;
     let mut snapshot = commands::snapshot(&hypr)?;
     let mut shells: HashMap<u32, Option<terminal::Shell>> = HashMap::new();
-    let mut store = Store::load(&state_dir)?;
     let mut last = Last::load(&state_dir)?;
     // Saving the session is a convenience; the watch goes on without it.
     let mut saver = session::Saver::new(&state_dir, &hypr.instance)
         .inspect_err(|e| eprintln!("space: warning: {e:#}"))
         .ok();
-    let (mut store_seen, mut last_seen) = (
-        stamp(&state_dir.join("spaces.json")),
-        stamp(&state_dir.join("last")),
-    );
+    let mut last_seen = stamp(&state_dir.join("last"));
     // Core's terminals, while subscribed to it.
     let mut core: Option<core::Terminals> = None;
     let mut subscribed = false;
@@ -125,11 +123,7 @@ pub fn watch(sounds: bool) -> Result<()> {
         }
         read_all = false;
 
-        // Names and visits change from other `space` commands.
-        // (The store's stamp is taken after its own saves, below.)
-        if stamp(&state_dir.join("spaces.json")) != store_seen {
-            store = Store::load(&state_dir)?;
-        }
+        // Visits change from other `space` commands.
         let visited = stamp(&state_dir.join("last"));
         if visited != last_seen {
             last = Last::load(&state_dir)?;
@@ -210,16 +204,28 @@ pub fn watch(sounds: bool) -> Result<()> {
         words.retain(|key, _| live_keys.contains(key));
         live.set_statuses(|agent| agent.seen() || seen.get(&agent.key()) == Some(&agent.turn));
 
+        let mut store = Store::lock(&state_dir)?;
+        // Another command changed the spaces, perhaps adding one that the
+        // snapshot is too old to have, which it would then prune.
+        if store.spaces != known {
+            known = std::mem::take(&mut store.spaces);
+            drop(store);
+            snapshot = commands::snapshot(&hypr)?;
+            read_all = true;
+            continue;
+        }
         let rows = commands::rows(&mut store, Some(&live), &last);
         if let Err(e) = store.save() {
             eprintln!("space: warning: {e:#}");
         }
-        store_seen = stamp(&state_dir.join("spaces.json"));
-        if let Some(saver) = &mut saver {
-            let session = commands::session_of(&hypr.instance, &rows, &store);
-            if let Err(e) = saver.update(session, Instant::now()) {
-                eprintln!("space: warning: {e:#}");
-            }
+        known = store.saved().clone();
+        let session = commands::session_of(&hypr.instance, &rows, &store);
+        // Unlocked before printing, which waits for the reader.
+        drop(store);
+        if let Some(saver) = &mut saver
+            && let Err(e) = saver.update(session, Instant::now())
+        {
+            eprintln!("space: warning: {e:#}");
         }
         let json = serde_json::to_string(&rows)?;
         if json != printed {

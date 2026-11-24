@@ -15,6 +15,7 @@ use crate::core;
 use crate::hypr::{self, Hypr};
 use crate::name::{self, HOME, Location};
 use crate::paths;
+use crate::reserve;
 use crate::session;
 use crate::spaces::{self, Store};
 use crate::state::{self, Last};
@@ -38,6 +39,10 @@ pub fn ws(target: Target) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
+    let space = here.space();
+    if target == Target::New && space != HOME {
+        return new_tab(&hypr, &active, &here);
+    }
     let slot = match target {
         Target::Slot(slot) => slot,
         _ => {
@@ -52,17 +57,27 @@ pub fn ws(target: Target) -> Result<()> {
         return Ok(());
     }
 
+    focus(&hypr, space, slot)?;
+    remember(space, slot);
+    Ok(())
+}
+
+/// A new tab in the active space, reserved until its terminal is up.
+fn new_tab(hypr: &Hypr, active: &hypr::Workspace, here: &Location) -> Result<()> {
+    let config = Config::load()?;
     let space = here.space();
-    if target == Target::New && space != HOME {
-        let config = Config::load()?;
-        let dir = space_folder(&hypr, space)?;
-        let workspace = name::workspace_name(space, slot);
-        open_terminal_then(&hypr, &config, &dir, &workspace, || {
-            focus(&hypr, space, slot)
-        })?;
-    } else {
-        focus(&hypr, space, slot)?;
-    }
+    let dir = space_folder(hypr, space)?;
+    let (_, slot) = reserve::reserve(&paths::reserved_dir(), |reserved| {
+        let mut open = open_slots(&hypr.workspaces()?, active, here);
+        let opening = reserved.iter().filter(|(of, _)| of == space);
+        open.extend(opening.map(|(_, slot)| *slot));
+        open.sort_unstable();
+        open.dedup();
+        let slot = pick_slot(Target::New, &open, here.slot())?;
+        Ok((space.to_string(), slot.expect("a new tab has a slot")))
+    })?;
+    let workspace = name::workspace_name(space, slot);
+    open_terminal_then(hypr, &config, &dir, &workspace, || focus(hypr, space, slot))?;
     remember(space, slot);
     Ok(())
 }
@@ -245,13 +260,28 @@ impl Live {
 
     /// The spaces Hyprland has, `home` aside.
     fn spaces(&self) -> BTreeSet<String> {
-        self.workspaces
-            .keys()
-            .chain(self.windows.keys())
-            .filter(|space| *space != HOME)
-            .cloned()
-            .collect()
+        space_ids(&self.workspaces, &self.windows)
     }
+}
+
+impl Snapshot {
+    /// The spaces Hyprland has, `home` aside.
+    fn spaces(&self) -> BTreeSet<String> {
+        space_ids(&self.workspaces, &self.windows)
+    }
+}
+
+/// The spaces with a workspace or a window, `home` aside.
+fn space_ids<A, B>(
+    workspaces: &BTreeMap<String, A>,
+    windows: &BTreeMap<String, B>,
+) -> BTreeSet<String> {
+    workspaces
+        .keys()
+        .chain(windows.keys())
+        .filter(|space| *space != HOME)
+        .cloned()
+        .collect()
 }
 
 pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
@@ -557,17 +587,35 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
 /// Reads the spaces and saves what changed about them. A failure to save is
 /// only a warning: the list itself is right.
 fn load_rows(hypr: Option<&Hypr>) -> Result<(Vec<Row>, Option<Live>)> {
-    let live = match hypr {
-        Some(hypr) => Some(live(hypr)?),
-        None => None,
-    };
-    let mut store = Store::load(&paths::state_dir())?;
-    let last = Last::load(&paths::state_dir())?;
-    let rows = rows(&mut store, live.as_ref(), &last);
-    if let Err(e) = store.save() {
-        eprintln!("space: warning: {e:#}");
-    }
+    let (_, rows, live) = lock_rows(hypr)?;
     Ok((rows, live))
+}
+
+/// `load_rows`, with the store it read still locked, to change it further.
+/// The windows and their terminals are read before it's locked, so a slow one
+/// holds up only this command.
+fn lock_rows(hypr: Option<&Hypr>) -> Result<(Store, Vec<Row>, Option<Live>)> {
+    let state_dir = paths::state_dir();
+    let mut known = Store::load(&state_dir)?.spaces;
+    loop {
+        let live = match hypr {
+            Some(hypr) => Some(live(hypr)?),
+            None => None,
+        };
+        let mut store = Store::lock(&state_dir)?;
+        // Another command changed the spaces meanwhile, perhaps adding one
+        // that `live` is too old to have, which it would then prune.
+        if store.spaces != known {
+            known = store.spaces;
+            continue;
+        }
+        let last = Last::load(&state_dir)?;
+        let rows = rows(&mut store, live.as_ref(), &last);
+        if let Err(e) = store.save() {
+            eprintln!("space: warning: {e:#}");
+        }
+        return Ok((store, rows, live));
+    }
 }
 
 /// The space `target` means: `home`, an id, or what a space is called (its
@@ -609,8 +657,7 @@ fn here_folder(hypr: &Hypr) -> Result<PathBuf> {
     {
         return Ok(cwd);
     }
-    let (rows, _) = load_rows(Some(hypr))?;
-    let store = Store::load(&paths::state_dir())?;
+    let (store, rows, _) = lock_rows(Some(hypr))?;
     Ok(rows
         .iter()
         .find(|r| r.active)
@@ -635,6 +682,21 @@ fn space_folder(hypr: &Hypr, space: &str) -> Result<PathBuf> {
     }
 }
 
+/// An id for a new space whose first terminal opens on tab `slot`, reserved
+/// until that terminal is up.
+fn fresh_space(hypr: &Hypr, slot: u8) -> Result<String> {
+    let (id, _) = reserve::reserve(&paths::reserved_dir(), |reserved| {
+        let mut taken = snapshot(hypr)?.spaces();
+        let mut store = Store::load(&paths::state_dir())?;
+        store.prune(&taken);
+        taken.extend(reserved.iter().map(|(space, _)| space.clone()));
+        Ok((store.fresh_id(&taken), slot))
+    })?;
+    // A space by this id before may have left a visit behind.
+    forget(&id);
+    Ok(id)
+}
+
 /// `space new [dir]`: a new space in `dir`, by default the folder you are
 /// in, with a terminal open there. It is called after the folder that
 /// terminal is in, and follows it.
@@ -655,22 +717,12 @@ pub fn new(dir: Option<PathBuf>) -> Result<()> {
         None => here_folder(&hypr)?,
     };
 
-    let live = live(&hypr)?;
-    let spaces = live.spaces();
-    let mut store = Store::load(&paths::state_dir())?;
-    store.prune(&spaces);
-    let id = store.fresh_id(&spaces);
-    // A space by this id before may have left a visit behind.
-    if let Ok(mut last) = Last::load(&paths::state_dir()) {
-        last.remove(&id);
-        save(&last);
-    }
-
+    let id = fresh_space(&hypr, 1)?;
     let workspace = name::workspace_name(&id, 1);
     open_terminal_then(&hypr, &config, &dir, &workspace, || switch(&hypr, &id))?;
 
     // The watcher may have seen the space by now, and made its entry.
-    let mut store = Store::load(&paths::state_dir())?;
+    let mut store = Store::lock(&paths::state_dir())?;
     let entry = store.entry(&id);
     entry.folder.get_or_insert(dir.clone());
     if entry.created == 0 {
@@ -747,14 +799,10 @@ fn restore_space(
     opened: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
     let state_dir = paths::state_dir();
-    let spaces = live(hypr)?.spaces();
-    let mut store = Store::load(&state_dir)?;
-    store.prune(&spaces);
-    let id = store.fresh_id(&spaces);
-    if let Ok(mut last) = Last::load(&state_dir) {
-        last.remove(&id);
-        save(&last);
-    }
+    let Some(first) = saved.terminals.first() else {
+        return opened();
+    };
+    let id = fresh_space(hypr, first.slot)?;
 
     let mut opened = Some(opened);
     for terminal in &saved.terminals {
@@ -775,6 +823,7 @@ fn restore_space(
         }
         match wait_for_window(&events, &workspace, RESTORE_TIMEOUT) {
             Some(address) => {
+                reserve::release(&paths::reserved_dir(), &workspace);
                 if let Err(e) = hypr.dispatch(&hypr::animate_again(&address)) {
                     eprintln!("space: warning: {e:#}");
                 }
@@ -785,7 +834,7 @@ fn restore_space(
 
     // Only now that its tabs are up, as the watcher forgets the names of tabs
     // that aren't. It may have made the space's entry by now.
-    let mut store = Store::load(&state_dir)?;
+    let mut store = Store::lock(&state_dir)?;
     let entry = store.entry(&id);
     entry.name = saved.name.clone();
     entry.icon = saved.icon.clone();
@@ -805,7 +854,8 @@ const RESTORE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// never see the tab empty. Hyprland places it by an exec rule, which follows
 /// the process it starts down to the terminal. The rule also skips its
 /// pop-in, which would otherwise still be fading it in from nothing as you
-/// arrive; once you're there it animates like any other window.
+/// arrive; once you're there it animates like any other window. The tab,
+/// if reserved, is released once its window is up.
 fn open_terminal_then(
     hypr: &Hypr,
     config: &Config,
@@ -829,6 +879,9 @@ fn open_terminal_then(
             None
         }
     };
+    if window.is_some() {
+        reserve::release(&paths::reserved_dir(), workspace);
+    }
     arrive()?;
     if let Some(address) = window
         && let Err(e) = hypr.dispatch(&hypr::animate_again(&address))
@@ -985,13 +1038,12 @@ fn switch(hypr: &Hypr, target: &str) -> Result<()> {
         return Ok(());
     }
 
-    let mut last = Last::load(&paths::state_dir())?;
+    let last = Last::load(&paths::state_dir())?;
     let slot = landing_slot(hypr, &last, target)?;
     focus(hypr, target, slot)?;
 
     if let Some(left_at) = here.slot() {
-        last.set(here.space(), left_at);
-        save(&last);
+        remember(here.space(), left_at);
     }
     Ok(())
 }
@@ -1047,7 +1099,7 @@ pub fn send(target: SpaceTarget, silent: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut last = Last::load(&paths::state_dir())?;
+    let last = Last::load(&paths::state_dir())?;
     let slot = landing_slot(&hypr, &last, &id)?;
     if id == HOME {
         let omarchy = if silent {
@@ -1075,11 +1127,10 @@ pub fn send(target: SpaceTarget, silent: bool) -> Result<()> {
                         Location::Space { name, .. } if name == left)
             });
         if still_there {
-            last.set(left, left_at);
+            remember(left, left_at);
         } else {
-            last.remove(left);
+            forget(left);
         }
-        save(&last);
     }
     Ok(())
 }
@@ -1088,9 +1139,9 @@ pub fn send(target: SpaceTarget, silent: bool) -> Result<()> {
 /// a name that stays. An empty name has it called after its folder again.
 pub fn rename(target: Option<String>, new_name: String) -> Result<()> {
     let hypr = Hypr::from_env()?;
-    let (rows, _) = load_rows(Some(&hypr))?;
+    let (mut store, rows, _) = lock_rows(Some(&hypr))?;
     if let Some((space, slot)) = target.as_deref().and_then(|t| tab_target(&rows, t)) {
-        return rename_tab(&hypr, &rows, space, slot, &new_name);
+        return rename_tab(&hypr, store, &rows, space, slot, &new_name);
     }
     let id = match target {
         Some(target) => resolve(&rows, &target)?,
@@ -1105,7 +1156,6 @@ pub fn rename(target: Option<String>, new_name: String) -> Result<()> {
     }
     let new_name = spaces::clean_name(&new_name)?;
 
-    let mut store = Store::load(&paths::state_dir())?;
     store.entry(&id).name = new_name.clone();
     store.save()?;
     match new_name {
@@ -1120,7 +1170,7 @@ pub fn rename(target: Option<String>, new_name: String) -> Result<()> {
 /// icon has it show its letters again.
 pub fn icon(target: Option<String>, new_icon: String) -> Result<()> {
     let hypr = Hypr::from_env()?;
-    let (rows, _) = load_rows(Some(&hypr))?;
+    let (mut store, rows, _) = lock_rows(Some(&hypr))?;
     let id = match target {
         Some(target) => resolve(&rows, &target)?,
         None => rows
@@ -1134,7 +1184,6 @@ pub fn icon(target: Option<String>, new_icon: String) -> Result<()> {
     }
     let new_icon = spaces::clean_icon(&new_icon)?;
 
-    let mut store = Store::load(&paths::state_dir())?;
     store.entry(&id).icon = new_icon.clone();
     store.save()?;
     match new_icon {
@@ -1149,7 +1198,7 @@ pub fn icon(target: Option<String>, new_icon: String) -> Result<()> {
 /// puts it last.
 pub fn reorder(target: String, position: usize) -> Result<()> {
     let hypr = Hypr::from_env()?;
-    let (rows, _) = load_rows(Some(&hypr))?;
+    let (mut store, rows, _) = lock_rows(Some(&hypr))?;
     let id = resolve(&rows, &target)?;
     if id == HOME {
         bail!("'home' is the plain workspaces; it stays first");
@@ -1157,7 +1206,6 @@ pub fn reorder(target: String, position: usize) -> Result<()> {
     if position == 0 {
         bail!("positions start at 1, the first space below home");
     }
-    let mut store = Store::load(&paths::state_dir())?;
     let order: Vec<String> = rows
         .into_iter()
         .map(|r| r.id)
@@ -1207,7 +1255,14 @@ fn tab_target<'a>(rows: &[Row], target: &'a str) -> Option<(&'a str, u8)> {
 /// `space rename <space>:<n> <name>`: gives a tab a name that stays, in
 /// place of its window's. An empty name has it follow its window again, or,
 /// in `home`, show just its number.
-fn rename_tab(hypr: &Hypr, rows: &[Row], space: &str, slot: u8, new_name: &str) -> Result<()> {
+fn rename_tab(
+    hypr: &Hypr,
+    mut store: Store,
+    rows: &[Row],
+    space: &str,
+    slot: u8,
+    new_name: &str,
+) -> Result<()> {
     let id = resolve(rows, space)?;
     // `home`'s names are by workspace id, as each monitor has its own tab n.
     let key = if id == HOME {
@@ -1222,7 +1277,6 @@ fn rename_tab(hypr: &Hypr, rows: &[Row], space: &str, slot: u8, new_name: &str) 
     };
     let new_name = spaces::clean_name(new_name)?;
 
-    let mut store = Store::load(&paths::state_dir())?;
     let tabs = &mut store.entry(&id).tabs;
     match &new_name {
         Some(new_name) => tabs.insert(key, new_name.clone()),
@@ -1310,10 +1364,7 @@ pub fn close(target: Option<String>) -> Result<()> {
     for address in &windows {
         hypr.dispatch(&hypr::close_window(address))?;
     }
-    if let Ok(mut last) = Last::load(&paths::state_dir()) {
-        last.remove(&id);
-        save(&last);
-    }
+    forget(&id);
     match windows.len() {
         0 => println!("No windows open in '{label}'"),
         1 => println!("Closed 1 window in '{label}'"),
@@ -1373,10 +1424,7 @@ pub fn emptied(workspace: &str) -> Result<()> {
     switch(&hypr, &to)?;
     // The space is gone (switching noted where you left it): nothing to go
     // back to.
-    if let Ok(mut last) = Last::load(&paths::state_dir()) {
-        last.remove(&id);
-        save(&last);
-    }
+    forget(&id);
     Ok(())
 }
 
@@ -1505,17 +1553,14 @@ fn selector(space: &str, slot: u8) -> String {
 /// Records the workspace the active space is on. Failing to is only a
 /// warning: the switch itself has happened.
 fn remember(space: &str, slot: u8) {
-    match Last::load(&paths::state_dir()) {
-        Ok(mut last) => {
-            last.set(space, slot);
-            save(&last);
-        }
-        Err(e) => eprintln!("space: warning: {e:#}"),
+    if let Err(e) = Last::update(&paths::state_dir(), |last| last.set(space, slot)) {
+        eprintln!("space: warning: {e:#}");
     }
 }
 
-fn save(last: &Last) {
-    if let Err(e) = last.save() {
+/// Forgets where a space was left, as it's gone.
+fn forget(space: &str) {
+    if let Err(e) = Last::update(&paths::state_dir(), |last| last.remove(space)) {
         eprintln!("space: warning: {e:#}");
     }
 }

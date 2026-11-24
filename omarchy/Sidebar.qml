@@ -493,11 +493,11 @@ Item {
     }
   }
 
-  // Runs a `space` command that changes the spaces.
+  // Runs a `space` command that changes the spaces, beside any still running:
+  // `space new` takes until its terminal is up. `space watch` sees what it
+  // changes, and prints the list again.
   function run(args) {
-    if (actionProc.running) return
-    actionProc.command = args
-    actionProc.running = true
+    Quickshell.execDetached(args)
   }
 
   // Whether the focused workspace has tiled windows, which Hyprland moves
@@ -519,14 +519,6 @@ Item {
       if (Quickshell.screens[i].name === name) return Quickshell.screens[i]
     }
     return Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
-  }
-
-  // `space watch` sees what these change, and prints the list again.
-  Process {
-    id: actionProc
-    // Collected only so `space` has somewhere to print.
-    stdout: StdioCollector {}
-    stderr: StdioCollector {}
   }
 
   Process {

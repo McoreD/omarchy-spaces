@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -26,6 +27,10 @@ struct Hyprland {
     omarchy: bool,
     /// Whether `hl.dsp.exec_cmd` takes rules, as Hyprland 0.56 does.
     exec_rules: bool,
+    /// How long a terminal it runs takes to show its window.
+    terminal_start: Duration,
+    /// Windows still starting: when each shows up, where, and its address.
+    starting: Vec<(Instant, String, u32)>,
     /// The fake home, which commands it runs see as `HOME`.
     home: PathBuf,
     /// Whoever listens to Hyprland's events, as `space watch` does.
@@ -64,7 +69,23 @@ impl Hyprland {
             .retain(|(_, n)| *n == active || windows.contains(n));
     }
 
+    /// Shows the windows that have started by now.
+    fn show_started(&mut self) {
+        let now = Instant::now();
+        let (started, starting) = std::mem::take(&mut self.starting)
+            .into_iter()
+            .partition(|(at, ..)| *at <= now);
+        self.starting = starting;
+        let started: Vec<(Instant, String, u32)> = started;
+        for (_, workspace, address) in started {
+            self.ensure(&workspace);
+            self.windows.push(workspace);
+            self.addresses.push(address);
+        }
+    }
+
     fn handle(&mut self, request: &str) -> String {
+        self.show_started();
         match request {
             "j/activeworkspace" => {
                 let active = self.active.clone();
@@ -152,17 +173,18 @@ impl Hyprland {
                 .env("HOME", &self.home)
                 .status()
                 .unwrap();
-            self.ensure(&workspace);
-            self.windows.push(workspace.clone());
             self.next_address += 1;
             let address = self.next_address;
-            self.addresses.push(address);
+            let start = self.terminal_start;
+            self.starting
+                .push((Instant::now() + start, workspace.clone(), address));
+            self.show_started();
             // Hyprland says so once the window maps, a moment later, as a
             // real terminal takes to start: by then whoever asked to be
             // told has been heard.
             let listeners = Arc::clone(&self.listeners);
             thread::spawn(move || {
-                thread::sleep(std::time::Duration::from_millis(50));
+                thread::sleep(start + Duration::from_millis(50));
                 for stream in listeners.lock().unwrap().iter_mut() {
                     let _ = writeln!(stream, "openwindow>>{address:x},{workspace},kitty,zsh");
                 }
@@ -887,6 +909,74 @@ fn new_opens_a_space_with_a_terminal_in_the_focused_terminals_folder() {
     assert_eq!(rows[1]["named"], false);
     assert_eq!(rows[1]["folder"], ren.display().to_string());
     assert_eq!(rows[1]["active"], true);
+}
+
+#[test]
+fn spaces_opened_at_once_each_get_their_own() {
+    let env = Env::new();
+    env.hypr.lock().unwrap().terminal_start = Duration::from_millis(400);
+    // Pressed again before the first one's terminal is up.
+    let mut presses: Vec<_> = (0..3)
+        .map(|_| env.command(&["new"]).spawn().unwrap())
+        .collect();
+    for press in &mut presses {
+        assert!(press.wait().unwrap().success());
+    }
+
+    let mut windows = env.windows();
+    windows.sort();
+    assert_eq!(windows, ["s1:1", "s2:1", "s3:1"]);
+    assert_eq!(env.ls_json().len(), 4, "and home");
+}
+
+#[test]
+fn tabs_opened_at_once_each_get_their_own() {
+    let env = Env::new();
+    env.add_terminal("s1:1", &env.dir("ren"));
+    env.set_active("s1:1");
+    env.hypr.lock().unwrap().terminal_start = Duration::from_millis(400);
+    let mut presses: Vec<_> = (0..3)
+        .map(|_| env.command(&["ws", "new"]).spawn().unwrap())
+        .collect();
+    for press in &mut presses {
+        assert!(press.wait().unwrap().success());
+    }
+
+    let mut windows = env.windows();
+    windows.sort();
+    assert_eq!(windows, ["s1:1", "s1:2", "s1:3", "s1:4"]);
+}
+
+#[test]
+fn changes_made_at_once_are_all_kept() {
+    let env = Env::new();
+    let ids: Vec<String> = (1..=6).map(|n| format!("s{n}")).collect();
+    for id in &ids {
+        env.add_window(&format!("{id}:1"));
+    }
+    env.ok(&["ls"]);
+    let _watch = Watch::start(&env);
+    for round in 0..10 {
+        let icon = round.to_string();
+        let names: Vec<String> = ids.iter().map(|id| format!("{id} {round}")).collect();
+        let mut renames: Vec<_> = ids
+            .iter()
+            .zip(&names)
+            .flat_map(|(id, name)| {
+                [["rename", id, name], ["icon", id, &icon]]
+                    .map(|args| env.command(&args).spawn().unwrap())
+            })
+            .collect();
+        for rename in &mut renames {
+            assert!(rename.wait().unwrap().success());
+        }
+        let rows = env.ls_json();
+        for (row, name) in rows[1..].iter().zip(&names) {
+            assert_eq!(row["label"], name.as_str());
+            assert_eq!(row["icon"], icon.as_str());
+        }
+        assert_eq!(rows.len(), names.len() + 1, "and home");
+    }
 }
 
 #[test]

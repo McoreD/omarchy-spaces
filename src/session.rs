@@ -72,17 +72,10 @@ fn write(path: &Path, session: &Session) -> Result<()> {
     state::write_atomic(path, &(text + "\n"))
 }
 
-fn lock_file(state_dir: &Path, name: &str) -> Result<File> {
-    std::fs::create_dir_all(state_dir)
-        .with_context(|| format!("can't create {}", state_dir.display()))?;
-    let path = state_dir.join(name);
-    File::create(&path).with_context(|| format!("can't open {}", path.display()))
-}
-
 /// Held while restoring, until it's dropped. `None` when another `space
 /// restore` holds it.
 pub fn lock_restore(state_dir: &Path) -> Result<Option<File>> {
-    let file = lock_file(state_dir, ".restore.lock")?;
+    let file = state::lock_file(state_dir, ".restore.lock")?;
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),
         Err(TryLockError::WouldBlock) => Ok(None),
@@ -94,8 +87,7 @@ pub fn lock_restore(state_dir: &Path) -> Result<Option<File>> {
 /// any spaces an earlier restore didn't get to. `watch` and `restore` both
 /// do this as the plugin starts, so one waits for the other.
 pub fn set_aside(state_dir: &Path, instance: &str) -> Result<()> {
-    let lock = lock_file(state_dir, ".session.lock")?;
-    lock.lock().context("can't lock the session")?;
+    let _lock = state::lock(state_dir, ".session.lock")?;
     let path = current_path(state_dir);
     if let Some(mut saved) = read(&path)?
         && saved.instance != instance

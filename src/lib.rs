@@ -8,6 +8,7 @@ pub mod core;
 pub mod hypr;
 pub mod name;
 pub mod paths;
+pub mod reserve;
 pub mod session;
 pub mod shell;
 pub mod sound;

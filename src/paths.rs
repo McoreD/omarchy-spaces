@@ -43,6 +43,12 @@ pub fn status_dir() -> PathBuf {
     runtime_dir().join("status")
 }
 
+/// `$XDG_RUNTIME_DIR/omarchy-spaces/reserved/`: one file per workspace whose
+/// terminal is still opening.
+pub fn reserved_dir() -> PathBuf {
+    runtime_dir().join("reserved")
+}
+
 /// A path as written in the config, `~/` meaning the home folder.
 pub fn expand(path: &str) -> PathBuf {
     match path.strip_prefix("~/") {

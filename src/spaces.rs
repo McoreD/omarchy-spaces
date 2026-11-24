@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::state;
@@ -61,10 +61,23 @@ pub struct Store {
     pub spaces: BTreeMap<String, Entry>,
     /// What was read, to write only when something changed.
     read: BTreeMap<String, Entry>,
+    /// Held to save it. A failure to lock only matters then.
+    lock: Result<std::fs::File>,
 }
 
 impl Store {
+    /// Reads it, to look at.
     pub fn load(state_dir: &Path) -> Result<Self> {
+        Self::read(state_dir, Err(anyhow!("it was only read")))
+    }
+
+    /// Reads it, to change and save: other processes wait to do the same
+    /// until it's dropped, so changes made at once are all kept.
+    pub fn lock(state_dir: &Path) -> Result<Self> {
+        Self::read(state_dir, state::lock(state_dir, ".spaces.lock"))
+    }
+
+    fn read(state_dir: &Path, lock: Result<std::fs::File>) -> Result<Self> {
         let path = state_dir.join("spaces.json");
         let text = state::read_optional(&path)?;
         let file: File = if text.trim().is_empty() {
@@ -80,7 +93,13 @@ impl Store {
             path,
             read: file.spaces.clone(),
             spaces: file.spaces,
+            lock,
         })
+    }
+
+    /// What the file holds, without the changes not saved yet.
+    pub fn saved(&self) -> &BTreeMap<String, Entry> {
+        &self.read
     }
 
     pub fn get(&self, id: &str) -> Option<&Entry> {
@@ -109,6 +128,9 @@ impl Store {
         if self.spaces == self.read {
             return Ok(());
         }
+        if let Err(e) = &self.lock {
+            bail!("can't save {}: {e:#}", self.path.display());
+        }
         let text = serde_json::to_string_pretty(&File {
             spaces: self.spaces.clone(),
         })?;
@@ -123,10 +145,10 @@ impl Store {
 pub fn clean_name(raw: &str) -> Result<Option<String>> {
     let name = raw.trim();
     if name.chars().any(char::is_control) {
-        anyhow::bail!("a name has to fit on one line");
+        bail!("a name has to fit on one line");
     }
     if name.chars().count() > 64 {
-        anyhow::bail!("'{name}' is longer than 64 characters");
+        bail!("'{name}' is longer than 64 characters");
     }
     Ok((!name.is_empty()).then(|| name.to_string()))
 }
@@ -136,10 +158,10 @@ pub fn clean_name(raw: &str) -> Result<Option<String>> {
 pub fn clean_icon(raw: &str) -> Result<Option<String>> {
     let icon = raw.trim();
     if icon.chars().any(|c| c.is_control() || c.is_whitespace()) {
-        anyhow::bail!("an icon is one glyph or emoji, without spaces");
+        bail!("an icon is one glyph or emoji, without spaces");
     }
     if icon.chars().count() > 16 {
-        anyhow::bail!("'{icon}' is too long for an icon: use one glyph or emoji");
+        bail!("'{icon}' is too long for an icon: use one glyph or emoji");
     }
     Ok((!icon.is_empty()).then(|| icon.to_string()))
 }
@@ -151,7 +173,7 @@ mod tests {
     #[test]
     fn round_trips_prunes_and_hands_out_ids() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = Store::load(dir.path()).unwrap();
+        let mut store = Store::lock(dir.path()).unwrap();
         assert!(store.spaces.is_empty());
         store.entry("s1").name = Some("Japanese".into());
         store.entry("s1").icon = Some("🗾".into());
@@ -159,6 +181,7 @@ mod tests {
         store.entry("s2").tabs.insert(3, "server".into());
         store.entry("home").tabs.insert(13, "mail".into());
         store.save().unwrap();
+        drop(store);
 
         let mut store = Store::load(dir.path()).unwrap();
         assert_eq!(store.get("s1").unwrap().name.as_deref(), Some("Japanese"));
