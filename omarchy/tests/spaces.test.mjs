@@ -166,8 +166,8 @@ test("shows what most needs you among a tab's and a space's agents", () => {
 test("a new tab is empty until something opens on it", () => {
   const tabs = tabsFor([{ id: -1337, name: "ren:1" }], [], { id: -1340, name: "ren:2" })
   assert.deepEqual(tabs.tabs.map((t) => [t.slot, t.label, t.active]), [
-    [1, "New tab", false],
-    [2, "New tab", true],
+    [1, "", false],
+    [2, "", true],
   ])
 })
 

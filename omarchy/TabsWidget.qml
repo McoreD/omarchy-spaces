@@ -128,7 +128,8 @@ BarWidget {
 
   function tabLabel(tab) {
     if (root.vertical) return String(tab.slot)
-    return tab.slot + "  " + tab.label + (tab.windows > 1 ? "  +" + (tab.windows - 1) : "")
+    // A new tab, with nothing open on it yet, is just its number.
+    return tab.slot + (tab.label ? "  " + tab.label : "") + (tab.windows > 1 ? "  +" + (tab.windows - 1) : "")
   }
 
   Tabs {

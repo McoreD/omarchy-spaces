@@ -327,7 +327,7 @@ export function tabsFor(workspaces, windows, active, terminals, names) {
         const name = names && Object.prototype.hasOwnProperty.call(names, tab.slot) ? names[tab.slot] : ""
         return {
           slot: tab.slot,
-          label: name || tab.label || "New tab",
+          label: name || tab.label,
           named: !!name,
           status: tab.status,
           windows: tab.windows,
