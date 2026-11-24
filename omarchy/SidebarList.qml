@@ -308,7 +308,7 @@ Item {
               // The search's cursor; otherwise the highlight says which space you're in.
               color: rowItem.selected && root.sidebar.searching ? root.accent : root.foreground
               font.family: root.fontFamily
-              font.pixelSize: Style.font.subtitle
+              font.pixelSize: Style.font.body
               font.bold: rowItem.modelData.active
               elide: rowItem.renaming ? Text.ElideLeft : Text.ElideRight
 
