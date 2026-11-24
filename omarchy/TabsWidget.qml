@@ -402,11 +402,15 @@ BarWidget {
     width: root.vertical ? root.barSize : (button.editing ? button.natural : Math.min(button.natural, button.cap))
     height: root.vertical ? Style.space(26) : root.barSize
 
+    // Outlined like a text field while you type its name, so it reads as one.
     Rectangle {
       anchors.fill: parent
       anchors.margins: Style.spacing.xs
       radius: Style.cornerRadius
-      color: mouse.containsMouse && !button.current ? root.hover : "transparent"
+      color: button.editing ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.08)
+        : mouse.containsMouse && !button.current ? root.hover : "transparent"
+      border.width: button.editing ? Math.max(1, Style.space(1)) : 0
+      border.color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.6)
     }
 
     Text {
@@ -446,13 +450,30 @@ BarWidget {
       Text {
         id: editName
         readonly property real room: Style.space(220) - Style.spacing.rowPaddingX * 2 - editNumber.implicitWidth - caret.width - 1
-        width: Math.min(implicitWidth, room)
+        // Wide enough for the placeholder while there's no name.
+        width: text === "" ? placeholder.x + placeholder.implicitWidth : Math.min(implicitWidth, room)
         textFormat: Text.PlainText
         text: button.editing && root.sidebar ? root.sidebar.nameText : ""
         elide: Text.ElideLeft
         color: label.color
         font: label.font
-        readonly property bool selected: button.editing && !!root.sidebar && root.sidebar.nameSelected
+        // A selection of nothing shows no highlight, so the caret shows instead.
+        readonly property bool selected: button.editing && !!root.sidebar && root.sidebar.nameSelected && text !== ""
+
+        // What to type, while there's no name: a tab with none (one of home's)
+        // would otherwise show only its number.
+        Text {
+          id: placeholder
+          visible: editName.text === ""
+          x: caret.x + caret.width
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: "name"
+          color: root.foreground
+          opacity: 0.35
+          font.family: root.fontFamily
+          font.pixelSize: root.fontSize
+        }
 
         Rectangle {
           visible: editName.selected
@@ -494,7 +515,9 @@ BarWidget {
       colors: root.sidebar ? root.sidebar.statusColors : null
       workingColor: root.foreground
       size: Math.max(5, Math.round(root.fontSize * 0.45))
-      x: root.vertical ? parent.width * 0.7 : label.x + Math.min(label.contentWidth, label.width) + Style.spacing.sm
+      x: root.vertical ? parent.width * 0.7
+        : button.editing ? editor.x + editor.implicitWidth + Style.spacing.sm
+        : label.x + Math.min(label.contentWidth, label.width) + Style.spacing.sm
       y: root.vertical ? Style.spacing.xs : (parent.height - height) / 2
     }
 
