@@ -1,56 +1,16 @@
--- renSpace keys. Each space's workspaces are its tabs, shown on the bar (the
--- org.ren.renspace shell plugin in ../omarchy).
+-- renSpace for Hyprland. It binds no keys: bind the ones you want in
+-- ~/.config/hypr/bindings.lua, after the require (see the README's Keys).
 --
 -- Install: link this file to ~/.config/hypr/renspace.lua and add
---   require("hypr.renspace")
+--   local renspace = require("hypr.renspace")
 -- at the end of ~/.config/hypr/bindings.lua, which loads after Omarchy's
 -- defaults. Remove that line to undo it.
 
--- Super + P (for project) searches the spaces sidebar, taking the keyboard
--- until you pick one or press Escape; it replaces Omarchy's pseudo window
--- toggle. Without the plugin, bind "space go" here instead for the centered
--- picker. Super + B shows or hides the sidebar, leaving the keyboard where it
--- is.
-o.rebind("SUPER + P", "Find a space", { panel = "org.ren.renspace" })
-o.rebind("SUPER + B", "Show or hide spaces", "omarchy-shell shell call org.ren.renspace showOrHide ''")
--- Super + Shift + R renames the space you are in, typing over its name in the
--- sidebar as its right-click menu's Rename does: Enter keeps it, Escape drops
--- it, and an empty name has it called after its folder again.
-o.rebind("SUPER + SHIFT + R", "Rename space", "omarchy-shell shell call org.ren.renspace rename ''")
--- Super + , names the tab you are on, as tmux's prefix + , names a window,
--- typing over its name on the bar, as double-clicking the tab does. Named, a
--- tab keeps the name whatever runs in it, until you clear it with an empty
--- name or close the tab. Super + , was Omarchy's notification dismiss, which
--- Super + Shift + , (dismiss all) and Super + Alt + , (the last) still do.
-o.rebind("SUPER + COMMA", "Rename tab", "omarchy-shell shell call org.ren.renspace renameTab ''")
-
--- Spaces, down and up the sidebar, as herdr's prefix + j/k and n move
--- between and make sessions, with Super as the prefix. They wrap around, and
--- `home` counts as the top one. Super + J was Omarchy's split toggle and
--- Super + K its keybindings list, which is also in the Omarchy menu.
-o.rebind("SUPER + J", "Next space", "space next")
-o.rebind("SUPER + K", "Previous space", "space prev")
-o.rebind("SUPER + N", "New space", "space new")
--- Super + Shift + J/K send the focused window to the next or previous space,
--- as Super + Shift + 1..0 send it to a tab, and you go with it.
-o.rebind("SUPER + SHIFT + J", "Send window to next space", "space send next")
-o.rebind("SUPER + SHIFT + K", "Send window to previous space", "space send prev")
-
--- A terminal in the folder you are in: the focused terminal's, as Omarchy
--- does, but on an empty tab of a space, the space's folder rather than home.
--- Omarchy's own launcher if `space` is missing.
-o.rebind("SUPER + RETURN", "Terminal", "space terminal || omarchy-launch-terminal")
-
--- Tabs, like a browser's. Super + T was Omarchy's floating toggle; Super + Tab
--- cycled every workspace on the monitor, leaving the space.
-o.rebind("SUPER + T", "New tab", "space ws new")
-o.rebind("SUPER + TAB", "Next tab", "space ws next")
-o.rebind("SUPER + SHIFT + TAB", "Previous tab", "space ws prev")
-
--- Super + 1..0 go to tab N, and Super + Shift (+ Alt) + 1..0 move the focused
--- window there. This is plain Lua inside Hyprland rather than a call to
--- `space`, so it can't leave you stuck: outside a space (`home`) each key runs
--- the very action Omarchy binds to it, and works even if `space` is missing.
+-- renspace.go_to_tab(n) and renspace.move_window_to_tab(n[, follow]) make
+-- actions for tab keys. This is plain Lua inside Hyprland rather than a call to
+-- `space`, so it can't leave you stuck: outside a space (`home`) each one runs
+-- the action Omarchy binds to workspace n, and works even if `space` is
+-- missing.
 
 -- The space the focused workspace belongs to, or nil in `home`. The same rule
 -- as `space`: `name:n`, with a lowercase name and n from 1 to 10.
@@ -91,12 +51,7 @@ local function move_window(slot, follow)
   end
 end
 
-for n = 1, 10 do
-  local key = "code:" .. tostring(n + 9)
-  o.rebind("SUPER + " .. key, "Go to tab " .. n, focus(n))
-  o.rebind("SUPER + SHIFT + " .. key, "Move window to tab " .. n, move_window(n))
-  o.rebind("SUPER + SHIFT + ALT + " .. key, "Move window silently to tab " .. n, move_window(n, false))
-end
+local M = { go_to_tab = focus, move_window_to_tab = move_window }
 
 -- A tab emptied by closing its last window doesn't linger, however the
 -- window went (super+w, `exit` in a terminal, an app quitting): `space
@@ -151,3 +106,5 @@ if glassy then
     ignore_alpha = 0.3,
   })
 end
+
+return M

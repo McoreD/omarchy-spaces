@@ -15,7 +15,7 @@ setup:
     omarchy plugin disable omarchy.workspaces
     omarchy bar put org.ren.renspace --after omarchy.menu
     ln -sfn {{justfile_directory()}}/hypr/renspace.lua ~/.config/hypr/renspace.lua
-    grep -qxF 'require("hypr.renspace")' ~/.config/hypr/bindings.lua || echo 'require("hypr.renspace")' >> ~/.config/hypr/bindings.lua
+    grep -q 'require("hypr.renspace")' ~/.config/hypr/bindings.lua || echo 'local renspace = require("hypr.renspace")' >> ~/.config/hypr/bindings.lua
 
 # Make the icon picker's glyphs again, from a Nerd Fonts release's glyph names
 glyphs version="v3.4.0":
