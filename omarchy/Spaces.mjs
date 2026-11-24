@@ -277,10 +277,12 @@ export function terminalsByAddress(rows) {
 //   active:     { id, name } of the focused workspace
 //   terminals:  terminalsByAddress(rows), which name terminals better than
 //               their class, and say what their agents are doing
-//   names:      the names you gave the space's tabs, by slot (its row's tabs)
+//   names:      the names you gave the space's tabs, by slot (its row's tabs);
+//               `home`'s by workspace id, as each monitor has its own slot 3
 // Returns { space, tabs: [{ slot, label, named, status, windows, active }] }
 // in slot order, a tab's status the one most in need of you among its
 // windows. A name you gave a tab is its label, and makes it `named`.
+// `home`'s tabs are just their numbers until you name them.
 export function tabsFor(workspaces, windows, active, terminals, names) {
   const here = locate(active ? active.id : 0, active ? active.name : "")
   const block = (id) => Math.floor((id - 1) / SLOTS)
@@ -324,10 +326,12 @@ export function tabsFor(workspaces, windows, active, terminals, names) {
     tabs: [...tabs.values()]
       .sort((a, b) => a.slot - b.slot)
       .map((tab) => {
-        const name = names && Object.prototype.hasOwnProperty.call(names, tab.slot) ? names[tab.slot] : ""
+        const home = here.space === "home"
+        const key = home ? tab.id : tab.slot
+        const name = names && Object.prototype.hasOwnProperty.call(names, key) ? names[key] : ""
         return {
           slot: tab.slot,
-          label: name || tab.label,
+          label: name || (home ? "" : tab.label),
           named: !!name,
           status: tab.status,
           windows: tab.windows,

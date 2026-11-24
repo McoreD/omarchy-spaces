@@ -40,7 +40,7 @@ enum Cmd {
     },
     /// Name a space, the active one unless you say which, or a tab, as
     /// `<space>:<n>`. An empty name has a space called after its folder
-    /// again, and a tab after its window.
+    /// again, and a tab after its window (in `home`, just its number).
     #[command(override_usage = "space rename [SPACE | SPACE:N] <NAME>")]
     Rename {
         #[arg(value_name = "SPACE")]

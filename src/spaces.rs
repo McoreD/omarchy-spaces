@@ -43,6 +43,8 @@ pub struct Entry {
     /// The names you gave its tabs, by slot. A tab without one is called
     /// after its most recently focused window. A name lasts as long as its
     /// tab: when Hyprland drops the workspace, the name goes with it.
+    /// `home`'s are by workspace id instead, as every monitor has its own
+    /// slot 3 (workspaces 3 and 13).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tabs: BTreeMap<u8, String>,
 }
@@ -89,9 +91,10 @@ impl Store {
         self.spaces.entry(id.to_string()).or_default()
     }
 
-    /// Forgets spaces Hyprland no longer has.
+    /// Forgets spaces Hyprland no longer has. `home` is always there.
     pub fn prune(&mut self, live: &BTreeSet<String>) {
-        self.spaces.retain(|id, _| live.contains(id));
+        self.spaces
+            .retain(|id, _| id == crate::name::HOME || live.contains(id));
     }
 
     /// An id for a new space: `s1`, `s2`, ..., the first not in use.
@@ -154,6 +157,7 @@ mod tests {
         store.entry("s1").icon = Some("🗾".into());
         store.entry("s2").folder = Some("/p/mail".into());
         store.entry("s2").tabs.insert(3, "server".into());
+        store.entry("home").tabs.insert(13, "mail".into());
         store.save().unwrap();
 
         let mut store = Store::load(dir.path()).unwrap();
@@ -167,7 +171,7 @@ mod tests {
 
         let live: BTreeSet<String> = ["s2".to_string(), "s4".to_string()].into();
         store.prune(&live);
-        assert_eq!(store.spaces.keys().collect::<Vec<_>>(), ["s2"]);
+        assert_eq!(store.spaces.keys().collect::<Vec<_>>(), ["home", "s2"]);
         assert_eq!(store.fresh_id(&live), "s1");
         let live: BTreeSet<String> = ["s1".to_string()].into();
         assert_eq!(store.fresh_id(&live), "s3", "s2 is still remembered");

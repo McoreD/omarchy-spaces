@@ -183,6 +183,8 @@ pub(crate) struct Snapshot {
     pub active: Option<String>,
     windows: BTreeMap<String, u32>,
     workspaces: BTreeMap<String, BTreeSet<u8>>,
+    /// `home`'s workspaces by id, as its slots repeat on every monitor.
+    home: BTreeSet<i64>,
     /// The windows on spaces' workspaces, `home`'s included.
     pub space_windows: Vec<SpaceWindow>,
 }
@@ -194,6 +196,8 @@ pub(crate) struct Live {
     active: Option<String>,
     windows: BTreeMap<String, u32>,
     workspaces: BTreeMap<String, BTreeSet<u8>>,
+    /// `home`'s workspaces by id.
+    home: BTreeSet<i64>,
     terminals: BTreeMap<String, Vec<Terminal>>,
     /// Every window's address, by space.
     addresses: BTreeMap<String, Vec<String>>,
@@ -253,6 +257,9 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
         if let Some(slot) = location.slot() {
             entry.insert(slot);
         }
+        if location.space() == HOME && ws.id > 0 {
+            snapshot.home.insert(ws.id);
+        }
     }
     for client in hypr.clients()? {
         // Windows not on any workspace yet report id -1 and no name.
@@ -309,6 +316,7 @@ pub(crate) fn live_from(
         active: snapshot.active.clone(),
         windows: snapshot.windows.clone(),
         workspaces: snapshot.workspaces.clone(),
+        home: snapshot.home.clone(),
         terminals,
         addresses,
         statuses: HashMap::new(),
@@ -435,12 +443,21 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
                     .tabs
                     .retain(|slot, _| open.is_some_and(|open| open.contains(slot)));
             }
+            if let Some(home) = store.spaces.get_mut(HOME) {
+                home.tabs
+                    .retain(|id, _| live.home.contains(&i64::from(*id)));
+            }
             let mut ids: Vec<String> = spaces.into_iter().collect();
             ids.sort_by_key(|id| (store.get(id).map_or(0, |e| e.created), id.clone()));
             ids
         }
         None => {
-            let mut ids: Vec<String> = store.spaces.keys().cloned().collect();
+            let mut ids: Vec<String> = store
+                .spaces
+                .keys()
+                .filter(|id| *id != HOME)
+                .cloned()
+                .collect();
             ids.sort_by_key(|id| (store.get(id).map_or(0, |e| e.created), id.clone()));
             ids
         }
@@ -484,14 +501,8 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
         }
     };
 
-    let mut out = vec![row(
-        HOME,
-        HOME.to_string(),
-        false,
-        None,
-        None,
-        BTreeMap::new(),
-    )];
+    let home_tabs = store.get(HOME).map(|e| e.tabs.clone()).unwrap_or_default();
+    let mut out = vec![row(HOME, HOME.to_string(), false, None, None, home_tabs)];
     for id in ids {
         let terminals = live
             .and_then(|l| l.terminals.get(&id))
@@ -867,7 +878,7 @@ pub fn rename(target: Option<String>, new_name: String) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (rows, _) = load_rows(Some(&hypr))?;
     if let Some((space, slot)) = target.as_deref().and_then(|t| tab_target(&rows, t)) {
-        return rename_tab(&rows, space, slot, &new_name);
+        return rename_tab(&hypr, &rows, space, slot, &new_name);
     }
     let id = match target {
         Some(target) => resolve(&rows, &target)?,
@@ -982,31 +993,67 @@ fn tab_target<'a>(rows: &[Row], target: &'a str) -> Option<(&'a str, u8)> {
 }
 
 /// `space rename <space>:<n> <name>`: gives a tab a name that stays, in
-/// place of its window's. An empty name has it follow its window again.
-fn rename_tab(rows: &[Row], space: &str, slot: u8, new_name: &str) -> Result<()> {
+/// place of its window's. An empty name has it follow its window again, or,
+/// in `home`, show just its number.
+fn rename_tab(hypr: &Hypr, rows: &[Row], space: &str, slot: u8, new_name: &str) -> Result<()> {
     let id = resolve(rows, space)?;
-    if id == HOME {
-        bail!("'home' is the plain workspaces; its tabs can't be named");
-    }
-    let row = rows.iter().find(|r| r.id == id).expect("resolved");
-    let open = row.workspaces.as_deref().unwrap_or_default();
-    if !open.contains(&slot) {
-        bail!("'{}' has no tab {slot}", row.label);
-    }
+    // `home`'s names are by workspace id, as each monitor has its own tab n.
+    let key = if id == HOME {
+        home_workspace(hypr, slot)?
+    } else {
+        let row = rows.iter().find(|r| r.id == id).expect("resolved");
+        let open = row.workspaces.as_deref().unwrap_or_default();
+        if !open.contains(&slot) {
+            bail!("'{}' has no tab {slot}", row.label);
+        }
+        slot
+    };
     let new_name = spaces::clean_name(new_name)?;
 
     let mut store = Store::load(&paths::state_dir())?;
     let tabs = &mut store.entry(&id).tabs;
     match &new_name {
-        Some(new_name) => tabs.insert(slot, new_name.clone()),
-        None => tabs.remove(&slot),
+        Some(new_name) => tabs.insert(key, new_name.clone()),
+        None => tabs.remove(&key),
     };
     store.save()?;
-    match new_name {
-        Some(new_name) => println!("Named tab {slot} '{new_name}'"),
-        None => println!("Tab {slot} is called after its window again"),
+    match (new_name, id == HOME) {
+        (Some(new_name), _) => println!("Named tab {slot} '{new_name}'"),
+        (None, false) => println!("Tab {slot} is called after its window again"),
+        (None, true) => println!("Tab {slot} shows just its number again"),
     }
     Ok(())
+}
+
+/// The id of `home`'s tab `slot`: on the focused monitor when you are in
+/// `home`, as the bar shows it, else the only open one with that number.
+fn home_workspace(hypr: &Hypr, slot: u8) -> Result<u8> {
+    let in_block =
+        |id: i64, of: i64| (id - 1) / i64::from(name::SLOTS) == (of - 1) / i64::from(name::SLOTS);
+    let active = hypr.active_workspace()?;
+    let here =
+        matches!(name::locate(active.id, &active.name), Location::Home { .. }) && active.id > 0;
+    let open: Vec<i64> = hypr
+        .workspaces()?
+        .into_iter()
+        .filter(|ws| {
+            ws.id > 0 && name::locate(ws.id, &ws.name) == (Location::Home { slot: Some(slot) })
+        })
+        .map(|ws| ws.id)
+        .collect();
+    let found = if here {
+        open.iter().copied().find(|id| in_block(*id, active.id))
+    } else {
+        match open.as_slice() {
+            [only] => Some(*only),
+            [] => None,
+            _ => bail!("'home' has a tab {slot} on more than one monitor; name it from there"),
+        }
+    };
+    let Some(found) = found else {
+        bail!("'home' has no tab {slot}");
+    };
+    u8::try_from(found).with_context(|| format!("workspace {found} can't be named"))
 }
 
 /// `space close [space]`: closes every window of a space, the active one by

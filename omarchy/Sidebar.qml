@@ -439,12 +439,11 @@ Item {
   }
 
   // Names a tab of the space you are in, `slot`, or the one you are on: the
-  // bar shows the name as you type it. `home`'s tabs are Omarchy's
-  // workspaces, which take no names. A sidebar shown just for a search goes.
+  // bar shows the name as you type it. A sidebar shown just for a search goes.
   function renameTab(slot) {
     var workspace = Hyprland.focusedWorkspace
     var here = workspace ? Spaces.locate(workspace.id, workspace.name) : null
-    if (!here || here.space === "home") return
+    if (!here || !here.slot) return
     var tabs = root.tabs && root.tabs.model ? root.tabs.model.tabs : []
     var tab = tabs.find(function(t) { return t.slot === (slot || here.slot) })
     if (!tab) return

@@ -179,6 +179,19 @@ test("home's tabs are the focused monitor's plain workspaces", () => {
   assert.deepEqual(tabsFor(workspaces, [], { id: 12, name: "12" }).tabs.map((t) => t.slot), [2])
 })
 
+test("home's tabs are just numbers until named, by workspace id", () => {
+  const workspaces = [{ id: 2, name: "2" }, { id: 3, name: "3" }, { id: 13, name: "13" }]
+  const windows = [{ workspaceId: 3, address: "0x1", windowClass: "firefox", focus: 0 }]
+  const names = { 2: "notes", 13: "music" }
+  const tabs = tabsFor(workspaces, windows, { id: 3, name: "3" }, {}, names)
+  assert.deepEqual(tabs.tabs.map((t) => [t.slot, t.label, t.named]), [
+    [2, "notes", true],
+    [3, "", false],
+  ])
+  const other = tabsFor(workspaces, [], { id: 13, name: "13" }, {}, names)
+  assert.deepEqual(other.tabs.map((t) => [t.slot, t.label]), [[3, "music"]])
+})
+
 test("reads Hyprland's window motion", () => {
   const curves = [{ name: "easeOutQuint", X0: 0.23, Y0: 1, X1: 0.32, Y1: 1 }]
   const animations = (overrides) => JSON.stringify([

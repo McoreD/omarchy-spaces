@@ -1031,8 +1031,44 @@ fn rename_names_a_tab_until_cleared_or_closed() {
 
     let err = env.fails(&["rename", "s1:4", "x"]);
     assert!(err.contains("'ren' has no tab 4"), "{err}");
-    let err = env.fails(&["rename", "home:1", "x"]);
-    assert!(err.contains("its tabs can't be named"), "{err}");
+}
+
+#[test]
+fn rename_names_home_tabs_by_workspace() {
+    let env = Env::new();
+    let mail = env.add_window("3");
+    let other = env.add_window("13");
+    env.set_active("3");
+    let tabs = |env: &Env| env.ls_json()[0]["tabs"].clone();
+
+    // From home, tab 3 is the focused monitor's: workspace 3, not 13.
+    assert_eq!(
+        env.ok(&["rename", "home:3", "mail"]),
+        "Named tab 3 'mail'\n"
+    );
+    assert_eq!(tabs(&env), serde_json::json!({ "3": "mail" }));
+
+    // From a space, the tab 3 meant is ambiguous with two monitors.
+    env.add_window("s1:1");
+    env.set_active("s1:1");
+    let err = env.fails(&["rename", "home:3", "x"]);
+    assert!(err.contains("more than one monitor"), "{err}");
+    env.close_window(&other);
+    env.ok(&["rename", "home:3", "inbox"]);
+    assert_eq!(tabs(&env), serde_json::json!({ "3": "inbox" }));
+
+    assert_eq!(
+        env.ok(&["rename", "home:3", ""]),
+        "Tab 3 shows just its number again\n"
+    );
+    assert_eq!(tabs(&env), serde_json::json!({}));
+    let err = env.fails(&["rename", "home:5", "x"]);
+    assert!(err.contains("'home' has no tab 5"), "{err}");
+
+    // The name goes with its workspace, once Hyprland drops it.
+    env.ok(&["rename", "home:3", "mail"]);
+    env.close_window(&mail);
+    assert_eq!(tabs(&env), serde_json::json!({}));
 }
 
 #[test]
