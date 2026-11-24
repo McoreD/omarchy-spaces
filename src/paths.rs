@@ -26,6 +26,22 @@ pub fn state_dir() -> PathBuf {
     xdg("XDG_STATE_HOME", ".local/state").join("omarchy-spaces")
 }
 
+/// `$XDG_RUNTIME_DIR/omarchy-spaces/`: per-session files (built-in sounds,
+/// live agent statuses), gone with the session.
+pub fn runtime_dir() -> PathBuf {
+    env::var_os("XDG_RUNTIME_DIR")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(env::temp_dir)
+        .join("omarchy-spaces")
+}
+
+/// `$XDG_RUNTIME_DIR/omarchy-spaces/status/`: one file per window that
+/// reported an agent status through `space status`.
+pub fn status_dir() -> PathBuf {
+    runtime_dir().join("status")
+}
+
 /// A path as written in the config, `~/` meaning the home folder.
 pub fn expand(path: &str) -> PathBuf {
     match path.strip_prefix("~/") {

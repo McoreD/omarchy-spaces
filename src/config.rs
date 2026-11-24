@@ -22,8 +22,9 @@ pub const DEFAULT_PICKERS: &[(&str, &str)] = &[
 
 /// Opens a terminal in `$SPACES_DIR` the way Omarchy's `super+enter`
 /// does (`omarchy-launch-terminal`), so it is the terminal you chose in
-/// Omarchy. Outside a uwsm session, without the app scope. It runs
-/// `space shell`, a shell in herdr-core when it's installed (`shell.rs`).
+/// Omarchy. Outside a uwsm session, without the app scope. When herdr-core
+/// is enabled (or `hc` is on `PATH`), it runs `space shell` (`shell.rs`);
+/// otherwise it opens a plain terminal directly.
 const OMARCHY_TERMINAL: &str = "exec setsid uwsm-app -- xdg-terminal-exec --dir=\"$SPACES_DIR\"";
 const PLAIN_TERMINAL: &str = "exec xdg-terminal-exec --dir=\"$SPACES_DIR\"";
 
@@ -44,6 +45,9 @@ pub struct Config {
     /// How to open a terminal: a command for `sh -c`, run in the folder with
     /// `SPACES_DIR` set to it.
     pub terminal: Option<String>,
+    /// Whether terminals Spaces opens run in herdr-core (`space shell`).
+    /// When unset, uses herdr-core only when `hc` is on `PATH`.
+    pub herdr_core: Option<bool>,
     /// The sounds when an agent needs you (`sound.rs`).
     pub sounds: Option<Sounds>,
 }
@@ -85,12 +89,25 @@ impl Config {
         }
     }
 
+    /// Whether default terminals run in herdr-core (`space shell`).
+    pub fn use_herdr_core(&self) -> bool {
+        self.herdr_core.unwrap_or_else(|| on_path("hc"))
+    }
+
     /// The configured terminal command, or Omarchy's way.
     pub fn terminal(&self) -> String {
-        match &self.terminal {
-            Some(terminal) => terminal.clone(),
-            None if on_path("uwsm-app") => format!("{OMARCHY_TERMINAL} {}", space_shell()),
-            None => format!("{PLAIN_TERMINAL} {}", space_shell()),
+        if let Some(terminal) = &self.terminal {
+            return terminal.clone();
+        }
+        let base = if on_path("uwsm-app") {
+            OMARCHY_TERMINAL
+        } else {
+            PLAIN_TERMINAL
+        };
+        if self.use_herdr_core() {
+            format!("{base} {}", space_shell())
+        } else {
+            base.to_string()
         }
     }
 
@@ -121,11 +138,29 @@ mod tests {
         let config = Config::load_from(&dir.path().join("config.toml")).unwrap();
         assert_eq!(config.picker, None);
         assert!(config.terminal().contains("xdg-terminal-exec"));
-        assert!(
+        assert_eq!(
             config.terminal().ends_with("' shell"),
+            on_path("hc"),
             "{}",
             config.terminal()
         );
+    }
+
+    #[test]
+    fn herdr_core_setting_controls_shell_wrapper() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        fs::write(&path, "herdr_core = false\n").unwrap();
+        let config = Config::load_from(&path).unwrap();
+        assert!(!config.use_herdr_core());
+        assert!(config.terminal().contains("xdg-terminal-exec"));
+        assert!(!config.terminal().ends_with("' shell"), "{}", config.terminal());
+
+        fs::write(&path, "herdr_core = true\n").unwrap();
+        let config = Config::load_from(&path).unwrap();
+        assert!(config.use_herdr_core());
+        assert!(config.terminal().ends_with("' shell"), "{}", config.terminal());
     }
 
     #[test]

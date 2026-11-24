@@ -37,7 +37,7 @@ use crate::hypr::Hypr;
 use crate::paths;
 use crate::spaces::Store;
 use crate::state::Last;
-use crate::{sound, terminal};
+use crate::{sound, status, terminal};
 
 /// How often the active space's terminals' shells are read.
 const FAST: Duration = Duration::from_millis(200);
@@ -69,6 +69,7 @@ pub fn watch(sounds: bool) -> Result<()> {
         let _ = to_main.send(Message::HyprlandGone);
     });
     let state_dir = paths::state_dir();
+    let status_dir = paths::status_dir();
 
     let mut snapshot = commands::snapshot(&hypr)?;
     let mut shells: HashMap<u32, Option<terminal::Shell>> = HashMap::new();
@@ -81,11 +82,12 @@ pub fn watch(sounds: bool) -> Result<()> {
     // Core's terminals, while subscribed to it.
     let mut core: Option<core::Terminals> = None;
     let mut subscribed = false;
-    // The turn each core terminal was on when you last looked at it, until
-    // its label says so too.
+    // The turn each agent was on when you last looked at it, until its
+    // backing store (core label or status file) says so too.
     let mut seen: HashMap<String, u64> = HashMap::new();
-    // What each core terminal's agent last reported, to ring on a change.
-    let mut words: HashMap<String, String> = HashMap::new();
+    // What each agent last reported `(word, turn)`, to ring on a change.
+    let mut words: HashMap<String, (String, u64)> = HashMap::new();
+    let mut initial = true;
     let mut config = Config::load().unwrap_or_default();
     let mut config_seen = stamp(&paths::config_file());
     let mut focused = hypr.active_window_address()?;
@@ -134,40 +136,74 @@ pub fn watch(sounds: bool) -> Result<()> {
             config_seen = configured;
         }
 
-        let mut live = commands::live_from(&snapshot, |window| {
-            shells.get(&window.pid).cloned().flatten()
-        });
+        let live_addresses: HashSet<String> = snapshot
+            .space_windows
+            .iter()
+            .map(|w| w.address.clone())
+            .collect();
+        status::prune_reports(&status_dir, &live_addresses);
+        let reports = status::load_reports(&status_dir);
+
+        let mut live = commands::live_from(
+            &snapshot,
+            |window| shells.get(&window.pid).cloned().flatten(),
+            &reports,
+        );
         // The agent in the window you're looking at is seen, once a turn.
         if let Some(focused) = &focused {
             for (window, agent) in live.agents() {
-                if window == focused
-                    && !agent.seen()
-                    && seen.get(&agent.address) != Some(&agent.turn)
-                {
-                    seen.insert(agent.address.clone(), agent.turn);
-                    if let Err(e) = core::mark_seen(&agent.address, agent.turn) {
+                let key = agent.key();
+                if window == focused && !agent.seen() && seen.get(&key) != Some(&agent.turn) {
+                    seen.insert(key, agent.turn);
+                    let result = match &agent.source {
+                        terminal::AgentSource::Core(address) => {
+                            core::mark_seen(address, agent.turn)
+                        }
+                        terminal::AgentSource::Native(address) => {
+                            status::mark_seen(&status_dir, address, agent.turn)
+                        }
+                    };
+                    if let Err(e) = result {
                         eprintln!("space: warning: {e:#}");
                     }
                 }
             }
         }
-        // A change in what an agent reports may call for a sound. One seen
-        // for the first time doesn't: it may have been waiting since before.
+        // A change in what an agent reports may call for a sound. Statuses
+        // already present when `watch` starts (or when core first connects)
+        // don't ring; fresh native `space status` reports while running do.
         for (window, agent) in live.agents() {
-            let before = words.insert(agent.address.clone(), agent.word.clone());
+            let key = agent.key();
+            let before = words.insert(key, (agent.word.clone(), agent.turn));
+            if !sounds {
+                continue;
+            }
             let looking = focused.as_deref() == Some(window);
-            if let Some(before) = before
-                && sounds
-                && let Some(alert) = sound::alert(&before, &agent.word, looking)
-            {
+            let alert = match before {
+                Some((prev_word, prev_turn)) => sound::alert(&prev_word, &agent.word, looking)
+                    .or_else(|| {
+                        (agent.is_native()
+                            && agent.word == "done"
+                            && agent.turn > prev_turn
+                            && !looking)
+                            .then_some(status::Status::Done)
+                    }),
+                None if !initial && agent.is_native() => sound::alert("", &agent.word, looking)
+                    .or_else(|| {
+                        (agent.word == "done" && !looking && !agent.seen())
+                            .then_some(status::Status::Done)
+                    }),
+                None => None,
+            };
+            if let Some(alert) = alert {
                 sound::play(&config, alert);
             }
         }
-        if let Some(core) = &core {
-            seen.retain(|address, _| core.get(address).is_some());
-            words.retain(|address, _| core.get(address).is_some());
-        }
-        live.set_statuses(|agent| agent.seen() || seen.get(&agent.address) == Some(&agent.turn));
+        initial = false;
+        let live_keys: HashSet<String> = live.agents().map(|(_, a)| a.key()).collect();
+        seen.retain(|key, _| live_keys.contains(key));
+        words.retain(|key, _| live_keys.contains(key));
+        live.set_statuses(|agent| agent.seen() || seen.get(&agent.key()) == Some(&agent.turn));
 
         let rows = commands::rows(&mut store, Some(&live), &last);
         if let Err(e) = store.save() {

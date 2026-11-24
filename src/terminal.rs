@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 
-use crate::{core, paths};
+use crate::{core, paths, status};
 
 /// What the shell of a terminal window is doing: the folder it's in, and
 /// the program it's running, unless it's at its prompt.
@@ -19,30 +19,58 @@ pub struct Shell {
     /// The command running in the terminal's foreground (`claude`, `nvim`),
     /// or `None` at the prompt.
     pub program: Option<String>,
-    /// The herdr-core terminal it is, which knows what its agent says it's
-    /// doing. `None` for a shell outside core.
+    /// What an agent in this terminal last reported, from herdr-core or
+    /// `space status`. `None` when nothing has reported.
     pub agent: Option<Agent>,
 }
 
-/// What a core terminal's program last reported through OSC 7501.
+/// Where an agent's status came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentSource {
+    /// A herdr-core terminal, by its core address (`t7`).
+    Core(String),
+    /// A native terminal reporting through `space status`, by its Hyprland
+    /// window address (`0x55a4`).
+    Native(String),
+}
+
+/// What a terminal's agent last reported (OSC 7501 in core, or `space status`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Agent {
-    /// The terminal's address in core: `t7`.
-    pub address: String,
-    /// The program's word: idle, working, done, blocked, error; empty when
-    /// it reports nothing.
+    pub source: AgentSource,
+    /// The program's word: idle, working, done, waiting, blocked, error; empty
+    /// when it reports nothing.
     pub word: String,
     /// Goes up each time it stops working, so a `done` seen can be told
     /// from the next.
     pub turn: u64,
-    /// The last turn someone looked at, from its `herdr.seen` label; `None`
-    /// when no client has said.
+    /// The last turn someone looked at; `None` when no client has said.
     pub seen_turn: Option<u64>,
 }
 
 impl Agent {
-    /// Whether someone has looked at it since its turn ended, as its label
-    /// says.
+    pub fn from_native(window: &str, report: &status::Report) -> Self {
+        Self {
+            source: AgentSource::Native(window.to_string()),
+            word: report.word.clone(),
+            turn: report.turn,
+            seen_turn: report.seen_turn,
+        }
+    }
+
+    /// Unique key for tracking this agent across updates in `space watch`.
+    pub fn key(&self) -> String {
+        match &self.source {
+            AgentSource::Core(address) => format!("core:{address}"),
+            AgentSource::Native(window) => format!("native:{window}"),
+        }
+    }
+
+    pub fn is_native(&self) -> bool {
+        matches!(self.source, AgentSource::Native(_))
+    }
+
+    /// Whether someone has looked at it since its turn ended.
     pub fn seen(&self) -> bool {
         self.seen_turn.is_some_and(|seen| seen >= self.turn)
     }
@@ -93,7 +121,7 @@ fn from_core(terminal: &core::Terminal) -> Shell {
         cwd,
         program,
         agent: Some(Agent {
-            address: terminal.address.clone(),
+            source: AgentSource::Core(terminal.address.clone()),
             word: terminal
                 .status
                 .as_ref()
@@ -154,6 +182,7 @@ pub fn shell(pid: u32) -> Option<Shell> {
 
 /// The fields of `/proc/<pid>/stat` that say how a process sits on its tty.
 struct Stat {
+    ppid: i64,
     pgrp: i64,
     session: i64,
     tty: i64,
@@ -173,16 +202,59 @@ impl Stat {
             .take(5)
             .map(|f| f.parse().ok())
             .collect::<Option<_>>()?;
-        let &[_ppid, pgrp, session, tty, tpgid] = fields.as_slice() else {
+        let &[ppid, pgrp, session, tty, tpgid] = fields.as_slice() else {
             return None;
         };
         Some(Self {
+            ppid,
             pgrp,
             session,
             tty,
             tpgid,
         })
     }
+}
+
+/// `pid` and its ancestors up the process tree, stopping at init.
+pub fn ancestors(start: u32) -> Vec<u32> {
+    let mut chain = Vec::new();
+    let mut current = start;
+    for _ in 0..64 {
+        if current <= 1 || chain.contains(&current) {
+            break;
+        }
+        chain.push(current);
+        let Some(stat) = Stat::read(current) else {
+            break;
+        };
+        let Ok(parent) = u32::try_from(stat.ppid) else {
+            break;
+        };
+        current = parent;
+    }
+    chain
+}
+
+/// The agent process that spawned `space status`, sitting directly under the
+/// terminal's login shell in `ancestors` (e.g. `terminal -> zsh -> claude ->
+/// sh -> space` yields `claude`). Returns `None` when `space status` was run
+/// directly from the shell prompt itself.
+pub fn owner_pid(ancestors: &[u32], window_pid: u32) -> Option<u32> {
+    let end = ancestors.iter().position(|&pid| pid == window_pid)?;
+    let inside = &ancestors[..end];
+    let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+    let shell_index = inside
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, &pid)| {
+            let stat = Stat::read(pid)?;
+            is_shell(pid, &stat, &shells).then_some(i)
+        })?;
+    // Index 0 is `space` itself; index 1 would mean `space` is the shell's
+    // direct child (run from the prompt). Anything above that has an agent
+    // process sitting at `shell_index - 1`.
+    (shell_index >= 2).then(|| inside[shell_index - 1])
 }
 
 fn is_shell(pid: u32, stat: &Stat, shells: &str) -> bool {
@@ -310,7 +382,7 @@ mod tests {
     #[test]
     fn seen_once_someone_looked_at_its_last_turn() {
         let agent = |turn, seen_turn| Agent {
-            address: "t1".into(),
+            source: AgentSource::Core("t1".into()),
             word: "done".into(),
             turn,
             seen_turn,

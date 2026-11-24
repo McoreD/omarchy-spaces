@@ -1525,14 +1525,247 @@ fn shell_runs_in_core_and_ends_with_its_window() {
 #[test]
 fn shell_without_core_runs_your_own() {
     let env = Env::new();
+    // Without `hc` on PATH: runs your shell quietly, no stderr noise.
     let out = env
         .command(&["shell"])
+        .env("PATH", "/usr/bin:/bin")
+        .env("SHELL", "/usr/bin/true")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let has_hc_in_usr = Path::new("/usr/bin/hc").is_file() || Path::new("/bin/hc").is_file();
+    if !has_hc_in_usr {
+        assert!(
+            out.stderr.is_empty(),
+            "unexpected stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    // With `hc` on PATH but core unreachable: warns and falls back to own shell.
+    let bin = env.root.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    fs::write(bin.join("hc"), "#!/bin/sh\nexit 1\n").unwrap();
+    fs::set_permissions(
+        bin.join("hc"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let out = env
+        .command(&["shell"])
+        .env("PATH", bin)
         .env("SHELL", "/usr/bin/true")
         .stdin(std::process::Stdio::null())
         .output()
         .unwrap();
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("plain shell"));
+}
+
+#[test]
+fn status_reports_agent_state_without_herdr_core() {
+    let env = Env::new();
+    let app = env.dir("app");
+    let window = env.add_terminal("s1:1", &app);
+    env.set_active("1");
+
+    assert_eq!(env.ls_json()[1]["status"], Value::Null);
+
+    for (arg, shown) in [
+        ("working", json!("working")),
+        ("waiting", json!("waiting")),
+        ("blocked", json!("waiting")),
+        ("error", json!("waiting")),
+        ("done", json!("done")),
+        ("idle", Value::Null),
+    ] {
+        env.ok(&["status", arg, "--window", &window]);
+        let rows = env.ls_json();
+        assert_eq!(rows[1]["status"], shown, "{arg}");
+        assert_eq!(rows[1]["terminals"][0]["status"], shown, "{arg}");
+    }
+
+    // `SPACES_WINDOW` works without passing `--window`, and `clear` clears it.
+    let out = env
+        .command(&["status", "working"])
+        .env("SPACES_WINDOW", &window)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(env.ls_json()[1]["status"], "working");
+
+    let out = env
+        .command(&["status", "clear"])
+        .env("SPACES_WINDOW", &window)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(env.ls_json()[1]["status"], Value::Null);
+
+    // Outside Hyprland, auto-detecting hooks exit cleanly without failing.
+    let out = env
+        .command(&["status", "working"])
+        .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // Unknown status words still fail clearly.
+    let err = env.fails(&["status", "bogus", "--window", &window]);
+    assert!(err.contains("unknown status"), "{err}");
+}
+
+#[test]
+fn watch_shows_native_status_clears_done_on_focus_and_prunes() {
+    use std::time::Duration;
+    let env = Env::new();
+    let app = env.dir("app");
+    let agent = env.add_terminal("s1:1", &app);
+    let other = env.add_terminal("s1:2", &app);
+    env.add_window("1");
+    env.set_active("1");
+
+    let watch = Watch::start(&env);
+    let status = |rows: &[Value]| rows[1]["status"].clone();
+    assert_eq!(
+        status(&watch.next_rows(Duration::from_secs(3))),
+        Value::Null
+    );
+    watch.joined(&env);
+
+    env.ok(&["status", "working", "--window", &agent]);
+    assert_eq!(status(&watch.next_rows(Duration::from_secs(1))), "working");
+
+    env.ok(&["status", "done", "--window", &agent]);
+    env.ok(&["status", "done", "--window", &other]);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let rows = watch.next_rows(Duration::from_secs(2));
+        if rows[1]["terminals"][0]["status"] == "done"
+            && rows[1]["terminals"][1]["status"] == "done"
+        {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "never both done");
+    }
+
+    // Focusing the first agent clears its `done`, persists it for `ls`, and
+    // leaves the second agent's `done` alone.
+    env.event(&format!(
+        "activewindowv2>>{}",
+        agent.trim_start_matches("0x")
+    ));
+    let rows = watch.next_rows(Duration::from_secs(1));
+    assert_eq!(rows[1]["terminals"][0]["status"], Value::Null);
+    assert_eq!(rows[1]["terminals"][1]["status"], "done");
+    assert_eq!(env.ls_json()[1]["terminals"][0]["status"], Value::Null);
+
+    // Its next turn ends while you're elsewhere: `done` again.
+    env.event("activewindowv2>>");
+    env.ok(&["status", "working", "--window", &agent]);
+    assert_eq!(
+        watch.next_rows(Duration::from_secs(1))[1]["terminals"][0]["status"],
+        "working"
+    );
+    env.ok(&["status", "done", "--window", &agent]);
+    assert_eq!(
+        watch.next_rows(Duration::from_secs(1))[1]["terminals"][0]["status"],
+        "done"
+    );
+
+    // Closing a window prunes its status file.
+    let status_file = env
+        .root
+        .path()
+        .join(format!("run/omarchy-spaces/status/{other}.json"));
+    assert!(status_file.exists());
+    env.close_window(&other);
+    env.event(&format!("closewindow>>{}", other.trim_start_matches("0x")));
+    let _ = watch.next_rows(Duration::from_secs(1));
+    assert!(!status_file.exists());
+}
+
+#[test]
+fn watch_rings_for_native_status_without_herdr_core() {
+    use std::time::Duration;
+    let env = Env::new();
+    let bin = env.root.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let played = env.root.path().join("played");
+    fs::write(
+        bin.join("pw-play"),
+        format!("#!/bin/sh\necho \"$1\" >> '{}'\n", played.display()),
+    )
+    .unwrap();
+    fs::set_permissions(
+        bin.join("pw-play"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    env.write_config("[sounds]\ndone = \"/s/done.oga\"\n");
+    let heard = || {
+        thread::sleep(Duration::from_millis(300));
+        fs::read_to_string(&played)
+            .unwrap_or_default()
+            .lines()
+            .map(String::from)
+            .collect::<Vec<_>>()
+    };
+
+    let app = env.dir("app");
+    let agent = env.add_terminal("s1:1", &app);
+    // Waiting since before `watch` started: no sound for that.
+    env.ok(&["status", "waiting", "--window", &agent]);
+    env.add_window("1");
+    env.set_active("1");
+
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let mut command = env.command(&["watch", "--sounds"]);
+    command.env("PATH", path);
+    let watch = Watch::run(command);
+    assert_eq!(
+        watch.next_rows(Duration::from_secs(3))[1]["status"],
+        "waiting"
+    );
+    watch.joined(&env);
+    assert!(heard().is_empty());
+
+    let set = |state: &str| {
+        env.ok(&["status", state, "--window", &agent]);
+        let _ = watch.next_rows(Duration::from_secs(1));
+    };
+    set("working");
+    set("waiting");
+    let request = env.root.path().join("run/omarchy-spaces/request.mp3");
+    assert_eq!(heard(), [request.display().to_string()]);
+
+    set("working");
+    set("done");
+    assert_eq!(heard().len(), 2);
+    assert_eq!(heard()[1], "/s/done.oga");
+
+    // Finishing while you're looking at the window: silent.
+    env.event(&format!(
+        "activewindowv2>>{}",
+        agent.trim_start_matches("0x")
+    ));
+    let _ = watch.next_rows(Duration::from_secs(1));
+    set("working");
+    set("done");
+    assert_eq!(heard().len(), 2);
+
+    // One-shot `done` while unfocused (e.g. Codex notify or `cmd && space status done`): rings.
+    env.event("activewindowv2>>");
+    env.ok(&["status", "done", "--window", &agent]);
+    let _ = watch.next_rows(Duration::from_secs(1));
+    assert_eq!(heard().len(), 3);
+    assert_eq!(heard()[2], "/s/done.oga");
+
+    // Clearing a working agent goes quiet without ringing `done`.
+    set("working");
+    set("clear");
+    assert_eq!(heard().len(), 3);
 }
 
 #[test]

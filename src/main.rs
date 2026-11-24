@@ -69,6 +69,18 @@ enum Cmd {
     Close { space: Option<String> },
     /// Open a terminal in the folder you are in, or the active space's.
     Terminal,
+    /// Report what an agent in this terminal is doing: working, waiting, done
+    /// or idle (clear).
+    Status {
+        /// working, waiting (or blocked/error), done, or idle (clear).
+        state: String,
+        /// Report for this Hyprland window address instead of the current terminal.
+        #[arg(long)]
+        window: Option<String>,
+        /// Report for the Hyprland window owning this process instead of this one.
+        #[arg(long)]
+        pid: Option<u32>,
+    },
     /// Print the spaces as `ls --json` does, a line each time they change.
     Watch {
         /// Play a sound when an agent needs you or finishes unseen.
@@ -143,8 +155,10 @@ fn main() -> ExitCode {
     // notification.
     // `watch` ends whenever Hyprland restarts, and the plugin restarts it: not
     // worth a notification.
-    let unseen = !matches!(cli.command, Cmd::Ls { .. } | Cmd::Watch { .. } | Cmd::Shell)
-        && !std::io::stderr().is_terminal();
+    let unseen = !matches!(
+        cli.command,
+        Cmd::Ls { .. } | Cmd::Watch { .. } | Cmd::Shell | Cmd::Status { .. }
+    ) && !std::io::stderr().is_terminal();
 
     let result = match cli.command {
         Cmd::New { dir } => commands::new(dir),
@@ -163,6 +177,7 @@ fn main() -> ExitCode {
         Cmd::Reorder { space, position } => commands::reorder(space, position),
         Cmd::Close { space } => commands::close(space),
         Cmd::Terminal => commands::open_terminal(),
+        Cmd::Status { state, window, pid } => commands::status(&state, window, pid),
         Cmd::Watch { sounds } => watch::watch(sounds),
         Cmd::Shell => shell::shell(),
         Cmd::Emptied { workspace } => commands::emptied(&workspace),

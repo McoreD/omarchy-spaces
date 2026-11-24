@@ -26,16 +26,20 @@ hc attach "$1"
 end "$1""#;
 
 pub fn shell() -> Result<()> {
-    let error = match core_shell() {
-        Ok(address) => Command::new("sh")
-            .arg("-c")
-            .arg(ATTACH)
-            .arg("omarchy-spaces-shell")
-            .arg(address)
-            .exec(),
-        Err(e) => {
-            eprintln!("space: no herdr-core, so a plain shell: {e:#}");
-            own_shell()
+    let error = if !config::on_path("hc") {
+        own_shell()
+    } else {
+        match core_shell() {
+            Ok(address) => Command::new("sh")
+                .arg("-c")
+                .arg(ATTACH)
+                .arg("omarchy-spaces-shell")
+                .arg(address)
+                .exec(),
+            Err(e) => {
+                eprintln!("space: no herdr-core, so a plain shell: {e:#}");
+                own_shell()
+            }
         }
     };
     Err(error).context("can't start a shell")

@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::config::{self, Config};
+use crate::paths;
 use crate::status::Status;
 
 const DONE: &[u8] = include_bytes!("../assets/sounds/done.mp3");
@@ -25,12 +26,12 @@ const PLAYERS: &[(&str, &[&str])] = &[
     ("mpv", &["--no-video", "--really-quiet"]),
 ];
 
-/// Which sound a change of an agent's OSC 7501 word calls for, as Herdr
+/// Which sound a change of an agent's status word calls for, as Herdr
 /// decides: starting to need you always does; finishing does only when
 /// you're not `looking` at it.
 pub fn alert(before: &str, now: &str, looking: bool) -> Option<Status> {
-    let needs_you = |word: &str| matches!(word, "blocked" | "error");
-    let busy = |word: &str| matches!(word, "working" | "blocked" | "error");
+    let needs_you = |word: &str| matches!(word, "waiting" | "blocked" | "error");
+    let busy = |word: &str| matches!(word, "working" | "waiting" | "blocked" | "error");
     if needs_you(now) && !needs_you(before) {
         Some(Status::Waiting)
     } else if busy(before) && !now.is_empty() && !busy(now) && !looking {
@@ -54,7 +55,7 @@ pub fn play(config: &Config, alert: Status) {
     };
     let file = match chosen {
         Some(file) => crate::paths::expand(&file),
-        None => match write_bundled(&sounds_dir(), name, bundled) {
+        None => match write_bundled(&paths::runtime_dir(), name, bundled) {
             Ok(file) => file,
             Err(e) => {
                 eprintln!("space: warning: can't write the {name} sound: {e}");
@@ -80,16 +81,6 @@ pub fn play(config: &Config, alert: Status) {
         }
         Err(e) => eprintln!("space: warning: can't play {}: {e}", file.display()),
     }
-}
-
-/// Where the built-in sounds are written: the runtime folder, which goes
-/// with the session.
-fn sounds_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .filter(|d| !d.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("omarchy-spaces")
 }
 
 /// A built-in sound as a file in `dir`, written unless it's there already
@@ -127,13 +118,20 @@ mod tests {
     #[test]
     fn rings_as_herdr_does() {
         assert_eq!(
+            alert("working", "waiting", true),
+            Some(Status::Waiting),
+            "even looking"
+        );
+        assert_eq!(
             alert("working", "blocked", true),
             Some(Status::Waiting),
             "even looking"
         );
         assert_eq!(alert("", "error", false), Some(Status::Waiting));
         assert_eq!(alert("blocked", "error", false), None, "still needs you");
+        assert_eq!(alert("waiting", "blocked", false), None, "still needs you");
         assert_eq!(alert("working", "done", false), Some(Status::Done));
+        assert_eq!(alert("waiting", "done", false), Some(Status::Done));
         assert_eq!(alert("blocked", "idle", false), Some(Status::Done));
         assert_eq!(alert("working", "done", true), None, "you saw it");
         assert_eq!(alert("idle", "done", false), None, "it wasn't working");

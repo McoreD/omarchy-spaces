@@ -10,7 +10,7 @@ The spaces have their own column down the left of the screen, and the active spa
 
 A tab is named after its most recently focused window: a terminal by what it's running (`claude`, `nvim`), or by the folder it's in when it's at its prompt, and any other app by its name. Name a tab yourself, by double-clicking it or with a key bound to `renameTab` (see Keys), and it keeps that name whatever runs in it, until you clear it with an empty name or close the tab. `home`'s tabs show just their numbers, as Omarchy's workspaces do, until you name one; each monitor's are named on their own.
 
-A dot shows which spaces need you. An agent in a terminal says what it's doing, and its tab and its space's badge show it: red when it's waiting for you (a permission prompt, a question, an error), green when it finished while you were elsewhere, and a breathing dot in the text's colour while it works. A space shows whichever of its agents most needs you, and green clears once you focus the agent's window. A sound plays when an agent starts waiting for you, and when one finishes while you aren't looking at its window: Herdr's own (`assets/sounds/`), unless `[sounds]` in the config names others or sets `enabled = false`. This needs [herdr-core](https://github.com/herdrdev/herdr-core) (`hc`): the terminals Spaces opens then run in it, and any agent that reports its status through OSC 7501, as Claude Code, opencode, pi and Kimi do, shows here. Without it, terminals are plain and have no dots.
+A dot shows which spaces need you. An agent in a terminal says what it's doing, and its tab and its space's badge show it: red when it's waiting for you (a permission prompt, a question, an error), green when it finished while you were elsewhere, and a breathing dot in the text's colour while it works. A space shows whichever of its agents most needs you, and green clears once you focus the agent's window. A sound plays when an agent starts waiting for you, and when one finishes while you aren't looking at its window: Herdr's own (`assets/sounds/`), unless `[sounds]` in the config names others or sets `enabled = false`. Any native terminal works out of the box through `space status` (see Agent status below); if [herdr-core](https://github.com/herdrdev/herdr-core) (`hc`) is installed, Spaces can also read OSC 7501 status from it automatically.
 
 Click `+` at the end of the list to open a new space with a terminal in the folder you are in, or home if you aren't in one: you go there once the terminal is up, so you never see the space empty. A new tab, from the `+` after the tabs or `space ws new`, opens the same way, with a terminal in the space's folder. Right-click a space to rename it, change its icon or close it. Drag a space up or down to move it; a press has to move a good part of a row before it becomes a drag, so clicks stay clicks. `home` stays first. The sidebar takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
 
@@ -21,7 +21,32 @@ just install   # build the space CLI into ~/.cargo/bin
 just setup     # add the tabs to the bar, the sidebar and the Hyprland hooks
 ```
 
-For agents' status, install herdr-core as its README says, so `hc` is on your PATH. Spaces starts its core when it isn't running.
+Spaces opens plain Omarchy terminals (`xdg-terminal-exec`) by default. To get agent status dots and sounds in any native terminal, wire up your agent's hooks to `space status` (below). If you prefer [herdr-core](https://github.com/herdrdev/herdr-core) (`hc`), install it on your `PATH` and Spaces uses it automatically (set `herdr_core = false` in `config.toml` to keep plain terminals even when `hc` is installed).
+
+## Agent status
+
+`space status <working|waiting|done|idle>` reports status for the terminal window it runs in (walking the process tree up to its Hyprland window). It exits quietly outside Hyprland, so hooks stay safe over SSH or in headless runs.
+
+**Claude Code** (`~/.claude/settings.json`):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "space status working" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "space status waiting" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "space status done" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "space status idle" }] }]
+  }
+}
+```
+
+**Codex** (`~/.codex/config.toml`):
+
+```toml
+notify = ["space", "status", "done"]
+```
+
+It also works for plain shell commands — e.g. `cargo test && space status done` lights up the tab green and rings when the build finishes while you're in another space. If an agent is killed (`Ctrl-C`) while `working` or `waiting`, Spaces notices its process exited and clears the dot automatically.
 
 ### Toggle in place of the menu
 
@@ -86,11 +111,12 @@ space go [space]             # go to a space where you left it
 space next / space prev      # the space below or above the active one, wrapping around
 space ls [--json]            # list spaces with window counts
 space rename [space] <name>  # name a space, the active one by default; "" for its folder's name
-space rename <space>:<n> <name>  # name a tab, as s1:2 or ren:2; "" for its window's name
+space rename <space>:<n> <name>  # name a tab, as s1:2 or work:2; "" for its window's name
 space icon [space] <icon>    # a glyph or emoji for a space's badge, the active one by default; "" for its letters
 space reorder <space> <n>    # move a space to position n in the sidebar, 1 being the first below home
 space close [space]          # close a space's windows, the active one by default
 space terminal               # a terminal in the folder you are in, or the space's
+space status <working|waiting|done|idle> [--window <addr>] [--pid <pid>]  # report agent status for this terminal
 space watch [--sounds]       # print the spaces as ls --json does, a line each time they change; --sounds also rings for agents
 space send <space|next|prev> [--silent]  # the window to another space, on the tab you left it on
 space ws <n|new|next|prev>
@@ -99,14 +125,14 @@ space move <n> [--silent]
 
 A space can be given by what it's called or by its id (`s1`, as `space ls` shows). `space close` asks each app to close, as `super+w` does, so an app can still stop to save.
 
-A terminal Spaces opens runs `space shell`: a shell in herdr-core, in the terminal's folder and with its environment, labelled with the window's process so Spaces can tell which window shows it, and attached to the window. The window is the terminal: closing it, or the shell exiting, ends both, and `ctrl+\` (`hc attach`'s detach) closes it too. Inside, `TERM` is core's (`xterm-256color`), not your terminal app's. Without core, `space shell` runs your own shell.
+When `herdr-core` (`hc`) is installed and enabled (`herdr_core` unset or `true`), terminals Spaces opens run `space shell`: a shell in herdr-core, in the terminal's folder and with its environment, labelled with the window's process so Spaces can tell which window shows it, and attached to the window. The window is the terminal: closing it, or the shell exiting, ends both, and `ctrl+\` (`hc attach`'s detach) closes it too. Inside, `TERM` is core's (`xterm-256color`), not your terminal app's. Without `hc` (or with `herdr_core = false`), Spaces opens your native terminal directly with no wrapper.
 
 ## How it fits together
 
-- `src/` is the `space` CLI, in Rust. It keeps no state about windows: it asks Hyprland over its socket, then dispatches. A terminal's folder, what it runs and its agent's status come from herdr-core, over its socket (`core.rs`), for terminals running in it; other terminals' folders come from their shells, in `/proc`, as Omarchy's `omarchy-cmd-terminal-cwd` does.
+- `src/` is the `space` CLI, in Rust. It keeps no state about windows: it asks Hyprland over its socket, then dispatches. Terminal folders and foreground programs come from their shells in `/proc`, as Omarchy's `omarchy-cmd-terminal-cwd` does (or from herdr-core over its socket in `core.rs` for terminals running in it). Native agent statuses from `space status` live as per-window files under `$XDG_RUNTIME_DIR/omarchy-spaces/status/` and are pruned automatically as windows close or agents exit.
 - `omarchy/` is the Omarchy shell plugin (QML): the tabs as a bar widget (`TabsWidget.qml`), and the sidebar, which `Base.qml` draws under the windows. Their logic is in `Tabs.qml`, `Sidebar.qml`, `SidebarList.qml` and `Spaces.mjs`. Both read the spaces from one `space watch` that the plugin's service runs (`Watch.qml`) and restarts when it ends, as it does when Hyprland restarts or `space` is reinstalled. It reads Hyprland again only when Hyprland's events say something changed. It follows herdr-core's events for its terminals. A shell outside core changing folder or starting a program sends no event, so it reads the active space's other terminals' shells five times a second, the rest every two seconds, and all of them when a window's title changes, as terminals retitle themselves on `cd` and as a command starts. A terminal's program is the leader of the foreground process group on its shell's tty.
 - `hypr/omarchy-spaces.lua` holds the tab actions for your own keys, the hook that moves on from a tab emptied by closing its last window (`space emptied`), and the blur behind a glassy sidebar and bar.
-- `~/.local/state/omarchy-spaces/spaces.json` holds what Hyprland can't about each live space: the name and icon you gave it, the terminal it follows and that terminal's last folder. `~/.config/omarchy-spaces/config.toml` can set `terminal`, the command that opens one (default: Omarchy's, `xdg-terminal-exec`, running `space shell`; have yours run `space shell` too for agents' status), `picker`, for `space go` with no space named, and `[sounds]`: `done` and `waiting` files, and `enabled`.
+- `~/.local/state/omarchy-spaces/spaces.json` holds what Hyprland can't about each live space: the name and icon you gave it, the terminal it follows and that terminal's last folder. `~/.config/omarchy-spaces/config.toml` can set `terminal`, the command that opens one (default: Omarchy's, `xdg-terminal-exec`), `herdr_core` (`true`/`false`, default: auto when `hc` is on `PATH`), `picker`, for `space go` with no space named, and `[sounds]`: `done` and `waiting` files, and `enabled`.
 
 ## Development
 

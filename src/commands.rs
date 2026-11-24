@@ -199,6 +199,9 @@ pub(crate) struct Live {
     /// `home`'s workspaces by id.
     home: BTreeSet<i64>,
     terminals: BTreeMap<String, Vec<Terminal>>,
+    /// Windows that reported a native status via `space status` without being
+    /// recognized as a terminal in `/proc`.
+    extra_agents: Vec<(String, terminal::Agent)>,
     /// Every window's address, by space.
     addresses: BTreeMap<String, Vec<String>>,
     /// Agents' statuses, by window address.
@@ -206,27 +209,37 @@ pub(crate) struct Live {
 }
 
 impl Live {
-    /// Each terminal's status from what its agent reported, `seen` saying
-    /// whether you've seen a core terminal's turn end.
+    /// Each window's status from what its agent reported, `seen` saying
+    /// whether you've seen its turn end.
     pub fn set_statuses(&mut self, seen: impl Fn(&terminal::Agent) -> bool) {
         self.statuses = self
             .terminals
             .values()
             .flatten()
-            .filter_map(|t| {
-                let agent = t.shell.agent.as_ref()?;
+            .filter_map(|t| Some((t.address.as_str(), t.shell.agent.as_ref()?)))
+            .chain(
+                self.extra_agents
+                    .iter()
+                    .map(|(address, agent)| (address.as_str(), agent)),
+            )
+            .filter_map(|(address, agent)| {
                 let status = status::from_report(&agent.word, seen(agent))?;
-                Some((t.address.clone(), status))
+                Some((address.to_string(), status))
             })
             .collect();
     }
 
-    /// The core terminals of the windows on screen, by window address.
+    /// The agents of the windows on screen, by window address.
     pub fn agents(&self) -> impl Iterator<Item = (&str, &terminal::Agent)> {
         self.terminals
             .values()
             .flatten()
             .filter_map(|t| Some((t.address.as_str(), t.shell.agent.as_ref()?)))
+            .chain(
+                self.extra_agents
+                    .iter()
+                    .map(|(address, agent)| (address.as_str(), agent)),
+            )
     }
 
     /// The spaces Hyprland has, `home` aside.
@@ -284,19 +297,28 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
 }
 
 /// Makes the live view from a snapshot, with `shell` saying which windows
-/// are terminals, which folder each one's shell is in and what it runs.
+/// are terminals, which folder each one's shell is in and what it runs, and
+/// `reports` holding native agent statuses reported through `space status`.
 pub(crate) fn live_from(
     snapshot: &Snapshot,
     mut shell: impl FnMut(&SpaceWindow) -> Option<terminal::Shell>,
+    reports: &HashMap<String, status::Report>,
 ) -> Live {
     let mut terminals: BTreeMap<String, Vec<Terminal>> = BTreeMap::new();
+    let mut extra_agents: Vec<(String, terminal::Agent)> = Vec::new();
     let mut addresses: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for window in &snapshot.space_windows {
         addresses
             .entry(window.space.clone())
             .or_default()
             .push(window.address.clone());
-        if let Some(shell) = shell(window) {
+        let report = reports.get(&window.address);
+        if let Some(mut shell) = shell(window) {
+            if let Some(report) = report
+                && shell.agent.as_ref().is_none_or(|a| a.word.is_empty())
+            {
+                shell.agent = Some(terminal::Agent::from_native(&window.address, report));
+            }
             terminals
                 .entry(window.space.clone())
                 .or_default()
@@ -306,6 +328,11 @@ pub(crate) fn live_from(
                     pid: window.pid,
                     shell,
                 });
+        } else if let Some(report) = report {
+            extra_agents.push((
+                window.address.clone(),
+                terminal::Agent::from_native(&window.address, report),
+            ));
         }
     }
     // Oldest first, as far as Hyprland lets us tell: by tab, then process.
@@ -318,6 +345,7 @@ pub(crate) fn live_from(
         workspaces: snapshot.workspaces.clone(),
         home: snapshot.home.clone(),
         terminals,
+        extra_agents,
         addresses,
         statuses: HashMap::new(),
     }
@@ -325,10 +353,13 @@ pub(crate) fn live_from(
 
 fn live(hypr: &Hypr) -> Result<Live> {
     let core = core::list().ok().map(core::Terminals::new);
-    let mut live = live_from(&snapshot(hypr)?, |window| {
-        terminal::shell_of(window.pid, core.as_ref())
-    });
-    // What you've seen, as `watch` notes it on core's terminals.
+    let reports = status::load_reports(&paths::status_dir());
+    let mut live = live_from(
+        &snapshot(hypr)?,
+        |window| terminal::shell_of(window.pid, core.as_ref()),
+        &reports,
+    );
+    // What you've seen, as `watch` notes it on core's terminals and native reports.
     live.set_statuses(terminal::Agent::seen);
     Ok(live)
 }
@@ -712,6 +743,67 @@ fn wait_for_window(
         }
     }
     None
+}
+
+/// `space status <state>`: reports what an agent in a terminal window is doing
+/// (`working`, `waiting`, `done`, or `idle`/`clear`), without needing
+/// herdr-core. Finds the owning Hyprland window by walking the process tree
+/// upward unless `--window`, `--pid`, or `SPACES_WINDOW` specifies one.
+///
+/// Outside Hyprland (or outside any Hyprland window when auto-detecting),
+/// exits silently so agent hooks don't fail in headless or SSH sessions.
+pub fn status(raw_word: &str, window: Option<String>, pid: Option<u32>) -> Result<()> {
+    let word = status::parse_word(raw_word)?;
+    let (address, owner_pid) = if let Some(window) = window {
+        (status::normalize_address(&window)?, None)
+    } else if pid.is_none()
+        && let Some(env_window) = std::env::var_os("SPACES_WINDOW").filter(|s| !s.is_empty())
+    {
+        (status::normalize_address(&env_window.to_string_lossy())?, None)
+    } else {
+        if pid.is_none()
+            && std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")
+                .filter(|s| !s.is_empty())
+                .is_none()
+        {
+            return Ok(());
+        }
+        let hypr = Hypr::from_env()?;
+        let clients = hypr.clients()?;
+        let start = pid.unwrap_or_else(std::process::id);
+        let chain = terminal::ancestors(start);
+        let matched = chain.iter().find_map(|&anc| {
+            let hits: Vec<&hypr::Client> = clients
+                .iter()
+                .filter(|c| u32::try_from(c.pid).ok() == Some(anc))
+                .collect();
+            (!hits.is_empty()).then_some((anc, hits))
+        });
+        let Some((window_pid, hits)) = matched else {
+            if let Some(pid) = pid {
+                bail!("no Hyprland window for pid {pid}");
+            }
+            return Ok(());
+        };
+        let address = if hits.len() == 1 {
+            hits[0].address.clone()
+        } else {
+            let active = hypr.active_window_address().ok().flatten();
+            active
+                .as_deref()
+                .and_then(|active| hits.iter().find(|c| c.address == active))
+                .unwrap_or(&hits[0])
+                .address
+                .clone()
+        };
+        let owner = if pid.is_none() {
+            terminal::owner_pid(&chain, window_pid)
+        } else {
+            None
+        };
+        (status::normalize_address(&address)?, owner)
+    };
+    status::write_report(&paths::status_dir(), &address, word, owner_pid)
 }
 
 /// `space terminal`: a terminal in the folder you are in, so an empty tab of
