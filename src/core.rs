@@ -24,6 +24,10 @@ use serde_json::{Value, json};
 pub const LABEL: &str = "renspace";
 /// The label naming the window's process, the terminal app's.
 pub const WINDOW_LABEL: &str = "renspace-window";
+/// The last turn someone looked at, which Herdr's clients share (its
+/// `docs/labels.md`), so a `done` seen stays seen when `watch` restarts, and
+/// in Herdr too.
+pub const SEEN_LABEL: &str = "herdr.seen";
 
 /// One of core's terminals, as much of it as renSpace reads.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -66,6 +70,12 @@ impl Terminal {
     /// The process of the window it shows in.
     pub fn window_pid(&self) -> Option<u32> {
         self.labels.get(WINDOW_LABEL)?.parse().ok()
+    }
+
+    /// The last turn someone looked at, from any client; `None` when none
+    /// has said.
+    pub fn seen_turn(&self) -> Option<u64> {
+        self.labels.get(SEEN_LABEL)?.parse().ok()
     }
 }
 
@@ -147,7 +157,7 @@ pub fn run_shell(
     let mut params = json!({
         "cwd": cwd,
         "env": env,
-        "labels": { LABEL: "1", WINDOW_LABEL: window.to_string() },
+        "labels": { LABEL: "1", WINDOW_LABEL: window.to_string(), SEEN_LABEL: "0" },
         "no_parent": true,
         "rm": true,
     });
@@ -159,6 +169,16 @@ pub fn run_shell(
         .as_str()
         .map(String::from)
         .context("herdr-core gave the new terminal no address")
+}
+
+/// Notes that you've looked at `address` on its turn `turn`, for every
+/// client to read.
+pub fn mark_seen(address: &str, turn: u64) -> Result<()> {
+    call(
+        "terminal.label",
+        json!({ "terminal": address, "labels": { SEEN_LABEL: turn.to_string() } }),
+    )?;
+    Ok(())
 }
 
 /// What a subscription sends.

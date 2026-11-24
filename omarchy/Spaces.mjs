@@ -52,10 +52,10 @@ export function moreUrgent(a, b) {
 }
 
 // The colours of the statuses from the theme's colors.toml: waiting in its
-// red, done in its green, working in no colour of its own (the text's).
+// red, done in its green, working in its yellow, as Herdr shows it.
 export function statusColors(text) {
   const colors = themeColors(text)
-  return { waiting: colors.red || "", done: colors.green || "" }
+  return { waiting: colors.red || "", done: colors.green || "", working: colors.yellow || "" }
 }
 
 // How well `query` matches `name`: higher is better, -1 for no match. A

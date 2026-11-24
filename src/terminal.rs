@@ -35,6 +35,17 @@ pub struct Agent {
     /// Goes up each time it stops working, so a `done` seen can be told
     /// from the next.
     pub turn: u64,
+    /// The last turn someone looked at, from its `herdr.seen` label; `None`
+    /// when no client has said.
+    pub seen_turn: Option<u64>,
+}
+
+impl Agent {
+    /// Whether someone has looked at it since its turn ended, as its label
+    /// says.
+    pub fn seen(&self) -> bool {
+        self.seen_turn.is_some_and(|seen| seen >= self.turn)
+    }
 }
 
 impl Shell {
@@ -89,6 +100,7 @@ fn from_core(terminal: &core::Terminal) -> Shell {
                 .map(|s| s.state.clone())
                 .unwrap_or_default(),
             turn: terminal.turn,
+            seen_turn: terminal.seen_turn(),
         }),
     }
 }
@@ -294,6 +306,20 @@ pub fn launch(command: &str, dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seen_once_someone_looked_at_its_last_turn() {
+        let agent = |turn, seen_turn| Agent {
+            address: "t1".into(),
+            word: "done".into(),
+            turn,
+            seen_turn,
+        };
+        assert!(agent(3, Some(3)).seen());
+        assert!(agent(3, Some(4)).seen());
+        assert!(!agent(3, Some(2)).seen(), "a turn ended since");
+        assert!(!agent(3, None).seen(), "no client has said");
+    }
 
     #[test]
     fn names_folders_after_their_checkout() {

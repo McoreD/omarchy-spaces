@@ -12,9 +12,10 @@
 //! terminals retitle themselves on `cd` and when a command starts.
 //!
 //! An agent's `done` shows until you focus its window: then its turn is
-//! seen. With `--sounds`, as the plugin runs it, it plays a sound when an
-//! agent starts needing you or finishes while you aren't looking
-//! (`sound.rs`). Without core it subscribes again every `SLOW`, so starting core
+//! seen, which it notes on core's terminal as Herdr's clients do, so it
+//! stays seen when the watch restarts. With `--sounds`, as the plugin runs
+//! it, it plays a sound when an agent starts needing you or finishes while
+//! you aren't looking (`sound.rs`). Without core it subscribes again every `SLOW`, so starting core
 //! later is noticed.
 //!
 //! It exits when Hyprland's event socket closes, when nobody reads what it
@@ -80,7 +81,8 @@ pub fn watch(sounds: bool) -> Result<()> {
     // Core's terminals, while subscribed to it.
     let mut core: Option<core::Terminals> = None;
     let mut subscribed = false;
-    // The turn each core terminal was on when you last saw it done.
+    // The turn each core terminal was on when you last looked at it, until
+    // its label says so too.
     let mut seen: HashMap<String, u64> = HashMap::new();
     // What each core terminal's agent last reported, to ring on a change.
     let mut words: HashMap<String, String> = HashMap::new();
@@ -135,11 +137,17 @@ pub fn watch(sounds: bool) -> Result<()> {
         let mut live = commands::live_from(&snapshot, |window| {
             shells.get(&window.pid).cloned().flatten()
         });
-        // A `done` in the window you're looking at is seen.
+        // The agent in the window you're looking at is seen, once a turn.
         if let Some(focused) = &focused {
             for (window, agent) in live.agents() {
-                if window == focused && agent.word == "done" {
+                if window == focused
+                    && !agent.seen()
+                    && seen.get(&agent.address) != Some(&agent.turn)
+                {
                     seen.insert(agent.address.clone(), agent.turn);
+                    if let Err(e) = core::mark_seen(&agent.address, agent.turn) {
+                        eprintln!("space: warning: {e:#}");
+                    }
                 }
             }
         }
@@ -159,7 +167,7 @@ pub fn watch(sounds: bool) -> Result<()> {
             seen.retain(|address, _| core.get(address).is_some());
             words.retain(|address, _| core.get(address).is_some());
         }
-        live.set_statuses(|agent| seen.get(&agent.address) == Some(&agent.turn));
+        live.set_statuses(|agent| agent.seen() || seen.get(&agent.address) == Some(&agent.turn));
 
         let rows = commands::rows(&mut store, Some(&live), &last);
         if let Err(e) = store.save() {

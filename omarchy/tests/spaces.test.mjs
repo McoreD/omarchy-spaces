@@ -159,8 +159,8 @@ test("shows what most needs you among a tab's and a space's agents", () => {
   assert.equal(moreUrgent("working", "done"), "done")
   assert.equal(moreUrgent("waiting", "done"), "waiting")
   assert.equal(moreUrgent("", "working"), "working")
-  assert.deepEqual(statusColors('red = "#F7768E"\ngreen = "#9ece6a"\n'), { waiting: "#f7768e", done: "#9ece6a" })
-  assert.deepEqual(statusColors(""), { waiting: "", done: "" })
+  assert.deepEqual(statusColors('red = "#F7768E"\ngreen = "#9ece6a"\nyellow = "#e0af68"\n'), { waiting: "#f7768e", done: "#9ece6a", working: "#e0af68" })
+  assert.deepEqual(statusColors(""), { waiting: "", done: "", working: "" })
 })
 
 test("a new tab is empty until something opens on it", () => {

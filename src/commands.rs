@@ -320,9 +320,8 @@ fn live(hypr: &Hypr) -> Result<Live> {
     let mut live = live_from(&snapshot(hypr)?, |window| {
         terminal::shell_of(window.pid, core.as_ref())
     });
-    // Nothing here knows what you've seen: a `done` shows until `watch`,
-    // which does, says otherwise.
-    live.set_statuses(|_| false);
+    // What you've seen, as `watch` notes it on core's terminals.
+    live.set_statuses(terminal::Agent::seen);
     Ok(live)
 }
 

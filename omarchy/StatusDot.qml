@@ -2,8 +2,8 @@ import QtQuick
 import qs.Commons as Commons
 
 // A dot saying what an agent is doing: waiting for you, in the theme's red;
-// done while you were elsewhere, in its green; working, in `workingColor`,
-// breathing. Nothing when it's idle.
+// done while you were elsewhere, in its green; working, in its yellow (or
+// `workingColor` when the theme has none), breathing. Nothing when it's idle.
 Rectangle {
   id: root
 
@@ -22,7 +22,7 @@ Rectangle {
     var colors = root.colors || {}
     if (root.status === "waiting") return colors.waiting || Commons.Color.urgent
     if (root.status === "done") return colors.done || Commons.Color.accent
-    return root.workingColor
+    return colors.working || root.workingColor
   }
   opacity: root.status === "working" ? root.breath : 1
 
