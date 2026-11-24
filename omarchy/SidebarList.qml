@@ -567,16 +567,21 @@ Item {
             }
           }
 
-          Text {
-            visible: root.sidebar.filterText === ""
-            leftPadding: root.sidebar.searching ? Style.spacing.xxs : 0
-            textFormat: Text.PlainText
-            text: "Search"
-            color: root.foreground
-            opacity: 0.4
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-          }
+        }
+
+        // The placeholder lies under the caret, as in any input, so it stays
+        // put when the search starts rather than stepping aside for it.
+        Text {
+          z: -1
+          visible: root.sidebar.filterText === ""
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: "Search"
+          color: root.foreground
+          opacity: 0.4
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
         }
       }
 
