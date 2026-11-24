@@ -4,7 +4,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 use clap::{Parser, Subcommand};
 
-use renspace::{commands, name, shell, watch};
+use omarchy_spaces::{commands, name, shell, watch};
 
 /// Spaces for Hyprland: a set of tabs for each thing you work on.
 #[derive(Parser)]
@@ -196,7 +196,7 @@ fn main() -> ExitCode {
 
 fn notify(message: &str) {
     let _ = Command::new("notify-send")
-        .args(["--app-name=renSpace", "renSpace", message])
+        .args(["--app-name=Spaces", "Spaces", message])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

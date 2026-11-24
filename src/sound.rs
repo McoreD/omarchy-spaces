@@ -89,7 +89,7 @@ fn sounds_dir() -> PathBuf {
         .filter(|d| !d.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
-        .join("renspace")
+        .join("omarchy-spaces")
 }
 
 /// A built-in sound as a file in `dir`, written unless it's there already

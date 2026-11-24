@@ -1,4 +1,4 @@
-//! Where renSpace keeps its files, and `~` in paths shown to the user.
+//! Where Spaces keeps its files, and `~` in paths shown to the user.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -16,14 +16,14 @@ fn xdg(var: &str, fallback: &str) -> PathBuf {
     }
 }
 
-/// `~/.config/renspace/config.toml`.
+/// `~/.config/omarchy-spaces/config.toml`.
 pub fn config_file() -> PathBuf {
-    xdg("XDG_CONFIG_HOME", ".config").join("renspace/config.toml")
+    xdg("XDG_CONFIG_HOME", ".config").join("omarchy-spaces/config.toml")
 }
 
-/// `~/.local/state/renspace/`: disposable cache, safe to delete at any time.
+/// `~/.local/state/omarchy-spaces/`: disposable cache, safe to delete at any time.
 pub fn state_dir() -> PathBuf {
-    xdg("XDG_STATE_HOME", ".local/state").join("renspace")
+    xdg("XDG_STATE_HOME", ".local/state").join("omarchy-spaces")
 }
 
 /// A path as written in the config, `~/` meaning the home folder.

@@ -607,7 +607,7 @@ Item {
       exclusiveZone: expanded ? root.panelWidth : root.railWidth
       mask: Region {}
       color: "transparent"
-      WlrLayershell.namespace: "renspace-sidebar-room"
+      WlrLayershell.namespace: "omarchy-spaces-sidebar-room"
       WlrLayershell.layer: WlrLayer.Top
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
     }
@@ -624,7 +624,7 @@ Item {
     exclusionMode: ExclusionMode.Ignore
     mask: Region {}
     color: "transparent"
-    WlrLayershell.namespace: "renspace-sidebar-keys"
+    WlrLayershell.namespace: "omarchy-spaces-sidebar-keys"
     WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.keyboardFocus: root.typing ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 

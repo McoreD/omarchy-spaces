@@ -55,12 +55,12 @@ Item {
     id: sidebarItem
     watch: watchItem
     tabs: tabsItem
-    headerOnBar: Spaces.barToggle(root.shell ? root.shell.barConfig : null, (root.manifest && root.manifest.id) || "org.ren.renspace")
+    headerOnBar: Spaces.barToggle(root.shell ? root.shell.barConfig : null, (root.manifest && root.manifest.id) || "com.t4t5.spaces")
     // Ended from inside (a pick, Escape), so the shell stops counting the
     // overlay as open and the next toggle searches again.
     onSearchEnded: {
       if (root.shell && typeof root.shell.hide === "function")
-        root.shell.hide((root.manifest && root.manifest.id) || "org.ren.renspace")
+        root.shell.hide((root.manifest && root.manifest.id) || "com.t4t5.spaces")
     }
   }
 }

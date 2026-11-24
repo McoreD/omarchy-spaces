@@ -7,7 +7,7 @@ import "Spaces.mjs" as Spaces
 // The colours of a surface that dresses like Omarchy's bar: opaque, glassy or
 // clear, as the bar's background is set (Spaces.barLook). Glassy is the
 // theme's background faded the way the bar fades it; Hyprland blurs behind it
-// (hypr/renspace.lua). Clear takes its text colour from the wallpaper under
+// (hypr/omarchy-spaces.lua). Clear takes its text colour from the wallpaper under
 // the surface, as the bar does, so the text stays legible.
 Item {
   id: root

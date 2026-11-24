@@ -6,16 +6,16 @@ install:
 
 # Add the tabs to the bar and the sidebar to the Omarchy shell, and bind the keys
 setup:
-    ln -sfn {{justfile_directory()}}/omarchy ~/.config/omarchy/plugins/org.ren.renspace
+    ln -sfn {{justfile_directory()}}/omarchy ~/.config/omarchy/plugins/com.t4t5.spaces
     omarchy-shell shell rescanPlugins
     # The rescan finishes after the call returns; wait until the shell lists the plugin.
-    for i in $(seq 50); do omarchy-shell shell listPlugins | grep -q '"org.ren.renspace"' && break; sleep 0.1; done
-    omarchy plugin enable org.ren.renspace
+    for i in $(seq 50); do omarchy-shell shell listPlugins | grep -q '"com.t4t5.spaces"' && break; sleep 0.1; done
+    omarchy plugin enable com.t4t5.spaces
     # The space's tabs take the place of the bar's workspaces, after the menu.
     omarchy plugin disable omarchy.workspaces
-    omarchy bar put org.ren.renspace --after omarchy.menu
-    ln -sfn {{justfile_directory()}}/hypr/renspace.lua ~/.config/hypr/renspace.lua
-    grep -q 'require("hypr.renspace")' ~/.config/hypr/bindings.lua || echo 'local renspace = require("hypr.renspace")' >> ~/.config/hypr/bindings.lua
+    omarchy bar put com.t4t5.spaces --after omarchy.menu
+    ln -sfn {{justfile_directory()}}/hypr/omarchy-spaces.lua ~/.config/hypr/omarchy-spaces.lua
+    grep -q 'require("hypr.omarchy-spaces")' ~/.config/hypr/bindings.lua || echo 'local spaces = require("hypr.omarchy-spaces")' >> ~/.config/hypr/bindings.lua
 
 # Make the icon picker's glyphs again, from a Nerd Fonts release's glyph names
 glyphs version="v3.4.0":

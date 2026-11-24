@@ -1,7 +1,7 @@
-//! herdr-core (`hc`), the terminal runtime renSpace's terminals run in when
+//! herdr-core (`hc`), the terminal runtime Spaces' terminals run in when
 //! it's installed. Its terminals say what their programs are doing: agents
 //! report it through OSC 7501, which core keeps as each terminal's status,
-//! and core reads what runs in the foreground and its folder. renSpace asks
+//! and core reads what runs in the foreground and its folder. Spaces asks
 //! core over its socket, in JSON-RPC, one message a line.
 //!
 //! A terminal window runs `space shell` (`shell.rs`), which asks core for a
@@ -19,17 +19,17 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// The label every renSpace terminal carries, `renspace=1`, to ask core for
+/// The label every Spaces terminal carries, `omarchy-spaces=1`, to ask core for
 /// only those.
-pub const LABEL: &str = "renspace";
+pub const LABEL: &str = "omarchy-spaces";
 /// The label naming the window's process, the terminal app's.
-pub const WINDOW_LABEL: &str = "renspace-window";
+pub const WINDOW_LABEL: &str = "omarchy-spaces-window";
 /// The last turn someone looked at, which Herdr's clients share (its
 /// `docs/labels.md`), so a `done` seen stays seen when `watch` restarts, and
 /// in Herdr too.
 pub const SEEN_LABEL: &str = "herdr.seen";
 
-/// One of core's terminals, as much of it as renSpace reads.
+/// One of core's terminals, as much of it as Spaces reads.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct Terminal {
     pub address: String,
@@ -135,13 +135,13 @@ pub fn call(method: &str, params: Value) -> Result<Value> {
     request(&mut stream, method, params)
 }
 
-fn renspace_labels() -> Value {
+fn space_labels() -> Value {
     json!({ LABEL: "1" })
 }
 
-/// renSpace's live terminals.
+/// Spaces' live terminals.
 pub fn list() -> Result<Vec<Terminal>> {
-    let result = call("terminal.list", json!({ "labels": renspace_labels() }))?;
+    let result = call("terminal.list", json!({ "labels": space_labels() }))?;
     Ok(serde_json::from_value(result["terminals"].clone())?)
 }
 
@@ -192,14 +192,14 @@ pub enum Update {
     Gone,
 }
 
-/// Follows renSpace's terminals on its own connection, sending `wrap` of
+/// Follows Spaces' terminals on its own connection, sending `wrap` of
 /// each update to `send`, until the connection or the receiver ends.
 pub fn subscribe<T: Send + 'static>(send: mpsc::Sender<T>, wrap: fn(Update) -> T) -> Result<()> {
     let mut stream = connect()?;
     let result = request(
         &mut stream,
         "events.subscribe",
-        json!({ "labels": renspace_labels() }),
+        json!({ "labels": space_labels() }),
     )?;
     let terminals: Vec<Terminal> = serde_json::from_value(result["terminals"].clone())?;
     send.send(wrap(Update::Snapshot(terminals)))
@@ -229,7 +229,7 @@ pub fn subscribe<T: Send + 'static>(send: mpsc::Sender<T>, wrap: fn(Update) -> T
     Ok(())
 }
 
-/// renSpace's terminals, kept current from a subscription's updates.
+/// Spaces' terminals, kept current from a subscription's updates.
 #[derive(Debug, Default)]
 pub struct Terminals {
     by_address: HashMap<String, Terminal>,
@@ -262,7 +262,7 @@ impl Terminals {
     }
 
     /// Applies an event, as core's API docs say: returns whether anything
-    /// renSpace shows changed.
+    /// Spaces shows changed.
     pub fn apply(&mut self, event: &Value) -> bool {
         let Some(address) = event.get("terminal").and_then(Value::as_str) else {
             return false;
@@ -387,7 +387,7 @@ mod tests {
         assert!(terminals.apply(&event("foreground", Value::Null)));
         assert_eq!(terminals.get("t1").unwrap().foreground, None);
 
-        // Labelled away from renSpace: out of view.
+        // Labelled away from Spaces: out of view.
         assert!(terminals.apply(&event("labels", json!({ "labels": {} }))));
         assert!(terminals.get("t1").is_none());
         let created = serde_json::to_value(json!({ "address": "t1", "labels": { LABEL: "1", WINDOW_LABEL: "50" }, "cwd": "/p", "turn": 0 })).unwrap();

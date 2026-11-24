@@ -32,7 +32,7 @@ import "Spaces.mjs" as Spaces
 // A right-click on the logo opens the menu.
 BarWidget {
   id: root
-  moduleName: "org.ren.renspace"
+  moduleName: "com.t4t5.spaces"
 
   readonly property var model: tabs.model
   readonly property color foreground: root.bar ? root.bar.barForeground : Commons.Color.bar.text
@@ -55,7 +55,7 @@ BarWidget {
   readonly property var service: {
     var shell = root.bar ? root.bar.shell : null
     if (shell && shell.services !== undefined) shell.services
-    return shell && typeof shell.serviceFor === "function" ? shell.serviceFor("org.ren.renspace") : null
+    return shell && typeof shell.serviceFor === "function" ? shell.serviceFor("com.t4t5.spaces") : null
   }
   readonly property var sidebar: root.service && root.service.sidebar ? root.service.sidebar : null
 

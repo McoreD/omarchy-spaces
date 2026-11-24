@@ -54,7 +54,7 @@ PanelWindow {
   anchors { top: true; bottom: true; left: true; right: true }
   exclusionMode: ExclusionMode.Ignore
   color: "transparent"
-  WlrLayershell.namespace: "renspace-icons"
+  WlrLayershell.namespace: "omarchy-spaces-icons"
   WlrLayershell.layer: WlrLayer.Overlay
   WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 

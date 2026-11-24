@@ -303,7 +303,7 @@ test("reads the bar's background look", () => {
 })
 
 test("reads whether the sidebar's header is on the bar", () => {
-  const id = "org.ren.renspace"
+  const id = "com.t4t5.spaces"
   assert.equal(barToggle({ layout: { left: [{ id: "omarchy.menu" }, { id }] } }, id), false)
   assert.equal(barToggle({ layout: { left: [{ id, toggle: true }] } }, id), true)
   assert.equal(barToggle({ position: "bottom", layout: { left: [{ id, toggle: true }] } }, id), true)

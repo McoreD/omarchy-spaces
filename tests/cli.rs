@@ -225,7 +225,7 @@ impl Hyprland {
     }
 }
 
-/// A fake herdr-core: renSpace's terminals, over the same JSON-RPC.
+/// A fake herdr-core: Spaces' terminals, over the same JSON-RPC.
 #[derive(Default)]
 struct CoreState {
     terminals: Vec<Value>,
@@ -316,7 +316,7 @@ impl Core {
         let address = format!("t{}", state.next);
         let record = json!({
             "address": address,
-            "labels": { "renspace": "1", "renspace-window": pid.to_string() },
+            "labels": { "omarchy-spaces": "1", "omarchy-spaces-window": pid.to_string() },
             "cwd": dir.display().to_string(),
             "foreground": { "pid": 1, "name": "zsh", "argv": ["-zsh"], "cwd": dir.display().to_string() },
             "turn": 0,
@@ -424,7 +424,7 @@ impl Env {
     }
 
     fn state(&self) -> PathBuf {
-        self.home().join(".local/state/renspace")
+        self.home().join(".local/state/omarchy-spaces")
     }
 
     fn command(&self, args: &[&str]) -> Command {
@@ -437,7 +437,7 @@ impl Env {
             .env("HOME", self.home())
             .env("XDG_RUNTIME_DIR", self.root.path().join("run"))
             .env("HYPRLAND_INSTANCE_SIGNATURE", "test")
-            .env("RENSPACE_FAKE_CWDS", self.cwds())
+            .env("SPACES_FAKE_CWDS", self.cwds())
             .env("HC_SOCKET", self.root.path().join("core.sock"));
         command
     }
@@ -590,7 +590,7 @@ impl Env {
     /// Writes the config, with a "terminal" that notes the folder it was
     /// opened in.
     fn write_config(&self, text: &str) {
-        let dir = self.home().join(".config/renspace");
+        let dir = self.home().join(".config/omarchy-spaces");
         fs::create_dir_all(&dir).unwrap();
         let terminal = "terminal = 'pwd >> \"$HOME/launched\"'\n";
         fs::write(dir.join("config.toml"), format!("{terminal}{text}")).unwrap();
@@ -1216,7 +1216,7 @@ fn ls_lists_spaces_with_counts() {
     env.add_window("s1:2");
     env.add_window("special:scratchpad");
     env.set_active("s1:2");
-    // A workspace an older renSpace named after its space is a space too.
+    // A workspace an older version named after its space is a space too.
     env.add_window("tax:1");
 
     assert_eq!(
@@ -1266,7 +1266,7 @@ fn a_terminal_in_core_is_named_and_followed_through_core() {
     let core = Core::start(&env);
     let ren = env.dir("ren");
     fs::create_dir_all(ren.join(".git")).unwrap();
-    // A window showing a core terminal, whose own shell renSpace can't see,
+    // A window showing a core terminal, whose own shell Spaces can't see,
     // and a plain one.
     let window = env.add_window("s1:1");
     let t = core.add(&window, &ren);
@@ -1456,7 +1456,7 @@ fn watch_rings_when_an_agent_needs_you_or_finishes_unseen() {
     };
     status("working");
     status("blocked");
-    let request = env.root.path().join("run/renspace/request.mp3");
+    let request = env.root.path().join("run/omarchy-spaces/request.mp3");
     assert_eq!(heard(), [request.display().to_string()]);
     assert_eq!(
         fs::read(&request).unwrap(),
@@ -1503,9 +1503,9 @@ fn shell_runs_in_core_and_ends_with_its_window() {
     assert_eq!(runs.len(), 1, "{stderr}");
     let run = &runs[0]["params"];
     assert_eq!(run["cwd"], ren.display().to_string());
-    assert_eq!(run["labels"]["renspace"], "1");
+    assert_eq!(run["labels"]["omarchy-spaces"], "1");
     assert_eq!(
-        run["labels"]["renspace-window"],
+        run["labels"]["omarchy-spaces-window"],
         std::process::id().to_string(),
         "the window's process: its parent"
     );

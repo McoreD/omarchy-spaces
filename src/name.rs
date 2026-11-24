@@ -14,8 +14,8 @@ pub const SLOTS: u8 = 10;
 
 /// Whether `id` can be a space's id: lowercase letters, digits and `-`,
 /// starting with a letter or digit, so no `:`, which separates it from the
-/// workspace number. renSpace makes `s1`, `s2`, ...; workspaces named by
-/// hand, or by an older renSpace (`ren:1`), count too.
+/// workspace number. Spaces makes `s1`, `s2`, ...; workspaces named by
+/// hand, or by an older version (`ren:1`), count too.
 pub fn is_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
@@ -38,7 +38,7 @@ pub fn workspace_name(space: &str, slot: u8) -> String {
     format!("{space}:{slot}")
 }
 
-/// Where a workspace sits in renSpace's terms.
+/// Where a workspace sits in Spaces' terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Location {
     /// A plain numbered workspace, or anything not in `name:n` form. The slot

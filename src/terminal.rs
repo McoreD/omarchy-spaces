@@ -111,11 +111,11 @@ fn from_core(terminal: &core::Terminal) -> Shell {
 /// login shell (listed in `/etc/shells`). Other apps' children, such as
 /// kitty's `kitten` helpers or a browser's, don't qualify.
 ///
-/// For tests, `RENSPACE_FAKE_CWDS` names a folder of symlinks, one per pid,
+/// For tests, `SPACES_FAKE_CWDS` names a folder of symlinks, one per pid,
 /// pointing at that "terminal's" folder, and of `<pid>.program` files
 /// holding what it runs.
 pub fn shell(pid: u32) -> Option<Shell> {
-    if let Some(fake) = std::env::var_os("RENSPACE_FAKE_CWDS") {
+    if let Some(fake) = std::env::var_os("SPACES_FAKE_CWDS") {
         let fake = Path::new(&fake);
         let cwd = std::fs::read_link(fake.join(pid.to_string())).ok()?;
         let program = std::fs::read_to_string(fake.join(format!("{pid}.program")))
@@ -275,10 +275,10 @@ pub fn folder_name(dir: &Path) -> String {
 }
 
 /// The terminal `command` as one shell command that runs it in `dir` with
-/// `RENSPACE_DIR` set, for Hyprland to run (`launch` sets them itself).
+/// `SPACES_DIR` set, for Hyprland to run (`launch` sets them itself).
 pub fn command_in(command: &str, dir: &Path) -> String {
     let dir = shell_quote(&dir.to_string_lossy());
-    format!("cd -- {dir} && export RENSPACE_DIR={dir} && {command}")
+    format!("cd -- {dir} && export SPACES_DIR={dir} && {command}")
 }
 
 /// `value` in single quotes for `sh`.
@@ -287,14 +287,14 @@ fn shell_quote(value: &str) -> String {
 }
 
 /// Opens a terminal in `dir` with `command` (the `terminal` setting), run by
-/// `sh -c` in that folder with `RENSPACE_DIR` set to it. It runs on its own,
+/// `sh -c` in that folder with `SPACES_DIR` set to it. It runs on its own,
 /// outliving `space`.
 pub fn launch(command: &str, dir: &Path) -> Result<()> {
     Command::new("sh")
         .arg("-c")
         .arg(command)
         .current_dir(dir)
-        .env("RENSPACE_DIR", dir)
+        .env("SPACES_DIR", dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -346,14 +346,14 @@ mod tests {
     fn runs_the_terminal_command_in_a_folder() {
         assert_eq!(
             command_in("exec kitty", Path::new("/p/it's here")),
-            r#"cd -- '/p/it'\''s here' && export RENSPACE_DIR='/p/it'\''s here' && exec kitty"#
+            r#"cd -- '/p/it'\''s here' && export SPACES_DIR='/p/it'\''s here' && exec kitty"#
         );
         let tmp = tempfile::tempdir().unwrap();
         let odd = tmp.path().join("a 'b' $c");
         std::fs::create_dir_all(&odd).unwrap();
         let out = Command::new("sh")
             .arg("-c")
-            .arg(command_in("pwd; echo \"$RENSPACE_DIR\"", &odd))
+            .arg(command_in("pwd; echo \"$SPACES_DIR\"", &odd))
             .output()
             .unwrap();
         let odd = odd.display().to_string();

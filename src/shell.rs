@@ -1,4 +1,4 @@
-//! `space shell`: what a terminal window renSpace opens runs. It asks
+//! `space shell`: what a terminal window Spaces opens runs. It asks
 //! herdr-core for a shell in the window's folder, labelled with the window's
 //! process so `space watch` can tell which window shows it, and attaches to
 //! it. Core then knows what runs in it and what its agents report, for the
@@ -30,7 +30,7 @@ pub fn shell() -> Result<()> {
         Ok(address) => Command::new("sh")
             .arg("-c")
             .arg(ATTACH)
-            .arg("renspace-shell")
+            .arg("omarchy-spaces-shell")
             .arg(address)
             .exec(),
         Err(e) => {
@@ -124,7 +124,7 @@ mod tests {
         let vars = [
             ("PATH", "/usr/bin"),
             ("SSH_AUTH_SOCK", "/run/ssh"),
-            ("RENSPACE_DIR", "/p/ren"),
+            ("SPACES_DIR", "/p/ren"),
             ("TERM", "xterm-kitty"),
             ("KITTY_WINDOW_ID", "3"),
             ("PWD", "/p"),
@@ -134,7 +134,7 @@ mod tests {
         let env = forwarded_env(vars.into_iter());
         assert_eq!(
             env.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["PATH", "RENSPACE_DIR", "SSH_AUTH_SOCK"]
+            ["PATH", "SPACES_DIR", "SSH_AUTH_SOCK"]
         );
     }
 

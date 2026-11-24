@@ -1,4 +1,4 @@
-//! renSpace: spaces for Hyprland. A space is a place you work, called after
+//! Spaces for Omarchy. A space is a place you work, called after
 //! the folder its terminal is in, with its own set of workspaces, `<id>:1` to
 //! `<id>:10`. See the README.
 

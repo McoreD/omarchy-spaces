@@ -21,20 +21,20 @@ Item {
 
   // Show or hide the sidebar without taking the keyboard: `super+b`, and the
   // space's name on the bar. Called through `omarchy-shell shell call
-  // org.ren.renspace showOrHide`.
+  // com.t4t5.spaces showOrHide`.
   function showOrHide(arg) {
     if (service) service.showOrHide()
   }
 
   // Rename the space you are in, typing over its name in the sidebar:
   // `super+shift+r`. Called through `omarchy-shell shell call
-  // org.ren.renspace rename`.
+  // com.t4t5.spaces rename`.
   function rename(arg) {
     if (service) service.rename()
   }
 
   // Name the tab you are on, typing on the bar: `super+,`. Called
-  // through `omarchy-shell shell call org.ren.renspace renameTab`.
+  // through `omarchy-shell shell call com.t4t5.spaces renameTab`.
   function renameTab(arg) {
     if (service) service.renameTab()
   }

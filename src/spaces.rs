@@ -1,5 +1,5 @@
-//! Spaces: what renSpace remembers about each one, in
-//! `~/.local/state/renspace/spaces.json`.
+//! Spaces: what Spaces remembers about each one, in
+//! `~/.local/state/omarchy-spaces/spaces.json`.
 //!
 //! A space is a set of Hyprland workspaces, `<id>:1` to `<id>:10`, and lives
 //! as long as they do: when its last window closes and you leave it,
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::state;
 
-/// What renSpace remembers about one space.
+/// What Spaces remembers about one space.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
     /// The name you gave it. Without one, it is called after its folder.

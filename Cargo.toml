@@ -1,8 +1,8 @@
 [package]
-name = "renspace"
+name = "omarchy-spaces"
 version = "0.1.0"
 edition = "2024"
-description = "Spaces for Hyprland: switch projects, not workspaces"
+description = "Spaces for Omarchy: switch projects, not workspaces"
 publish = false
 
 [[bin]]

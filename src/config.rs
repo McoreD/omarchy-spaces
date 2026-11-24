@@ -1,4 +1,4 @@
-//! `~/.config/renspace/config.toml`, the global config.
+//! `~/.config/omarchy-spaces/config.toml`, the global config.
 
 use std::fs;
 use std::path::Path;
@@ -20,12 +20,12 @@ pub const DEFAULT_PICKERS: &[(&str, &str)] = &[
     ("walker", "walker --dmenu --placeholder 'Switch space'"),
 ];
 
-/// Opens a terminal in `$RENSPACE_DIR` the way Omarchy's `super+enter`
+/// Opens a terminal in `$SPACES_DIR` the way Omarchy's `super+enter`
 /// does (`omarchy-launch-terminal`), so it is the terminal you chose in
 /// Omarchy. Outside a uwsm session, without the app scope. It runs
 /// `space shell`, a shell in herdr-core when it's installed (`shell.rs`).
-const OMARCHY_TERMINAL: &str = "exec setsid uwsm-app -- xdg-terminal-exec --dir=\"$RENSPACE_DIR\"";
-const PLAIN_TERMINAL: &str = "exec xdg-terminal-exec --dir=\"$RENSPACE_DIR\"";
+const OMARCHY_TERMINAL: &str = "exec setsid uwsm-app -- xdg-terminal-exec --dir=\"$SPACES_DIR\"";
+const PLAIN_TERMINAL: &str = "exec xdg-terminal-exec --dir=\"$SPACES_DIR\"";
 
 /// This program, to run as `space shell`, by its path so it needn't be on
 /// the terminal's PATH.
@@ -42,7 +42,7 @@ pub struct Config {
     /// A dmenu-style command for `space go` with no name.
     pub picker: Option<String>,
     /// How to open a terminal: a command for `sh -c`, run in the folder with
-    /// `RENSPACE_DIR` set to it.
+    /// `SPACES_DIR` set to it.
     pub terminal: Option<String>,
     /// The sounds when an agent needs you (`sound.rs`).
     pub sounds: Option<Sounds>,

@@ -50,7 +50,7 @@ Scope {
 
       readonly property bool expanding: !!root.sidebar && !!root.sidebar.screen
         && root.sidebar.screen.name === base.modelData.name
-      WlrLayershell.namespace: "renspace-base"
+      WlrLayershell.namespace: "omarchy-spaces-base"
       WlrLayershell.layer: WlrLayer.Bottom
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 

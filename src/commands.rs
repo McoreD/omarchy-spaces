@@ -785,7 +785,7 @@ fn switch(hypr: &Hypr, target: &str) -> Result<()> {
 }
 
 /// The tab you land on going to a space: where you left it, or, never
-/// visited (an older renSpace's, or made by hand), its first tab.
+/// visited (an older version's, or made by hand), its first tab.
 fn landing_slot(hypr: &Hypr, last: &Last, target: &str) -> Result<u8> {
     Ok(match last.get(target) {
         Some(visit) => visit.slot,
@@ -1110,7 +1110,7 @@ pub fn close(target: Option<String>) -> Result<()> {
     Ok(())
 }
 
-/// `space emptied <workspace>`, run by Hyprland (`hypr/renspace.lua`) when
+/// `space emptied <workspace>`, run by Hyprland (`hypr/omarchy-spaces.lua`) when
 /// closing a window left the workspace you are on empty. An emptied tab
 /// doesn't linger: you go to the space's next tab with windows, else the one
 /// before; with none left, the space ends and you go back to the space you

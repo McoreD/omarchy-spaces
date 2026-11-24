@@ -1,4 +1,4 @@
-//! Files under `~/.local/state/renspace/`. All of it is disposable cache: the
+//! Files under `~/.local/state/omarchy-spaces/`. All of it is disposable cache: the
 //! project folders and Hyprland are the sources of truth, and deleting this
 //! directory loses nothing but where each space was last left.
 

@@ -1,12 +1,12 @@
--- renSpace for Hyprland. It binds no keys: bind the ones you want in
+-- Spaces for Hyprland. It binds no keys: bind the ones you want in
 -- ~/.config/hypr/bindings.lua, after the require (see the README's Keys).
 --
--- Install: link this file to ~/.config/hypr/renspace.lua and add
---   local renspace = require("hypr.renspace")
+-- Install: link this file to ~/.config/hypr/omarchy-spaces.lua and add
+--   local spaces = require("hypr.omarchy-spaces")
 -- at the end of ~/.config/hypr/bindings.lua, which loads after Omarchy's
 -- defaults. Remove that line to undo it.
 
--- renspace.go_to_tab(n) and renspace.move_window_to_tab(n[, follow]) make
+-- spaces.go_to_tab(n) and spaces.move_window_to_tab(n[, follow]) make
 -- actions for tab keys. This is plain Lua inside Hyprland rather than a call to
 -- `space`, so it can't leave you stuck: outside a space (`home`) each one runs
 -- the action Omarchy binds to workspace n, and works even if `space` is
@@ -100,7 +100,7 @@ local glassy = io.open(require("default.hypr.paths").state_home .. "/omarchy/tog
 if glassy then
   glassy:close()
   hl.layer_rule({
-    match = { namespace = "^(renspace-base|omarchy-bar)$" },
+    match = { namespace = "^(omarchy-spaces-base|omarchy-bar)$" },
     blur = true,
     xray = true,
     ignore_alpha = 0.3,

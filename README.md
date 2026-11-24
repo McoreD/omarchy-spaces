@@ -1,6 +1,6 @@
-# renSpace
+# Spaces for Omarchy
 
-Spaces for Hyprland on Omarchy: a set of tabs for each thing you work on.
+A set of tabs for each thing you work on, for Hyprland on Omarchy.
 
 A **space** holds one piece of work. Each space has its own **tabs**, and each tab is a Hyprland workspace (`s1:1`, `s1:2`, …) holding whatever windows you tile there. The plain numbered workspaces are the `home` space.
 
@@ -10,7 +10,7 @@ The spaces have their own column down the left of the screen, and the active spa
 
 A tab is named after its most recently focused window: a terminal by what it's running (`claude`, `nvim`), or by the folder it's in when it's at its prompt, and any other app by its name. Name a tab yourself, by double-clicking it or with a key bound to `renameTab` (see Keys), and it keeps that name whatever runs in it, until you clear it with an empty name or close the tab. `home`'s tabs show just their numbers, as Omarchy's workspaces do, until you name one; each monitor's are named on their own.
 
-A dot shows which spaces need you. An agent in a terminal says what it's doing, and its tab and its space's badge show it: red when it's waiting for you (a permission prompt, a question, an error), green when it finished while you were elsewhere, and a breathing dot in the text's colour while it works. A space shows whichever of its agents most needs you, and green clears once you focus the agent's window. A sound plays when an agent starts waiting for you, and when one finishes while you aren't looking at its window: Herdr's own (`assets/sounds/`), unless `[sounds]` in the config names others or sets `enabled = false`. This needs [herdr-core](https://github.com/herdrdev/herdr-core) (`hc`): the terminals renSpace opens then run in it, and any agent that reports its status through OSC 7501, as Claude Code, opencode, pi and Kimi do, shows here. Without it, terminals are plain and have no dots.
+A dot shows which spaces need you. An agent in a terminal says what it's doing, and its tab and its space's badge show it: red when it's waiting for you (a permission prompt, a question, an error), green when it finished while you were elsewhere, and a breathing dot in the text's colour while it works. A space shows whichever of its agents most needs you, and green clears once you focus the agent's window. A sound plays when an agent starts waiting for you, and when one finishes while you aren't looking at its window: Herdr's own (`assets/sounds/`), unless `[sounds]` in the config names others or sets `enabled = false`. This needs [herdr-core](https://github.com/herdrdev/herdr-core) (`hc`): the terminals Spaces opens then run in it, and any agent that reports its status through OSC 7501, as Claude Code, opencode, pi and Kimi do, shows here. Without it, terminals are plain and have no dots.
 
 Click `+` at the end of the list to open a new space with a terminal in the folder you are in, or home if you aren't in one: you go there once the terminal is up, so you never see the space empty. A new tab, from the `+` after the tabs or `space ws new`, opens the same way, with a terminal in the space's folder. Right-click a space to rename it, change its icon or close it. Drag a space up or down to move it; a press has to move a good part of a row before it becomes a drag, so clicks stay clicks. `home` stays first. The sidebar takes the bar's look, which double-clicking the bar cycles between opaque, glassy and clear.
 
@@ -21,7 +21,7 @@ just install   # build the space CLI into ~/.cargo/bin
 just setup     # add the tabs to the bar, the sidebar and the Hyprland hooks
 ```
 
-For agents' status, install herdr-core as its README says, so `hc` is on your PATH. renSpace starts its core when it isn't running.
+For agents' status, install herdr-core as its README says, so `hc` is on your PATH. Spaces starts its core when it isn't running.
 
 ### Toggle in place of the menu
 
@@ -29,7 +29,7 @@ To save the rail a row, the sidebar's header can move up onto the bar, where Oma
 
 ```json
 "left": [
-  { "id": "org.ren.renspace", "toggle": true }
+  { "id": "com.t4t5.spaces", "toggle": true }
 ]
 ```
 
@@ -37,15 +37,15 @@ It needs the bar along the top or bottom of the screen, with the tabs first in i
 
 ## Keys
 
-renSpace binds no keys, so it never takes one of Omarchy's or yours. Bind the ones you want in `~/.config/hypr/bindings.lua`, after the `require` that `just setup` adds, using `o.rebind` for a key Omarchy already binds. For example:
+Spaces binds no keys, so it never takes one of Omarchy's or yours. Bind the ones you want in `~/.config/hypr/bindings.lua`, after the `require` that `just setup` adds, using `o.rebind` for a key Omarchy already binds. For example:
 
 ```lua
-local renspace = require("hypr.renspace")
+local spaces = require("hypr.omarchy-spaces")
 
-o.rebind("SUPER + B", "Show or hide spaces", "omarchy-shell shell call org.ren.renspace showOrHide ''")
-o.rebind("SUPER + P", "Find a space", { panel = "org.ren.renspace" })
-o.rebind("SUPER + SHIFT + R", "Rename space", "omarchy-shell shell call org.ren.renspace rename ''")
-o.rebind("SUPER + COMMA", "Rename tab", "omarchy-shell shell call org.ren.renspace renameTab ''")
+o.rebind("SUPER + B", "Show or hide spaces", "omarchy-shell shell call com.t4t5.spaces showOrHide ''")
+o.rebind("SUPER + P", "Find a space", { panel = "com.t4t5.spaces" })
+o.rebind("SUPER + SHIFT + R", "Rename space", "omarchy-shell shell call com.t4t5.spaces rename ''")
+o.rebind("SUPER + COMMA", "Rename tab", "omarchy-shell shell call com.t4t5.spaces renameTab ''")
 o.rebind("SUPER + SHIFT + J", "Next space", "space next")
 o.rebind("SUPER + SHIFT + K", "Previous space", "space prev")
 o.rebind("SUPER + N", "New space", "space new")
@@ -55,9 +55,9 @@ o.rebind("SUPER + TAB", "Next tab", "space ws next")
 o.rebind("SUPER + SHIFT + TAB", "Previous tab", "space ws prev")
 for n = 1, 10 do
   local key = "code:" .. tostring(n + 9)
-  o.rebind("SUPER + " .. key, "Go to tab " .. n, renspace.go_to_tab(n))
-  o.rebind("SUPER + SHIFT + " .. key, "Move window to tab " .. n, renspace.move_window_to_tab(n))
-  o.rebind("SUPER + SHIFT + ALT + " .. key, "Move window silently to tab " .. n, renspace.move_window_to_tab(n, false))
+  o.rebind("SUPER + " .. key, "Go to tab " .. n, spaces.go_to_tab(n))
+  o.rebind("SUPER + SHIFT + " .. key, "Move window to tab " .. n, spaces.move_window_to_tab(n))
+  o.rebind("SUPER + SHIFT + ALT + " .. key, "Move window silently to tab " .. n, spaces.move_window_to_tab(n, false))
 end
 ```
 
@@ -69,12 +69,12 @@ end
 | `space send next` / `space send prev` | Send the window to the next / previous space, and go with it |
 | `renameTab` | Name the tab you are on: type over its name on the bar, Enter to keep it, Escape to stop. An empty name has it called after its window again |
 | `rename` | Rename the space you are in: type over its name in the sidebar, Enter to keep it, Escape to stop. An empty name has it called after its folder again |
-| the `org.ren.renspace` panel | Find a space: type to filter, Enter to switch, Escape to stop. Expands the sidebar for the search if it's collapsed |
+| the `com.t4t5.spaces` panel | Find a space: type to filter, Enter to switch, Escape to stop. Expands the sidebar for the search if it's collapsed |
 | `space terminal` | Terminal in the folder you are in; on an empty tab, the space's folder |
 | `space ws new` | New tab, with a terminal in the space's folder |
-| `renspace.go_to_tab(n)` | Go to tab N |
+| `spaces.go_to_tab(n)` | Go to tab N |
 | `space ws next` / `space ws prev` | Next / previous tab |
-| `renspace.move_window_to_tab(n)` | Move the window to tab N; with `false`, staying where you are |
+| `spaces.move_window_to_tab(n)` | Move the window to tab N; with `false`, staying where you are |
 
 In `home`, `go_to_tab` and `move_window_to_tab` behave exactly as Omarchy's workspace keys, so a new tab there opens empty.
 
@@ -99,14 +99,14 @@ space move <n> [--silent]
 
 A space can be given by what it's called or by its id (`s1`, as `space ls` shows). `space close` asks each app to close, as `super+w` does, so an app can still stop to save.
 
-A terminal renSpace opens runs `space shell`: a shell in herdr-core, in the terminal's folder and with its environment, labelled with the window's process so renSpace can tell which window shows it, and attached to the window. The window is the terminal: closing it, or the shell exiting, ends both, and `ctrl+\` (`hc attach`'s detach) closes it too. Inside, `TERM` is core's (`xterm-256color`), not your terminal app's. Without core, `space shell` runs your own shell.
+A terminal Spaces opens runs `space shell`: a shell in herdr-core, in the terminal's folder and with its environment, labelled with the window's process so Spaces can tell which window shows it, and attached to the window. The window is the terminal: closing it, or the shell exiting, ends both, and `ctrl+\` (`hc attach`'s detach) closes it too. Inside, `TERM` is core's (`xterm-256color`), not your terminal app's. Without core, `space shell` runs your own shell.
 
 ## How it fits together
 
 - `src/` is the `space` CLI, in Rust. It keeps no state about windows: it asks Hyprland over its socket, then dispatches. A terminal's folder, what it runs and its agent's status come from herdr-core, over its socket (`core.rs`), for terminals running in it; other terminals' folders come from their shells, in `/proc`, as Omarchy's `omarchy-cmd-terminal-cwd` does.
 - `omarchy/` is the Omarchy shell plugin (QML): the tabs as a bar widget (`TabsWidget.qml`), and the sidebar, which `Base.qml` draws under the windows. Their logic is in `Tabs.qml`, `Sidebar.qml`, `SidebarList.qml` and `Spaces.mjs`. Both read the spaces from one `space watch` that the plugin's service runs (`Watch.qml`) and restarts when it ends, as it does when Hyprland restarts or `space` is reinstalled. It reads Hyprland again only when Hyprland's events say something changed. It follows herdr-core's events for its terminals. A shell outside core changing folder or starting a program sends no event, so it reads the active space's other terminals' shells five times a second, the rest every two seconds, and all of them when a window's title changes, as terminals retitle themselves on `cd` and as a command starts. A terminal's program is the leader of the foreground process group on its shell's tty.
-- `hypr/renspace.lua` holds the tab actions for your own keys, the hook that moves on from a tab emptied by closing its last window (`space emptied`), and the blur behind a glassy sidebar and bar.
-- `~/.local/state/renspace/spaces.json` holds what Hyprland can't about each live space: the name and icon you gave it, the terminal it follows and that terminal's last folder. `~/.config/renspace/config.toml` can set `terminal`, the command that opens one (default: Omarchy's, `xdg-terminal-exec`, running `space shell`; have yours run `space shell` too for agents' status), `picker`, for `space go` with no space named, and `[sounds]`: `done` and `waiting` files, and `enabled`.
+- `hypr/omarchy-spaces.lua` holds the tab actions for your own keys, the hook that moves on from a tab emptied by closing its last window (`space emptied`), and the blur behind a glassy sidebar and bar.
+- `~/.local/state/omarchy-spaces/spaces.json` holds what Hyprland can't about each live space: the name and icon you gave it, the terminal it follows and that terminal's last folder. `~/.config/omarchy-spaces/config.toml` can set `terminal`, the command that opens one (default: Omarchy's, `xdg-terminal-exec`, running `space shell`; have yours run `space shell` too for agents' status), `picker`, for `space go` with no space named, and `[sounds]`: `done` and `waiting` files, and `enabled`.
 
 ## Development
 
