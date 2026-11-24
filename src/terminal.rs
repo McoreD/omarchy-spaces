@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 
+use crate::agent::{self, Conversation};
 use crate::{core, paths, status};
 
 /// What the shell of a terminal window is doing: the folder it's in, and
@@ -22,6 +23,8 @@ pub struct Shell {
     /// What an agent in this terminal last reported, from herdr-core or
     /// `space status`. `None` when nothing has reported.
     pub agent: Option<Agent>,
+    /// The conversation the agent it's running is in, to pick up again.
+    pub conversation: Option<Conversation>,
 }
 
 /// Where an agent's status came from.
@@ -130,6 +133,10 @@ fn from_core(terminal: &core::Terminal) -> Shell {
             turn: terminal.turn,
             seen_turn: terminal.seen_turn(),
         }),
+        conversation: terminal
+            .foreground
+            .as_ref()
+            .and_then(|fg| agent::conversation(fg.pid?)),
     }
 }
 
@@ -140,8 +147,8 @@ fn from_core(terminal: &core::Terminal) -> Shell {
 /// kitty's `kitten` helpers or a browser's, don't qualify.
 ///
 /// For tests, `SPACES_FAKE_CWDS` names a folder of symlinks, one per pid,
-/// pointing at that "terminal's" folder, and of `<pid>.program` files
-/// holding what it runs.
+/// pointing at that "terminal's" folder, and of `<pid>.program` and
+/// `<pid>.conversation` files holding what it runs.
 pub fn shell(pid: u32) -> Option<Shell> {
     if let Some(fake) = std::env::var_os("SPACES_FAKE_CWDS") {
         let fake = Path::new(&fake);
@@ -154,6 +161,9 @@ pub fn shell(pid: u32) -> Option<Shell> {
             cwd,
             program,
             agent: None,
+            conversation: std::fs::read_to_string(fake.join(format!("{pid}.conversation")))
+                .ok()
+                .and_then(|text| serde_json::from_str(&text).ok()),
         });
     }
     let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
@@ -175,8 +185,9 @@ pub fn shell(pid: u32) -> Option<Shell> {
     let cwd = std::fs::canonicalize(format!("/proc/{shell}/cwd")).ok()?;
     Some(Shell {
         cwd,
-        program: foreground(&stat, &shells),
+        program: foreground(&stat, &shells).and_then(program_name),
         agent: None,
+        conversation: foreground(&stat, &shells).and_then(agent::conversation),
     })
 }
 
@@ -243,14 +254,10 @@ pub fn owner_pid(ancestors: &[u32], window_pid: u32) -> Option<u32> {
     let end = ancestors.iter().position(|&pid| pid == window_pid)?;
     let inside = &ancestors[..end];
     let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
-    let shell_index = inside
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(i, &pid)| {
-            let stat = Stat::read(pid)?;
-            is_shell(pid, &stat, &shells).then_some(i)
-        })?;
+    let shell_index = inside.iter().enumerate().rev().find_map(|(i, &pid)| {
+        let stat = Stat::read(pid)?;
+        is_shell(pid, &stat, &shells).then_some(i)
+    })?;
     // Index 0 is `space` itself; index 1 would mean `space` is the shell's
     // direct child (run from the prompt). Anything above that has an agent
     // process sitting at `shell_index - 1`.
@@ -278,15 +285,12 @@ fn is_shell_binary(pid: u32, shells: &str) -> bool {
 /// at its prompt: the leader of the foreground process group, which is the
 /// command you ran, or the first of a pipeline. Another shell started from
 /// this one (`bash`, `nix develop`) counts as a prompt too.
-fn foreground(shell: &Stat, shells: &str) -> Option<String> {
+fn foreground(shell: &Stat, shells: &str) -> Option<u32> {
     if shell.tpgid <= 0 || shell.tpgid == shell.pgrp {
         return None;
     }
     let leader = u32::try_from(shell.tpgid).ok()?;
-    if is_shell_binary(leader, shells) {
-        return None;
-    }
-    program_name(leader)
+    (!is_shell_binary(leader, shells)).then_some(leader)
 }
 
 /// What to call the program `pid` runs: its command name, as `ps` shows it,
@@ -347,14 +351,30 @@ pub fn folder_name(dir: &Path) -> String {
 }
 
 /// The terminal `command` as one shell command that runs it in `dir` with
-/// `SPACES_DIR` set, for Hyprland to run (`launch` sets them itself).
-pub fn command_in(command: &str, dir: &Path) -> String {
+/// `SPACES_DIR` and `env` set, for Hyprland to run (`launch` sets them
+/// itself).
+pub fn command_in(command: &str, dir: &Path, env: &[(&str, &str)]) -> String {
     let dir = shell_quote(&dir.to_string_lossy());
-    format!("cd -- {dir} && export SPACES_DIR={dir} && {command}")
+    let mut set = format!("SPACES_DIR={dir}");
+    for (key, value) in env {
+        set.push_str(&format!(" {key}={}", shell_quote(value)));
+    }
+    format!("cd -- {dir} && export {set} && {command}")
+}
+
+/// Whether the window run by `pid` was started with `key` set to `value`.
+pub fn was_given(pid: u32, key: &str, value: &str) -> bool {
+    // Tests' windows have no processes.
+    if std::env::var_os("SPACES_FAKE_CWDS").is_some() {
+        return true;
+    }
+    let given = format!("{key}={value}");
+    std::fs::read(format!("/proc/{pid}/environ"))
+        .is_ok_and(|env| env.split(|&b| b == 0).any(|var| var == given.as_bytes()))
 }
 
 /// `value` in single quotes for `sh`.
-fn shell_quote(value: &str) -> String {
+pub fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
@@ -417,15 +437,15 @@ mod tests {
     #[test]
     fn runs_the_terminal_command_in_a_folder() {
         assert_eq!(
-            command_in("exec kitty", Path::new("/p/it's here")),
-            r#"cd -- '/p/it'\''s here' && export SPACES_DIR='/p/it'\''s here' && exec kitty"#
+            command_in("exec kitty", Path::new("/p/it's here"), &[("A", "b c")]),
+            r#"cd -- '/p/it'\''s here' && export SPACES_DIR='/p/it'\''s here' A='b c' && exec kitty"#
         );
         let tmp = tempfile::tempdir().unwrap();
         let odd = tmp.path().join("a 'b' $c");
         std::fs::create_dir_all(&odd).unwrap();
         let out = Command::new("sh")
             .arg("-c")
-            .arg(command_in("pwd; echo \"$SPACES_DIR\"", &odd))
+            .arg(command_in("pwd; echo \"$SPACES_DIR\"", &odd, &[]))
             .output()
             .unwrap();
         let odd = odd.display().to_string();
@@ -464,6 +484,7 @@ mod tests {
             cwd: cwd.to_path_buf(),
             program: program.map(String::from),
             agent: None,
+            conversation: None,
         };
         assert_eq!(at(Path::new("/p/ren"), Some("claude")).label(), "claude");
         assert_eq!(at(Path::new("/p/ren/src"), None).label(), "src");

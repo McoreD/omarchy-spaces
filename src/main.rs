@@ -68,8 +68,12 @@ enum Cmd {
     /// Close every window of a space, the active one unless you say which.
     Close { space: Option<String> },
     /// Open the spaces that were up before Hyprland last restarted, with
-    /// their terminals in the folders they were in.
-    Restore,
+    /// their terminals arranged as they were.
+    Restore {
+        /// An earlier session to open instead, from
+        /// ~/.local/state/omarchy-spaces/sessions/.
+        file: Option<PathBuf>,
+    },
     /// Open a terminal in the folder you are in, or the active space's.
     Terminal,
     /// Report what an agent in this terminal is doing: working, waiting, done
@@ -179,7 +183,7 @@ fn main() -> ExitCode {
         },
         Cmd::Reorder { space, position } => commands::reorder(space, position),
         Cmd::Close { space } => commands::close(space),
-        Cmd::Restore => commands::restore(),
+        Cmd::Restore { file } => commands::restore(file),
         Cmd::Terminal => commands::open_terminal(),
         Cmd::Status { state, window, pid } => commands::status(&state, window, pid),
         Cmd::Watch { sounds } => watch::watch(sounds),

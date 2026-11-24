@@ -51,6 +51,8 @@ pub struct Terminal {
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct Foreground {
+    #[serde(default)]
+    pub pid: Option<u32>,
     /// Its name as the OS has it: `zsh`, `claude`, `nvim`.
     pub name: String,
     #[serde(default)]
@@ -145,10 +147,11 @@ pub fn list() -> Result<Vec<Terminal>> {
     Ok(serde_json::from_value(result["terminals"].clone())?)
 }
 
-/// Starts a shell for the window run by `window`, in `cwd`, with `env` on
-/// top of core's own, `cols` by `rows` until a viewer resizes it. It goes
+/// Starts a shell, or `argv` instead, for the window run by `window`, in
+/// `cwd`, with `env` on top of core's own, `cols` by `rows` until a viewer resizes it. It goes
 /// once it exits. Returns its address.
 pub fn run_shell(
+    argv: &[String],
     cwd: &std::path::Path,
     env: &BTreeMap<String, String>,
     window: u32,
@@ -161,6 +164,9 @@ pub fn run_shell(
         "no_parent": true,
         "rm": true,
     });
+    if !argv.is_empty() {
+        params["argv"] = json!(argv);
+    }
     if let Some((cols, rows)) = size {
         params["size"] = json!({ "cols": cols, "rows": rows });
     }

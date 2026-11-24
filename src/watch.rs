@@ -3,7 +3,8 @@
 //! it for the bar and the sidebar instead of asking `space ls` over and over.
 //!
 //! Hyprland says when windows and workspaces change, on its event socket, so
-//! its state is read again only then. herdr-core says what runs in its
+//! its state is read again then, and every `SLOW` for what it doesn't say: a
+//! window resized, which the saved session (`session.rs`) has. herdr-core says what runs in its
 //! terminals, their folders and what their agents report (`core.rs`), so
 //! windows showing its terminals are kept current from its events. Nothing
 //! says what other terminals' shells do, so those are read from `/proc`,
@@ -107,6 +108,8 @@ pub fn watch(sounds: bool) -> Result<()> {
             if replaced() {
                 return Ok(());
             }
+            // Hyprland has no event for a window resized or a split turned.
+            snapshot = commands::snapshot(&hypr)?;
             if !subscribed {
                 subscribed = core::subscribe(send.clone(), Message::Core).is_ok();
             }
@@ -219,7 +222,16 @@ pub fn watch(sounds: bool) -> Result<()> {
             eprintln!("space: warning: {e:#}");
         }
         known = store.saved().clone();
-        let session = commands::session_of(&hypr.instance, &rows, &store);
+        let session = commands::session_of(
+            &hypr.instance,
+            &rows,
+            &live,
+            &snapshot,
+            &saver
+                .as_mut()
+                .map(session::Saver::before)
+                .unwrap_or_default(),
+        );
         // Unlocked before printing, which waits for the reader.
         drop(store);
         if let Some(saver) = &mut saver

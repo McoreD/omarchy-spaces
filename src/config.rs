@@ -48,6 +48,9 @@ pub struct Config {
     /// Whether terminals Spaces opens run in herdr-core (`space shell`).
     /// When unset, uses herdr-core only when `hc` is on `PATH`.
     pub herdr_core: Option<bool>,
+    /// Whether a restart picks up the agents' conversations again. When unset,
+    /// it does.
+    pub resume_agents: Option<bool>,
     /// The sounds when an agent needs you (`sound.rs`).
     pub sounds: Option<Sounds>,
 }
@@ -92,6 +95,16 @@ impl Config {
     /// Whether default terminals run in herdr-core (`space shell`).
     pub fn use_herdr_core(&self) -> bool {
         self.herdr_core.unwrap_or_else(|| on_path("hc"))
+    }
+
+    /// The terminal command for picking up a conversation, which `space shell`
+    /// does. A terminal of your own has to run that itself.
+    pub fn resuming_terminal(&self) -> String {
+        let terminal = self.terminal();
+        if self.terminal.is_some() || self.use_herdr_core() {
+            return terminal;
+        }
+        format!("{terminal} {}", space_shell())
     }
 
     /// The configured terminal command, or Omarchy's way.
@@ -155,12 +168,20 @@ mod tests {
         let config = Config::load_from(&path).unwrap();
         assert!(!config.use_herdr_core());
         assert!(config.terminal().contains("xdg-terminal-exec"));
-        assert!(!config.terminal().ends_with("' shell"), "{}", config.terminal());
+        assert!(
+            !config.terminal().ends_with("' shell"),
+            "{}",
+            config.terminal()
+        );
 
         fs::write(&path, "herdr_core = true\n").unwrap();
         let config = Config::load_from(&path).unwrap();
         assert!(config.use_herdr_core());
-        assert!(config.terminal().ends_with("' shell"), "{}", config.terminal());
+        assert!(
+            config.terminal().ends_with("' shell"),
+            "{}",
+            config.terminal()
+        );
     }
 
     #[test]

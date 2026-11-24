@@ -37,7 +37,32 @@ struct Hyprland {
     listeners: Arc<Mutex<Vec<UnixStream>>>,
     /// Every dispatch received.
     dispatched: Vec<String>,
+    /// Every script received.
+    evaluated: Vec<String>,
+    /// Whether it says how windows are laid out, as 0.56 does.
+    layouts: bool,
     next_named_id: i64,
+}
+
+/// What runs on the desktop the tests run on, if a test's own "terminal" isn't
+/// used: none of it may, as it would open real windows there.
+const LAUNCHERS: &[&str] = &["uwsm-app", "xdg-terminal-exec", "setsid", "kitty"];
+
+/// A PATH on which each of those notes that it was run, and does nothing.
+fn safe_path(home: &Path) -> String {
+    let stubs = home.join("stubs");
+    format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap())
+}
+
+fn write_stubs(home: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let stubs = home.join("stubs");
+    fs::create_dir_all(&stubs).unwrap();
+    for name in LAUNCHERS {
+        let stub = stubs.join(name);
+        fs::write(&stub, "#!/bin/sh\npwd >> \"$HOME/launched-for-real\"\n").unwrap();
+        fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+    }
 }
 
 impl Hyprland {
@@ -59,7 +84,8 @@ impl Hyprland {
     fn workspace_json(&mut self, name: &str) -> Value {
         let id = self.ensure(name);
         let windows = self.windows.iter().filter(|w| *w == name).count();
-        json!({ "id": id, "name": name, "monitor": "eDP-1", "windows": windows })
+        let layout = if self.layouts { "dwindle" } else { "" };
+        json!({ "id": id, "name": name, "monitor": "eDP-1", "windows": windows, "tiledLayout": layout })
     }
 
     /// Hyprland destroys empty workspaces that aren't focused.
@@ -126,7 +152,13 @@ impl Hyprland {
                     self.tidy();
                     reply
                 }
-                None => "unknown request".into(),
+                None => match request.strip_prefix("eval ") {
+                    Some(script) => {
+                        self.evaluated.push(script.to_string());
+                        "ok".into()
+                    }
+                    None => "unknown request".into(),
+                },
             },
         }
     }
@@ -170,6 +202,8 @@ impl Hyprland {
             std::process::Command::new("sh")
                 .arg("-c")
                 .arg(&command)
+                .env_clear()
+                .env("PATH", safe_path(&self.home))
                 .env("HOME", &self.home)
                 .status()
                 .unwrap();
@@ -438,6 +472,7 @@ impl Env {
             listeners,
         };
         env.write_config("");
+        write_stubs(&env.home());
         env
     }
 
@@ -455,7 +490,7 @@ impl Env {
             .args(args)
             .current_dir(self.home())
             .env_clear()
-            .env("PATH", std::env::var("PATH").unwrap())
+            .env("PATH", safe_path(&self.home()))
             .env("HOME", self.home())
             .env("XDG_RUNTIME_DIR", self.root.path().join("run"))
             .env("HYPRLAND_INSTANCE_SIGNATURE", "test")
@@ -1015,15 +1050,147 @@ fn restore_opens_the_last_sessions_spaces_once() {
         [notes.display().to_string(), mail.clone(), mail]
     );
     let rows = env.ls_json();
-    let work = rows.iter()
-        .find(|r| r["id"] == "s2")
-        .unwrap();
+    let work = rows.iter().find(|r| r["id"] == "s2").unwrap();
     assert_eq!(work["label"], "Work");
     assert_eq!(work["icon"], "x");
     assert_eq!(work["tabs"]["2"], "logs");
 
     env.ok(&["restore"]);
     assert_eq!(env.hypr.lock().unwrap().windows.len(), 4);
+}
+
+#[test]
+fn restore_brings_back_home_and_where_you_were() {
+    let env = Env::new();
+    let (notes, mail) = (env.dir("notes"), env.dir("mail"));
+    fs::create_dir_all(env.state()).unwrap();
+    let saved = json!({ "instance": "before", "spaces": [
+        { "home": true, "tabs": { "3": "notes" }, "terminals": [
+            { "slot": 1, "folder": mail }, { "slot": 3, "folder": notes } ] },
+        { "active": true, "last": 2, "terminals": [
+            { "slot": 1, "folder": notes }, { "slot": 2, "folder": mail } ] },
+    ] });
+    fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
+
+    env.ok(&["restore"]);
+    assert_eq!(env.hypr.lock().unwrap().windows, ["1", "3", "s1:1", "s1:2"]);
+    assert_eq!(env.ls_json()[0]["tabs"]["3"], "notes");
+    assert_eq!(env.active(), "s1:2");
+    assert!(env.hypr.lock().unwrap().evaluated.is_empty());
+}
+
+#[test]
+fn restore_leaves_you_where_you_have_started_on_something() {
+    let env = Env::new();
+    let notes = env.dir("notes");
+    fs::create_dir_all(env.state()).unwrap();
+    let saved = json!({ "instance": "before", "spaces": [
+        { "active": true, "last": 1, "terminals": [{ "slot": 1, "folder": notes }] },
+    ] });
+    fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
+    env.add_window("1");
+    env.ok(&["restore"]);
+    assert_eq!(env.hypr.lock().unwrap().windows, ["1", "s1:1"]);
+    assert_eq!(env.active(), "1");
+}
+
+#[test]
+fn restore_arranges_windows_as_they_were() {
+    let env = Env::new();
+    let notes = env.dir("notes");
+    env.hypr.lock().unwrap().layouts = true;
+    fs::create_dir_all(env.state()).unwrap();
+    let saved = json!({ "instance": "before", "spaces": [{
+        "layouts": { "1": {
+            "tiles": { "split": "down", "share": 0.7, "first": [1], "second": [0] },
+            "focused": 0,
+        } },
+        "terminals": [
+            { "slot": 1, "folder": notes }, { "slot": 1, "folder": notes },
+            { "slot": 2, "folder": notes, "fullscreen": 1 },
+        ],
+    }] });
+    fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
+    env.ok(&["restore"]);
+    let windows = env.hypr.lock().unwrap().addresses.clone();
+    let [a, b, c] = windows[..] else {
+        panic!("{windows:?}")
+    };
+    let scripts = env.hypr.lock().unwrap().evaluated.clone();
+    assert_eq!(scripts.len(), 2, "one a tab");
+    let split = format!(r#"split("address:0x{b:x}", "address:0x{a:x}", "d", 1.4000)"#);
+    assert!(scripts[0].contains(&split), "{}", scripts[0]);
+    assert!(scripts[0].contains(&format!(r#"focus("address:0x{a:x}")"#)));
+    let full = format!(r#"mode = "maximized", action = "set", window = "address:0x{c:x}""#);
+    assert!(scripts[1].contains(&full), "{}", scripts[1]);
+}
+
+#[test]
+fn restore_picks_up_conversations_where_they_were() {
+    let id = "be6fb713-2beb-4233-86c2-266ee407ec56";
+    for resume in [true, false] {
+        let env = Env::new();
+        let notes = env.dir("notes");
+        let log = env.home().join("resumed");
+        env.write_config(&format!("resume_agents = {resume}"));
+        let config = env.home().join(".config/omarchy-spaces/config.toml");
+        let text = fs::read_to_string(&config).unwrap();
+        let noting = text.replace(
+            "pwd >> \"$HOME/launched\"",
+            "echo \"$SPACES_RESUME\" >> \"$HOME/resumed\"",
+        );
+        fs::write(&config, noting).unwrap();
+        fs::create_dir_all(env.state()).unwrap();
+        let talk =
+            |id: &str, folder: &Path| json!({ "agent": "claude", "id": id, "folder": folder });
+        let saved = json!({ "instance": "before", "spaces": [{ "terminals": [
+            { "slot": 1, "folder": notes, "conversation": talk(id, &notes) },
+            { "slot": 2, "folder": notes, "conversation": talk("x; rm -rf ~", &notes) },
+            { "slot": 3, "folder": notes.join("gone"),
+              "conversation": talk(id, &notes.join("gone")) },
+        ] }] });
+        fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
+        env.ok(&["restore"]);
+        let first = if resume {
+            format!("claude {id}")
+        } else {
+            String::new()
+        };
+        assert_eq!(fs::read_to_string(log).unwrap(), format!("{first}\n\n\n"));
+    }
+}
+
+#[test]
+fn restore_gets_by_without_a_config_it_can_read() {
+    let env = Env::new();
+    let notes = env.dir("notes");
+    env.write_config("terminal = 'twice'");
+    fs::create_dir_all(env.state()).unwrap();
+    let saved = json!({ "instance": "before", "spaces": [
+        { "terminals": [{ "slot": 1, "folder": notes }] },
+    ] });
+    fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
+    env.ok(&["restore"]);
+    // Omarchy's own terminal, which here is a stub.
+    let launched = fs::read_to_string(env.home().join("launched-for-real")).unwrap();
+    assert_eq!(launched.trim(), notes.display().to_string());
+}
+
+#[test]
+fn restore_opens_an_earlier_session_from_its_file() {
+    let env = Env::new();
+    let notes = env.dir("notes");
+    let file = env.home().join("earlier.json");
+    let saved = json!({ "instance": "test", "spaces": [
+        { "name": "Work", "terminals": [{ "slot": 1, "folder": notes }] },
+    ] });
+    fs::write(&file, saved.to_string()).unwrap();
+    env.ok(&["restore", file.to_str().unwrap()]);
+    assert_eq!(env.ls_json()[1]["label"], "Work");
+    assert!(
+        env.fails(&["restore", "missing.json"])
+            .contains("missing.json")
+    );
 }
 
 #[test]

@@ -2,10 +2,12 @@
 //! the folder its terminal is in, with its own set of workspaces, `<id>:1` to
 //! `<id>:10`. See the README.
 
+pub mod agent;
 pub mod commands;
 pub mod config;
 pub mod core;
 pub mod hypr;
+pub mod layout;
 pub mod name;
 pub mod paths;
 pub mod reserve;

@@ -22,6 +22,12 @@ pub struct Workspace {
     pub name: String,
     #[serde(default)]
     pub windows: u32,
+    /// The monitor it's on, by name.
+    #[serde(default)]
+    pub monitor: String,
+    /// The layout its windows are tiled by.
+    #[serde(default, rename = "tiledLayout")]
+    pub layout: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -31,6 +37,48 @@ pub struct Client {
     #[serde(default)]
     pub pid: i64,
     pub workspace: WorkspaceRef,
+    #[serde(default)]
+    pub at: (i32, i32),
+    #[serde(default)]
+    pub size: (i32, i32),
+    #[serde(default)]
+    pub floating: bool,
+    /// 0 when it isn't, 1 maximized, 2 fullscreen.
+    #[serde(default)]
+    pub fullscreen: u8,
+    /// The windows it's grouped with, itself included.
+    #[serde(default)]
+    pub grouped: Vec<String>,
+    /// How long ago it had focus: 0 for the one that has it.
+    #[serde(default, rename = "focusHistoryID")]
+    pub focus: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Monitor {
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: f64,
+    pub height: f64,
+    pub scale: f64,
+    /// Turned a quarter when odd.
+    #[serde(default)]
+    pub transform: u8,
+}
+
+impl Monitor {
+    /// Its size in logical pixels.
+    pub fn size(&self) -> (i32, i32) {
+        let scale = if self.scale > 0.0 { self.scale } else { 1.0 };
+        let (w, h) = (self.width / scale, self.height / scale);
+        let (w, h) = (w.round() as i32, h.round() as i32);
+        if self.transform % 2 == 1 {
+            (h, w)
+        } else {
+            (w, h)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -118,6 +166,30 @@ impl Hypr {
         self.query("clients")
     }
 
+    pub fn monitors(&self) -> Result<Vec<Monitor>> {
+        self.query("monitors")
+    }
+
+    /// A number from Hyprland's config, `None` when it has none by that name.
+    pub fn option(&self, name: &str) -> Option<i32> {
+        let option: serde_json::Value = self.query(&format!("getoption {name}")).ok()?;
+        let on = option.get("bool").and_then(serde_json::Value::as_bool);
+        let number = option.get("int").and_then(serde_json::Value::as_i64);
+        on.map(i32::from)
+            .or_else(|| number.and_then(|n| i32::try_from(n).ok()))
+    }
+
+    /// Runs a Lua script, all of it between two frames.
+    pub fn eval(&self, script: &str) -> Result<()> {
+        let reply = self.request(&format!("eval {script}"))?;
+        let reply = reply.trim();
+        if reply == "ok" {
+            Ok(())
+        } else {
+            bail!("Hyprland couldn't run a script: {reply}")
+        }
+    }
+
     /// Whether any window has focus. Hyprland answers `{}` when none does.
     pub fn has_active_window(&self) -> Result<bool> {
         let window: serde_json::Value = self.query("activewindow")?;
@@ -183,6 +255,15 @@ pub fn move_window(selector: &str, follow: bool) -> String {
     format!(
         "hl.dsp.window.move({{ workspace = {}, follow = {follow} }})",
         lua_string(selector)
+    )
+}
+
+/// Move a workspace to a monitor, by its name.
+pub fn move_workspace(selector: &str, monitor: &str) -> String {
+    format!(
+        "hl.dsp.workspace.move({{ workspace = {}, monitor = {} }})",
+        lua_string(selector),
+        lua_string(monitor)
     )
 }
 

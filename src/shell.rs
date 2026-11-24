@@ -14,8 +14,10 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 
-use crate::config;
+use crate::agent;
+use crate::config::{self, Config};
 use crate::core;
+use crate::terminal::shell_quote;
 
 /// Attaches to the shell, then ends it however the window goes: the shell
 /// exiting, `hc attach` detaching, or the window closing, which hangs up
@@ -25,11 +27,22 @@ trap 'end "$1"; exit' HUP TERM
 hc attach "$1"
 end "$1""#;
 
+/// The conversation to pick up before the shell, as `claude <id>`.
+pub const RESUME: &str = "SPACES_RESUME";
+/// Names the window to the `space restore` that opened it.
+pub const RESTORE: &str = "SPACES_RESTORE";
+
 pub fn shell() -> Result<()> {
-    let error = if !config::on_path("hc") {
-        own_shell()
+    let argv = std::env::var(RESUME)
+        .ok()
+        .and_then(|resume| agent::parse_resume(&resume))
+        .map(|command| agent_shell(&command))
+        .unwrap_or_default();
+    let wanted = Config::load().unwrap_or_default().use_herdr_core();
+    let error = if !wanted || !config::on_path("hc") {
+        own_shell(&argv)
     } else {
-        match core_shell() {
+        match core_shell(&argv) {
             Ok(address) => Command::new("sh")
                 .arg("-c")
                 .arg(ATTACH)
@@ -38,7 +51,7 @@ pub fn shell() -> Result<()> {
                 .exec(),
             Err(e) => {
                 eprintln!("space: no herdr-core, so a plain shell: {e:#}");
-                own_shell()
+                own_shell(&argv)
             }
         }
     };
@@ -46,13 +59,13 @@ pub fn shell() -> Result<()> {
 }
 
 /// A new shell in core, here, for this window: its address.
-fn core_shell() -> Result<String> {
+fn core_shell(argv: &[String]) -> Result<String> {
     anyhow::ensure!(config::on_path("hc"), "hc isn't installed");
     let cwd = std::env::current_dir()?;
     let window = std::os::unix::process::parent_id();
     let env = forwarded_env(std::env::vars());
     let size = tty_size();
-    match core::run_shell(&cwd, &env, window, size) {
+    match core::run_shell(argv, &cwd, &env, window, size) {
         Ok(address) => Ok(address),
         // Core isn't running: start it, as `hc` would, unless pointed at a
         // particular one.
@@ -63,20 +76,37 @@ fn core_shell() -> Result<String> {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status()?;
-            core::run_shell(&cwd, &env, window, size)
+            core::run_shell(argv, &cwd, &env, window, size)
         }
         Err(e) => Err(e),
     }
 }
 
-/// Your login shell, in place of this process.
-fn own_shell() -> std::io::Error {
-    let shell = std::env::var("SHELL")
+fn your_shell() -> String {
+    std::env::var("SHELL")
         .ok()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "/bin/sh".into());
+        .unwrap_or_else(|| "/bin/sh".into())
+}
+
+/// Your shell running `command`, with your aliases, and then being itself.
+fn agent_shell(command: &str) -> Vec<String> {
+    let shell = your_shell();
+    let then = format!("{command}; exec {}", shell_quote(&shell));
+    vec![shell, "-i".into(), "-c".into(), then]
+}
+
+/// Your login shell, or `argv` instead, in place of this process.
+fn own_shell(argv: &[String]) -> std::io::Error {
+    let shell = your_shell();
     let name = shell.rsplit('/').next().unwrap_or("sh");
-    Command::new(&shell).arg0(format!("-{name}")).exec()
+    let mut command = Command::new(&shell);
+    command.env_remove(RESUME).env_remove(RESTORE);
+    match argv {
+        [_, args @ ..] => command.args(args),
+        [] => command.arg0(format!("-{name}")),
+    };
+    command.exec()
 }
 
 /// The environment the window's shell would have had, for core's shell:
@@ -95,6 +125,8 @@ fn forwarded_env(vars: impl Iterator<Item = (String, String)>) -> BTreeMap<Strin
         "OLDPWD",
         "SHLVL",
         "_",
+        RESUME,
+        RESTORE,
     ];
     const TERMINAL_PREFIXES: &[&str] = &["KITTY_", "GHOSTTY_", "ALACRITTY_", "WEZTERM_", "HC_"];
     vars.filter(|(key, _)| {
