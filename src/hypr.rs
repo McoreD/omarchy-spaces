@@ -40,6 +40,8 @@ pub struct WorkspaceRef {
 }
 
 pub struct Hypr {
+    /// Different each time Hyprland starts.
+    pub instance: String,
     socket: PathBuf,
 }
 
@@ -57,7 +59,8 @@ impl Hypr {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", current_uid())));
         Ok(Self {
-            socket: runtime.join("hypr").join(signature).join(".socket.sock"),
+            socket: runtime.join("hypr").join(&signature).join(".socket.sock"),
+            instance: signature,
         })
     }
 

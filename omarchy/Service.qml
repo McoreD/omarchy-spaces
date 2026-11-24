@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import "Spaces.mjs" as Spaces
 
 // The spaces sidebar, loaded with the shell and drawn under the windows
@@ -43,6 +44,11 @@ Item {
   Watch {
     id: watchItem
   }
+
+  // The spaces from before the last restart open again by themselves. It does
+  // nothing when they already have, as when only the shell restarts; detached,
+  // so restarting the shell doesn't stop it halfway.
+  Component.onCompleted: Quickshell.execDetached(["space", "restore"])
 
   // The active space's tabs, for what the one being renamed is called. The
   // bar's widget keeps its own.

@@ -15,6 +15,7 @@ use crate::core;
 use crate::hypr::{self, Hypr};
 use crate::name::{self, HOME, Location};
 use crate::paths;
+use crate::session;
 use crate::spaces::{self, Store};
 use crate::state::{self, Last};
 use crate::status::{self, Status};
@@ -679,6 +680,125 @@ pub fn new(dir: Option<PathBuf>) -> Result<()> {
     println!("Opened a space in {}", paths::tilde(&dir));
     Ok(())
 }
+
+/// The session to save: every space with a terminal, in the sidebar's order.
+pub(crate) fn session_of(instance: &str, rows: &[Row], store: &Store) -> session::Session {
+    let spaces = rows
+        .iter()
+        .filter(|row| row.id != HOME && !row.terminals.is_empty())
+        .map(|row| session::Space {
+            name: store.get(&row.id).and_then(|entry| entry.name.clone()),
+            icon: row.icon.clone(),
+            tabs: row.tabs.clone(),
+            terminals: row
+                .terminals
+                .iter()
+                .map(|t| session::Terminal {
+                    slot: t.slot,
+                    folder: t.folder.clone(),
+                })
+                .collect(),
+        })
+        .collect();
+    session::Session {
+        instance: instance.to_string(),
+        spaces,
+    }
+}
+
+/// `space restore`: the spaces that were up before Hyprland last restarted,
+/// in new terminals in the folders they were in, while you stay where you
+/// are. Each is struck off as it opens, so none opens twice. The plugin runs
+/// it as it starts.
+pub fn restore() -> Result<()> {
+    let config = Config::load()?;
+    let hypr = Hypr::from_env()?;
+    let state_dir = paths::state_dir();
+    let Some(_lock) = session::lock_restore(&state_dir)? else {
+        println!("Already restoring");
+        return Ok(());
+    };
+    session::set_aside(&state_dir, &hypr.instance)?;
+    let Some(mut session) = session::previous(&state_dir)? else {
+        println!("Nothing to restore");
+        return Ok(());
+    };
+
+    let count = session.spaces.len();
+    while !session.spaces.is_empty() {
+        restore_space(&hypr, &config, &session.spaces[0], || {
+            let mut left = session.clone();
+            left.spaces.remove(0);
+            session::set_previous(&state_dir, &left)
+        })?;
+        session.spaces.remove(0);
+    }
+    let plural = if count == 1 { "" } else { "s" };
+    println!("Restored {count} space{plural}");
+    Ok(())
+}
+
+/// Opens one saved space, calling `opened` once its first terminal is on its
+/// way.
+fn restore_space(
+    hypr: &Hypr,
+    config: &Config,
+    saved: &session::Space,
+    opened: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let state_dir = paths::state_dir();
+    let spaces = live(hypr)?.spaces();
+    let mut store = Store::load(&state_dir)?;
+    store.prune(&spaces);
+    let id = store.fresh_id(&spaces);
+    if let Ok(mut last) = Last::load(&state_dir) {
+        last.remove(&id);
+        save(&last);
+    }
+
+    let mut opened = Some(opened);
+    for terminal in &saved.terminals {
+        // A folder that's gone gives way to the nearest one still there.
+        let dir = terminal
+            .folder
+            .ancestors()
+            .find(|dir| dir.is_dir())
+            .map_or_else(paths::home, Path::to_path_buf);
+        let workspace = name::workspace_name(&id, terminal.slot);
+        let events = hypr.events()?;
+        hypr.dispatch(&hypr::exec_on(
+            &terminal::command_in(&config.terminal(), &dir),
+            &format!("name:{workspace} silent"),
+        ))?;
+        if let Some(opened) = opened.take() {
+            opened()?;
+        }
+        match wait_for_window(&events, &workspace, RESTORE_TIMEOUT) {
+            Some(address) => {
+                if let Err(e) = hypr.dispatch(&hypr::animate_again(&address)) {
+                    eprintln!("space: warning: {e:#}");
+                }
+            }
+            None => eprintln!("space: warning: no terminal yet on {workspace}"),
+        }
+    }
+
+    // Only now that its tabs are up, as the watcher forgets the names of tabs
+    // that aren't. It may have made the space's entry by now.
+    let mut store = Store::load(&state_dir)?;
+    let entry = store.entry(&id);
+    entry.name = saved.name.clone();
+    entry.icon = saved.icon.clone();
+    entry.tabs = saved.tabs.clone();
+    if entry.created == 0 {
+        entry.created = state::now();
+    }
+    store.save()
+}
+
+/// How long a restored terminal has to show up before the next one opens:
+/// longer than usual, as everything is slow right after logging in.
+const RESTORE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Opens a terminal in `dir` on `workspace` (a space's tab) while you stay
 /// where you are, then goes there with `arrive` once its window is up, so you

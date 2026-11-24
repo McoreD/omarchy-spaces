@@ -35,6 +35,7 @@ use crate::config::Config;
 use crate::core;
 use crate::hypr::Hypr;
 use crate::paths;
+use crate::session;
 use crate::spaces::Store;
 use crate::state::Last;
 use crate::{sound, status, terminal};
@@ -75,6 +76,10 @@ pub fn watch(sounds: bool) -> Result<()> {
     let mut shells: HashMap<u32, Option<terminal::Shell>> = HashMap::new();
     let mut store = Store::load(&state_dir)?;
     let mut last = Last::load(&state_dir)?;
+    // Saving the session is a convenience; the watch goes on without it.
+    let mut saver = session::Saver::new(&state_dir, &hypr.instance)
+        .inspect_err(|e| eprintln!("space: warning: {e:#}"))
+        .ok();
     let (mut store_seen, mut last_seen) = (
         stamp(&state_dir.join("spaces.json")),
         stamp(&state_dir.join("last")),
@@ -210,6 +215,12 @@ pub fn watch(sounds: bool) -> Result<()> {
             eprintln!("space: warning: {e:#}");
         }
         store_seen = stamp(&state_dir.join("spaces.json"));
+        if let Some(saver) = &mut saver {
+            let session = commands::session_of(&hypr.instance, &rows, &store);
+            if let Err(e) = saver.update(session, Instant::now()) {
+                eprintln!("space: warning: {e:#}");
+            }
+        }
         let json = serde_json::to_string(&rows)?;
         if json != printed {
             // Nobody reading any more: done.

@@ -898,6 +898,45 @@ fn the_first_space_opens_at_home() {
 }
 
 #[test]
+fn restore_opens_the_last_sessions_spaces_once() {
+    let env = Env::new();
+    let (notes, mail) = (env.dir("notes"), env.dir("mail"));
+    let gone = mail.join("gone");
+    let state = env.home().join(".local/state/omarchy-spaces");
+    fs::create_dir_all(&state).unwrap();
+    let saved = json!({ "instance": "before", "spaces": [
+        { "name": "Work", "icon": "x", "tabs": { "2": "logs" }, "terminals": [
+            { "slot": 1, "folder": notes }, { "slot": 2, "folder": mail } ] },
+        { "terminals": [{ "slot": 3, "folder": gone }] },
+    ] });
+    fs::write(state.join("session.json"), saved.to_string()).unwrap();
+
+    // A space already open keeps its id.
+    env.add_window("s1:1");
+    env.ok(&["restore"]);
+    assert_eq!(env.active(), "1");
+    assert_eq!(
+        env.hypr.lock().unwrap().windows,
+        ["s1:1", "s2:1", "s2:2", "s3:3"]
+    );
+    let mail = mail.display().to_string();
+    assert_eq!(
+        env.launched(3),
+        [notes.display().to_string(), mail.clone(), mail]
+    );
+    let rows = env.ls_json();
+    let work = rows.iter()
+        .find(|r| r["id"] == "s2")
+        .unwrap();
+    assert_eq!(work["label"], "Work");
+    assert_eq!(work["icon"], "x");
+    assert_eq!(work["tabs"]["2"], "logs");
+
+    env.ok(&["restore"]);
+    assert_eq!(env.hypr.lock().unwrap().windows.len(), 4);
+}
+
+#[test]
 fn new_from_a_window_that_isnt_a_terminal_uses_the_spaces_folder() {
     let env = Env::new();
     let mail = env.dir("mail");

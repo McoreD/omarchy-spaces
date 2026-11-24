@@ -185,6 +185,7 @@ space rename <space>:<n> <name>  # name a tab, as s1:2 or work:2; "" for its win
 space icon [space] <icon>    # a glyph or emoji for a space's badge, the active one by default; "" for its letters
 space reorder <space> <n>    # move a space to position n in the sidebar, 1 being the first below home
 space close [space]          # close a space's windows, the active one by default
+space restore                # open the spaces from before the last restart again
 space terminal               # a terminal in the folder you are in, or the space's
 space status <working|waiting|done|idle> [--window <addr>] [--pid <pid>]  # report agent status for this terminal
 space watch [--sounds]       # print the spaces as ls --json does, a line each time they change; --sounds also rings for agents
@@ -194,6 +195,8 @@ space move <n> [--silent]
 ```
 
 A space can be given by what it's called or by its id (`s1`, as `space ls` shows). `space close` asks each app to close, as `super+w` does, so an app can still stop to save.
+
+After you log out or restart, the plugin opens the spaces that were up again by itself (it runs `space restore`), with their names, icons and tab names, and a terminal in each folder one was in. It stays where you are. What ran in the terminals, other apps and the windows' layout don't come back. `space watch` saves the session once it has stayed the same for ten seconds, in `session.json` beside `spaces.json`; after a restart it waits in `session-previous.json` until it has been restored.
 
 When `herdr-core` (`hc`) is installed and enabled (`herdr_core` unset or `true`), terminals Spaces opens run `space shell`: a shell in herdr-core, in the terminal's folder and with its environment, labelled with the window's process so Spaces can tell which window shows it, and attached to the window. The window is the terminal: closing it, or the shell exiting, ends both, and `ctrl+\` (`hc attach`'s detach) closes it too. Inside, `TERM` is core's (`xterm-256color`), not your terminal app's. Without `hc` (or with `herdr_core = false`), Spaces opens your native terminal directly with no wrapper.
 

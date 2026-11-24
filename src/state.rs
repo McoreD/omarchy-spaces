@@ -1,6 +1,6 @@
-//! Files under `~/.local/state/omarchy-spaces/`. All of it is disposable cache: the
-//! project folders and Hyprland are the sources of truth, and deleting this
-//! directory loses nothing but where each space was last left.
+//! Files under `~/.local/state/omarchy-spaces/`. The project folders and
+//! Hyprland are the sources of truth: deleting this directory loses only
+//! names, icons, where each space was last left and the session to restore.
 
 use std::collections::BTreeMap;
 use std::fs;
