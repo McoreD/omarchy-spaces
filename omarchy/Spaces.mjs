@@ -16,6 +16,7 @@ export function parseRows(text) {
       id: row.id,
       label: typeof row.label === "string" && row.label ? row.label : row.id,
       named: row.named === true,
+      icon: typeof row.icon === "string" ? row.icon : "",
       folder: typeof row.folder === "string" ? row.folder : "",
       active: row.active === true,
       windows: typeof row.windows === "number" ? row.windows : -1,
@@ -93,21 +94,27 @@ export function filterRows(rows, query) {
 }
 
 // A row's right-click menu: which actions apply, and why not when one
-// doesn't. `home` has none. Icons are Nerd Font glyphs: a pencil, a cross.
+// doesn't. `home` has none. Icons are Nerd Font glyphs: a pencil, a smiley,
+// a broom, a cross.
 export function rowActions(row) {
   if (!row || row.id === "home") return []
   const windows = row.windows > 0 ? row.windows : 0
-  return [
+  const actions = [
     { id: "rename", icon: "\u{f0cb6}", label: "Rename", enabled: true, hint: "", separatorBefore: false },
-    {
-      id: "close",
-      icon: "\u{f0156}",
-      label: "Close space",
-      enabled: windows > 0,
-      hint: windows === 1 ? "1 window" : windows > 1 ? windows + " windows" : "No windows",
-      separatorBefore: true,
-    },
+    { id: "icon", icon: "\u{f01f5}", label: row.icon ? "Change icon" : "Set icon", enabled: true, hint: "", separatorBefore: false },
   ]
+  if (row.icon) {
+    actions.push({ id: "clear-icon", icon: "\u{f00e2}", label: "Remove icon", enabled: true, hint: "", separatorBefore: false })
+  }
+  actions.push({
+    id: "close",
+    icon: "\u{f0156}",
+    label: "Close space",
+    enabled: windows > 0,
+    hint: windows === 1 ? "1 window" : windows > 1 ? windows + " windows" : "No windows",
+    separatorBefore: true,
+  })
+  return actions
 }
 
 // The next enabled action going `by` (1 or -1) from `from`, wrapping; from
@@ -126,6 +133,89 @@ export function stepAction(actions, from, by) {
 // characters, as `space rename` takes.
 export function nameInput(name, text) {
   return Array.from(String(name || "") + String(text || "")).slice(0, 64).join("")
+}
+
+// ---------------------------------------------------------------- icons
+//
+// A space's badge can show an icon you pick in place of its letters: a Nerd
+// Font glyph, tinted in the badge's colour, or an emoji, in its own.
+
+// Whether an icon is a Nerd Font glyph: every character in Unicode's private
+// use areas, where Nerd Fonts puts them. Anything else is an emoji.
+export function isGlyph(icon) {
+  const chars = Array.from(String(icon || ""))
+  return chars.length > 0 && chars.every((c) => {
+    const code = c.codePointAt(0)
+    return (code >= 0xe000 && code <= 0xf8ff) || code >= 0xf0000
+  })
+}
+
+// The glyphs the picker offers, from glyphs.json (scripts/glyphs.py):
+// `[{ icon, keywords, glyph: true }]`, or none when it can't be read.
+export function parseGlyphs(text) {
+  try {
+    const data = JSON.parse(String(text || ""))
+    return Array.isArray(data)
+      ? data.filter((g) => Array.isArray(g) && typeof g[0] === "string" && g[0])
+        .map((g) => ({ icon: g[0], keywords: String(g[1] || "").toLowerCase(), glyph: true }))
+      : []
+  } catch (e) {
+    return []
+  }
+}
+
+// The emojis, from Omarchy's own picker's emojis.json (`[{ e, k }]`), as
+// `[{ icon, keywords, glyph: false }]`.
+export function parseEmojis(text) {
+  try {
+    const data = JSON.parse(String(text || ""))
+    return Array.isArray(data)
+      ? data.filter((e) => e && typeof e.e === "string" && e.e)
+        .map((e) => ({ icon: e.e, keywords: String(e.k || "").toLowerCase(), glyph: false }))
+      : []
+  } catch (e) {
+    return []
+  }
+}
+
+// The icons whose keywords hold every word of `query`, best first: a word
+// that is a keyword beats one that starts one, which beats one inside one,
+// and among equals, the one with fewer keywords, whose name is closer to
+// what you typed (`fire md` before `fire alert md`), then the one earlier in
+// `icons`. With no query, all of them in their own order.
+export function filterIcons(icons, query) {
+  const words = String(query || "").toLowerCase().trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return (icons || []).slice()
+  const out = []
+  for (let index = 0; index < (icons || []).length; index++) {
+    const icon = icons[index]
+    const keywords = " " + icon.keywords + " "
+    let score = 0
+    for (const word of words) {
+      if (keywords.includes(" " + word + " ")) score += 3
+      else if (keywords.includes(" " + word)) score += 2
+      else if (keywords.includes(word)) score += 1
+      else {
+        score = -1
+        break
+      }
+    }
+    if (score >= 0) out.push({ icon, index, score, length: icon.keywords.split(" ").length })
+  }
+  return out
+    .sort((a, b) => b.score - a.score || a.length - b.length || a.index - b.index)
+    .map((entry) => entry.icon)
+}
+
+// Where the cursor goes in a grid of `count` cells, `columns` wide, from
+// `from`, `dx` across and `dy` down: across wraps from row to row, down stops
+// at the last cell. From nothing (-1), the first cell.
+export function gridMove(from, count, columns, dx, dy) {
+  if (count <= 0) return -1
+  if (from < 0) return 0
+  const next = from + dx + dy * Math.max(1, columns)
+  if (dx !== 0) return (next + count) % count
+  return Math.max(0, Math.min(count - 1, next))
 }
 
 // Where the cursor starts: on the space you left most recently, so opening

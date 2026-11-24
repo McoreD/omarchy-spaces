@@ -48,6 +48,16 @@ enum Cmd {
         #[arg(value_name = "NAME")]
         second: Option<String>,
     },
+    /// Give a space, the active one unless you say which, a glyph or an emoji
+    /// for its badge, in place of its letters. An empty icon brings the
+    /// letters back.
+    #[command(override_usage = "space icon [SPACE] <ICON>")]
+    Icon {
+        #[arg(value_name = "SPACE")]
+        first: String,
+        #[arg(value_name = "ICON")]
+        second: Option<String>,
+    },
     /// Close every window of a space, the active one unless you say which.
     Close { space: Option<String> },
     /// Open a terminal in the folder you are in, or the active space's.
@@ -138,6 +148,10 @@ fn main() -> ExitCode {
         Cmd::Rename { first, second } => match second {
             Some(new_name) => commands::rename(Some(first), new_name),
             None => commands::rename(None, first),
+        },
+        Cmd::Icon { first, second } => match second {
+            Some(icon) => commands::icon(Some(first), icon),
+            None => commands::icon(None, first),
         },
         Cmd::Close { space } => commands::close(space),
         Cmd::Terminal => commands::open_terminal(),

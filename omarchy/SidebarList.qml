@@ -218,6 +218,10 @@ Item {
           // Its name is being typed.
           readonly property bool renaming: root.sidebar.renaming !== "" && root.sidebar.renaming === modelData.id
           readonly property bool menuOpen: root.sidebar.menuFor !== "" && root.sidebar.menuFor === modelData.id
+          // Its icon is being picked: the badge shows the one under the
+          // picker's cursor.
+          readonly property bool picking: root.sidebar.iconFor !== "" && root.sidebar.iconFor === modelData.id
+          readonly property string icon: picking && root.sidebar.iconPreview ? root.sidebar.iconPreview : modelData.icon
           readonly property bool home: modelData.id === "home"
           readonly property color hue: rowItem.home ? root.foreground
             : (Spaces.badgeColor(rowItem.modelData.label, root.sidebar.palette) || root.foreground)
@@ -229,13 +233,14 @@ Item {
           // pointer, or while the row is being renamed or has its menu open.
           Highlight {
             held: rowItem.modelData.active
-            lit: rowItem.renaming || rowItem.menuOpen
-              || (!root.sidebar.menuRow && rowItem.selected && (root.sidebar.searching || rowMouse.containsMouse))
+            lit: rowItem.renaming || rowItem.menuOpen || rowItem.picking
+              || (!root.sidebar.menuRow && !root.sidebar.iconRow && rowItem.selected && (root.sidebar.searching || rowMouse.containsMouse))
             border.width: rowItem.renaming ? 1 : 0
             border.color: root.accent
           }
 
-          // Its badge: two letters on a tint of its colour, or a house for
+          // Its badge: two letters on a tint of its colour, or the icon you
+          // picked for it, a glyph in its colour or an emoji; a house for
           // home, which is no folder's.
           Rectangle {
             id: badge
@@ -261,14 +266,17 @@ Item {
             }
 
             Glyph {
+              readonly property bool letters: !rowItem.home && !rowItem.icon
               anchors.fill: parent
               // A house (nf-md-home_outline).
-              text: rowItem.home ? "\u{f06a1}" : Spaces.monogram(rowItem.modelData.label)
+              text: rowItem.home ? "\u{f06a1}" : rowItem.icon || Spaces.monogram(rowItem.modelData.label)
               color: rowItem.hue
               opacity: rowItem.home ? 0.8 : 1
               font.family: root.fontFamily
-              font.pixelSize: rowItem.home ? Style.font.icon : Math.round(root.badgeSize * 0.42)
-              font.bold: true
+              font.pixelSize: rowItem.home ? Style.font.icon
+                : letters ? Math.round(root.badgeSize * 0.42)
+                : Math.round(root.badgeSize * (Spaces.isGlyph(rowItem.icon) ? 0.55 : 0.6))
+              font.bold: letters
             }
           }
 

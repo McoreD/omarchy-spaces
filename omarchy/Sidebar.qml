@@ -28,7 +28,9 @@ import "Spaces.mjs" as Spaces
 // at the end of the list opens a new space with a terminal in the folder you
 // are in.
 // Right-clicking a space opens its menu (SpaceMenu.qml), floating where you
-// clicked: rename it or close it. Renaming takes the keyboard as the search
+// clicked: rename it, pick an icon for its badge, or close it. The icon
+// picker (IconPicker.qml) opens where the menu was, and its badge shows the
+// icon under the cursor until you pick one or stop. Renaming takes the keyboard as the search
 // does, to type the name in place; an empty name has the space called after
 // its folder again. `super+shift+r` renames the space you are in the same way,
 // expanding the sidebar for it if it's collapsed, as the search does.
@@ -75,6 +77,12 @@ Item {
   property real menuX: 0
   property real menuY: 0
   property var menuScreen: null
+  // The id of the space whose icon is being picked, where the picker opens
+  // (the menu's place), and the icon its badge shows meanwhile: the one
+  // under the picker's cursor, or "" for the one it has.
+  property string iconFor: ""
+  readonly property var iconRow: iconFor ? rows.find(function(row) { return row.id === iconFor }) || null : null
+  property string iconPreview: ""
   // The screen it expands on, or last expanded on.
   property var screen: null
   // Hyprland's window motion, read from `hyprctl animations -j`.
@@ -209,6 +217,7 @@ Item {
     root.stopSearching()
     root.endNaming(false)
     root.closeMenu()
+    root.closeIconPicker()
     root.leading = root.windowsToMove()
     root.opened = false
     if (wasSearching) root.searchEnded()
@@ -225,6 +234,7 @@ Item {
     if (root.searching) return
     root.endNaming(false)
     root.closeMenu()
+    root.closeIconPicker()
     root.searchOnly = !root.opened
     root.show()
     root.filterText = ""
@@ -345,6 +355,7 @@ Item {
   // so a search ends, leaving the sidebar open.
   function openMenu(id, x, y, screen) {
     root.endNaming(false)
+    root.closeIconPicker()
     if (root.searching) {
       root.searchOnly = false
       root.stopSearching()
@@ -364,7 +375,28 @@ Item {
   function act(id, row) {
     root.closeMenu()
     if (id === "rename") root.startRename(row)
+    else if (id === "icon") root.openIconPicker(row)
+    else if (id === "clear-icon") root.run(["space", "icon", row.id, ""])
     else if (id === "close") root.run(["space", "close", row.id])
+  }
+
+  // Opens the icon picker for a space, where its menu was.
+  function openIconPicker(row) {
+    root.endNaming(false)
+    root.iconPreview = ""
+    root.iconFor = row.id
+  }
+
+  function closeIconPicker() {
+    root.iconFor = ""
+    root.iconPreview = ""
+  }
+
+  // Gives the space the icon picked in the picker.
+  function pickIcon(icon) {
+    var id = root.iconFor
+    root.closeIconPicker()
+    if (id && icon) root.run(["space", "icon", id, icon])
   }
 
   // Takes the keyboard to type a name over the one a space has. A sidebar
@@ -375,6 +407,7 @@ Item {
 
   function startNaming(target, label, named) {
     root.endNaming(false)
+    root.closeIconPicker()
     if (root.searching) {
       root.searchOnly = false
       root.stopSearching()

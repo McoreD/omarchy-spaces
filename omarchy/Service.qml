@@ -33,6 +33,11 @@ Item {
     sidebar: sidebarItem
   }
 
+  IconPicker {
+    sidebar: sidebarItem
+    omarchyPath: root.omarchyPath
+  }
+
   // The spaces, kept current by `space watch`: the sidebar's list, and what
   // the bar calls each space (TabsWidget.qml reaches it through the shell).
   Watch {

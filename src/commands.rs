@@ -335,6 +335,8 @@ pub struct Row {
     pub label: String,
     /// Whether you gave it the name; otherwise it follows its folder.
     pub named: bool,
+    /// The glyph or emoji you picked for its badge, if any.
+    pub icon: Option<String>,
     /// The checkout (or folder) its terminal is in. `None` for `home`, and
     /// for a space that never had a terminal.
     pub folder: Option<PathBuf>,
@@ -445,12 +447,18 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
         }
     };
 
-    let row = |id: &str, label: String, named: bool, folder: Option<PathBuf>, tabs| {
+    let row = |id: &str,
+               label: String,
+               named: bool,
+               icon: Option<String>,
+               folder: Option<PathBuf>,
+               tabs| {
         let visit = last.get(id);
         Row {
             id: id.to_string(),
             label,
             named,
+            icon,
             folder,
             active: live.is_some_and(|l| l.active.as_deref() == Some(id)),
             windows: live.map(|l| l.windows.get(id).copied().unwrap_or(0)),
@@ -477,7 +485,14 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
         }
     };
 
-    let mut out = vec![row(HOME, HOME.to_string(), false, None, BTreeMap::new())];
+    let mut out = vec![row(
+        HOME,
+        HOME.to_string(),
+        false,
+        None,
+        None,
+        BTreeMap::new(),
+    )];
     for id in ids {
         let terminals = live
             .and_then(|l| l.terminals.get(&id))
@@ -490,8 +505,9 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
             // Without Hyprland, as last seen, changing nothing.
             None => describe(&id, &mut entry.clone(), &[]),
         };
+        let icon = entry.icon.clone();
         let tabs = entry.tabs.clone();
-        out.push(row(&id, label, named, folder, tabs));
+        out.push(row(&id, label, named, icon, folder, tabs));
     }
     out
 }
@@ -873,6 +889,35 @@ pub fn rename(target: Option<String>, new_name: String) -> Result<()> {
     match new_name {
         Some(new_name) => println!("Named the space '{new_name}'"),
         None => println!("The space is called after its folder again"),
+    }
+    Ok(())
+}
+
+/// `space icon [space] <icon>`: gives a space, the active one by default, a
+/// glyph or an emoji to show on its badge in place of its letters. An empty
+/// icon has it show its letters again.
+pub fn icon(target: Option<String>, new_icon: String) -> Result<()> {
+    let hypr = Hypr::from_env()?;
+    let (rows, _) = load_rows(Some(&hypr))?;
+    let id = match target {
+        Some(target) => resolve(&rows, &target)?,
+        None => rows
+            .iter()
+            .find(|r| r.active)
+            .map(|r| r.id.clone())
+            .unwrap_or_else(|| HOME.to_string()),
+    };
+    if id == HOME {
+        bail!("'home' is the plain workspaces; it can't have an icon");
+    }
+    let new_icon = spaces::clean_icon(&new_icon)?;
+
+    let mut store = Store::load(&paths::state_dir())?;
+    store.entry(&id).icon = new_icon.clone();
+    store.save()?;
+    match new_icon {
+        Some(new_icon) => println!("Gave the space the icon {new_icon}"),
+        None => println!("The space shows its letters again"),
     }
     Ok(())
 }
@@ -1277,6 +1322,7 @@ mod tests {
             id: id.into(),
             label: label.into(),
             named: false,
+            icon: None,
             folder: None,
             active: false,
             windows: None,

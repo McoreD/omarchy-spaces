@@ -17,6 +17,12 @@ setup:
     ln -sfn {{justfile_directory()}}/hypr/renspace.lua ~/.config/hypr/renspace.lua
     grep -qxF 'require("hypr.renspace")' ~/.config/hypr/bindings.lua || echo 'require("hypr.renspace")' >> ~/.config/hypr/bindings.lua
 
+# Make the icon picker's glyphs again, from a Nerd Fonts release's glyph names
+glyphs version="v3.4.0":
+    mkdir -p target
+    curl -sSfL -o target/glyphnames.json https://raw.githubusercontent.com/ryanoasis/nerd-fonts/{{version}}/glyphnames.json
+    python3 scripts/glyphs.py target/glyphnames.json omarchy/glyphs.json
+
 # Restart the Omarchy shell, so it picks up changes to the QML. Reloading its
 # plugins isn't enough: it keeps keepLoaded services, which the sidebar is.
 reload:

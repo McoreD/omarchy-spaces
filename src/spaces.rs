@@ -22,6 +22,10 @@ pub struct Entry {
     /// The name you gave it. Without one, it is called after its folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The icon you picked for its badge, a glyph or an emoji, in place of
+    /// the letters of its name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     /// The folder of the terminal it follows, last time it was seen; where
     /// it started before that. New terminals in it open here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122,6 +126,19 @@ pub fn clean_name(raw: &str) -> Result<Option<String>> {
     Ok((!name.is_empty()).then(|| name.to_string()))
 }
 
+/// An icon you give a space: a Nerd Font glyph or an emoji, which can take
+/// several characters (`👩‍💻` is three), trimmed. Empty clears it.
+pub fn clean_icon(raw: &str) -> Result<Option<String>> {
+    let icon = raw.trim();
+    if icon.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        anyhow::bail!("an icon is one glyph or emoji, without spaces");
+    }
+    if icon.chars().count() > 16 {
+        anyhow::bail!("'{icon}' is too long for an icon: use one glyph or emoji");
+    }
+    Ok((!icon.is_empty()).then(|| icon.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,12 +149,14 @@ mod tests {
         let mut store = Store::load(dir.path()).unwrap();
         assert!(store.spaces.is_empty());
         store.entry("s1").name = Some("Japanese".into());
+        store.entry("s1").icon = Some("🗾".into());
         store.entry("s2").folder = Some("/p/mail".into());
         store.entry("s2").tabs.insert(3, "server".into());
         store.save().unwrap();
 
         let mut store = Store::load(dir.path()).unwrap();
         assert_eq!(store.get("s1").unwrap().name.as_deref(), Some("Japanese"));
+        assert_eq!(store.get("s1").unwrap().icon.as_deref(), Some("🗾"));
         assert_eq!(
             store.get("s2").unwrap().folder,
             Some(PathBuf::from("/p/mail"))
@@ -166,5 +185,16 @@ mod tests {
         assert!(clean_name("a\nb").is_err());
         assert!(clean_name(&"x".repeat(65)).is_err());
         assert_eq!(clean_name("日本語").unwrap(), Some("日本語".into()));
+    }
+
+    #[test]
+    fn cleans_icons() {
+        assert_eq!(clean_icon(" 🚀 ").unwrap(), Some("🚀".into()));
+        assert_eq!(clean_icon("👩‍💻").unwrap(), Some("👩‍💻".into()));
+        assert_eq!(clean_icon("\u{f0415}").unwrap(), Some("\u{f0415}".into()));
+        assert_eq!(clean_icon("").unwrap(), None);
+        assert!(clean_icon("a b").is_err());
+        assert!(clean_icon("a\nb").is_err());
+        assert!(clean_icon(&"x".repeat(17)).is_err());
     }
 }

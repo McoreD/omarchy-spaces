@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, badgeColor, barToggle, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, statusColors, tabsFor, terminalsByAddress, moreUrgent, windowMotion } from "../Spaces.mjs"
+import { appName, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, barToggle, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, statusColors, tabsFor, terminalsByAddress, moreUrgent, windowMotion } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -13,7 +13,7 @@ const json = JSON.stringify([
 test("parses space ls --json", () => {
   const rows = parseRows(json)
   assert.equal(rows.length, 4)
-  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, folder: "", active: false, windows: 4, leftAt: 1000, status: "", tabs: {}, terminals: [] })
+  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, icon: "", folder: "", active: false, windows: 4, leftAt: 1000, status: "", tabs: {}, terminals: [] })
   assert.equal(rows[3].windows, -1, "no count without Hyprland")
   assert.equal(rows[3].named, true)
   assert.throws(() => parseRows("space: error"), /unexpected/)
@@ -312,15 +312,16 @@ test("freshens the last rows for the space you are in now", () => {
   assert.deepEqual(freshen(rows, "s1", 9000), rows, "nothing changed while it was closed")
 })
 
-test("offers rename and close, saying why close doesn't apply", () => {
+test("offers rename, an icon and close, saying why close doesn't apply", () => {
   const rows = parseRows(json)
   const actions = (row) => rowActions(row).map((a) => [a.id, a.enabled, a.hint])
+  const close = (row) => actions(row).find((a) => a[0] === "close")
   assert.deepEqual(rowActions(rows[0]), [], "home has none")
-  assert.deepEqual(actions(rows[1]), [["rename", true, ""], ["close", true, "3 windows"]])
-  assert.deepEqual(actions(rows[2])[1], ["close", false, "No windows"])
-  assert.equal(rowActions({ id: "s4", windows: 1 })[1].hint, "1 window")
-  assert.equal(rowActions(rows[3])[1].enabled, false, "no count without Hyprland")
-  assert.deepEqual(rowActions(rows[1]).map((a) => a.separatorBefore), [false, true])
+  assert.deepEqual(actions(rows[1]), [["rename", true, ""], ["icon", true, ""], ["close", true, "3 windows"]])
+  assert.deepEqual(close(rows[2]), ["close", false, "No windows"])
+  assert.equal(close({ id: "s4", windows: 1 })[2], "1 window")
+  assert.equal(close(rows[3])[1], false, "no count without Hyprland")
+  assert.deepEqual(rowActions(rows[1]).map((a) => a.separatorBefore), [false, false, true])
 })
 
 test("steps through the enabled actions", () => {
@@ -338,4 +339,58 @@ test("takes any name up to 64 characters", () => {
   assert.equal(nameInput("", "Tax 2026"), "Tax 2026")
   assert.equal(nameInput("日本", "語"), "日本語")
   assert.equal(nameInput("x".repeat(64), "y"), "x".repeat(64))
+})
+
+test("tells glyphs from emojis", () => {
+  assert.equal(isGlyph("\u{f0415}"), true)
+  assert.equal(isGlyph("\ue7a8"), true)
+  assert.equal(isGlyph("🚀"), false)
+  assert.equal(isGlyph("👩‍💻"), false)
+  assert.equal(isGlyph(""), false)
+})
+
+test("reads glyphs and emojis", () => {
+  assert.deepEqual(parseGlyphs('[["\u{f0415}","Plus md"],["",""],"x"]'), [{ icon: "\u{f0415}", keywords: "plus md", glyph: true }])
+  assert.deepEqual(parseEmojis('[{"e":"🚀","k":"rocket space"},{"k":"none"}]'), [{ icon: "🚀", keywords: "rocket space", glyph: false }])
+  assert.deepEqual(parseGlyphs("nope"), [])
+  assert.deepEqual(parseEmojis(""), [])
+})
+
+test("filters icons by every word, whole words first", () => {
+  const icons = [
+    { icon: "a", keywords: "homeassistant md" },
+    { icon: "b", keywords: "home md" },
+    { icon: "c", keywords: "smart home outline md" },
+    { icon: "d", keywords: "folder md" },
+  ]
+  assert.deepEqual(filterIcons(icons, "").map((i) => i.icon), ["a", "b", "c", "d"])
+  assert.deepEqual(filterIcons(icons, "home").map((i) => i.icon), ["b", "c", "a"])
+  assert.deepEqual(filterIcons(icons, "md").map((i) => i.icon), ["a", "b", "d", "c"], "fewer keywords first")
+  assert.deepEqual(filterIcons(icons, "Home  OUT").map((i) => i.icon), ["c"])
+  assert.deepEqual(filterIcons(icons, "older").map((i) => i.icon), ["d"])
+  assert.deepEqual(filterIcons(icons, "nothing"), [])
+})
+
+test("searches emojis and glyphs together, the closest name first", () => {
+  const emojis = [{ icon: "🔥", keywords: "fire burn" }, { icon: "🚒", keywords: "fire_engine fire engine" }]
+  const glyphs = [{ icon: "g1", keywords: "fire alert md" }, { icon: "g2", keywords: "fire md" }]
+  assert.deepEqual(filterIcons(emojis.concat(glyphs), "fire").map((i) => i.icon), ["🔥", "g2", "🚒", "g1"])
+})
+
+test("moves through a grid", () => {
+  assert.equal(gridMove(-1, 10, 4, 1, 0), 0)
+  assert.equal(gridMove(3, 10, 4, 1, 0), 4, "across wraps to the next row")
+  assert.equal(gridMove(9, 10, 4, 1, 0), 0)
+  assert.equal(gridMove(0, 10, 4, -1, 0), 9)
+  assert.equal(gridMove(1, 10, 4, 0, 1), 5)
+  assert.equal(gridMove(7, 10, 4, 0, 1), 9, "down stops at the last")
+  assert.equal(gridMove(2, 10, 4, 0, -1), 0)
+  assert.equal(gridMove(0, 0, 4, 1, 0), -1)
+})
+
+test("offers an icon, and its removal once there is one", () => {
+  const ids = (row) => rowActions(row).map((a) => a.id)
+  assert.deepEqual(ids({ id: "s1", icon: "", windows: 1 }), ["rename", "icon", "close"])
+  assert.deepEqual(ids({ id: "s1", icon: "🚀", windows: 1 }), ["rename", "icon", "clear-icon", "close"])
+  assert.equal(rowActions({ id: "s1", icon: "🚀" })[1].label, "Change icon")
 })

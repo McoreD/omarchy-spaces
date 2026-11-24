@@ -972,6 +972,35 @@ fn rename_gives_a_name_that_stays_until_cleared() {
 }
 
 #[test]
+fn icon_shows_on_the_badge_until_cleared() {
+    let env = Env::new();
+    let notes = env.dir("notes");
+    env.set_active("s1:1");
+    env.add_terminal("s1:1", &notes);
+    assert_eq!(env.ls_json()[1]["icon"], Value::Null);
+
+    assert_eq!(env.ok(&["icon", "🚀"]), "Gave the space the icon 🚀\n");
+    let rows = env.ls_json();
+    assert_eq!(rows[1]["icon"], "🚀");
+    assert_eq!(rows[1]["label"], "notes", "the name stays its folder's");
+
+    // By what it's called, from elsewhere; then back to its letters.
+    env.set_active("1");
+    env.ok(&["icon", "notes", "\u{f0415}"]);
+    assert_eq!(env.ls_json()[1]["icon"], "\u{f0415}");
+    assert_eq!(
+        env.ok(&["icon", "s1", ""]),
+        "The space shows its letters again\n"
+    );
+    assert_eq!(env.ls_json()[1]["icon"], Value::Null);
+
+    let err = env.fails(&["icon", "home", "🏠"]);
+    assert!(err.contains("can't have an icon"), "{err}");
+    let err = env.fails(&["icon", "s1", "a b"]);
+    assert!(err.contains("without spaces"), "{err}");
+}
+
+#[test]
 fn rename_names_a_tab_until_cleared_or_closed() {
     let env = Env::new();
     env.add_terminal("s1:1", &env.dir("ren"));
