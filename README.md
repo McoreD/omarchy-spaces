@@ -10,7 +10,7 @@ A space is called after the folder its first terminal is in: the repository's fo
 
 The spaces have their own column down the left of the screen, and the active space's tabs sit beside it on Omarchy's bar, in place of its workspaces. Collapsed, the column is a rail of badges, one per space: two letters for its name, as T3 Code marks projects, in a colour from the theme that stays with the name, with the space you're in outlined. Right-click a space to give its badge an icon instead, a Nerd Font glyph or an emoji: Tab to switch between them, or type to search both at once, and the badge shows the icon under the cursor until you pick one. Click the logo above it, or press a key you bind to it (`super+b` in [Keys](#keys)), to expand it into the spaces sidebar, with each space's name: your windows and the bar's tabs slide aside to reveal it, and the keyboard stays with your windows. Another key (`super+p`) searches it.
 
-A tab is named after its most recently focused window: a terminal by what it's running (`claude`, `nvim`), or by the folder it's in when it's at its prompt, and any other app by its name. Name a tab yourself, by double-clicking it, by right-clicking it and choosing Rename, or with a key bound to `renameTab` (see Keys), and it keeps that name whatever runs in it, until you clear it with an empty name or close the tab. Close a tab from the same menu: if it has windows it asks first, as they close with it. Or move it to another space, where it comes after the tabs there, with its windows arranged as they are and the name you gave it, and you go with it: pick the space from the menu, or with a key bound to `sendTab`. Drag a tab along the bar to move it among its space's tabs; the space keeps the numbers its tabs have, what's on them moves along, and you stay on the tab you're on. (Dragging the tabs' `+` still moves the whole widget on the bar.) `home`'s tabs show just their numbers, as Omarchy's workspaces do, until you name one; each monitor's are named on their own.
+A tab is named after its most recently focused window: a terminal by what it's running (`claude`, `nvim`), or by the folder it's in when it's at its prompt, and any other app by its name. Name a tab yourself, by double-clicking it, by right-clicking it and choosing Rename, or with a key bound to `spaces.rename_tab()` (see [Keys](#keys)), and it keeps that name whatever runs in it, until you clear it with an empty name or close the tab. Close a tab from the same menu: if it has windows it asks first, as they close with it. Or move it to another space, where it comes after the tabs there, with its windows arranged as they are and the name you gave it, and you go with it: pick the space from the menu, or with a key bound to `spaces.send_tab()`. Drag a tab along the bar to move it among its space's tabs; the space keeps the numbers its tabs have, what's on them moves along, and you stay on the tab you're on. (Dragging the tabs' `+` still moves the whole widget on the bar.) `home`'s tabs show just their numbers, as Omarchy's workspaces do, until you name one; each monitor's are named on their own.
 
 A dot shows which spaces need you. An agent in a terminal says what it's doing, and its tab and its space's badge show it: red when it's waiting for you (a permission prompt, a question, an error), green when it finished while you were elsewhere, and a breathing dot in the text's colour while it works. A space shows whichever of its agents most needs you, and green clears once you focus the agent's window. A sound plays when an agent starts waiting for you, and when one finishes while you aren't looking at its window: Herdr's own (`assets/sounds/`), unless `[sounds]` in the config names others or sets `enabled = false`. Any native terminal works out of the box through `space status` (see Agent status below); if [herdr-core](https://github.com/herdrdev/herdr-core) (`hc`) is installed, Spaces can also read OSC 7501 status from it automatically.
 
@@ -141,8 +141,8 @@ Spaces binds no keys, so it never takes one of Omarchy's or yours. Bind the ones
 ```lua
 local spaces = require("hypr.omarchy-spaces")
 
-o.rebind("SUPER + B", "Show or hide spaces", "omarchy-shell shell call com.t4t5.spaces toggleSidebar ''")
-o.rebind("SUPER + P", "Find a space", { panel = "com.t4t5.spaces" })
+o.rebind("SUPER + B", "Show or hide spaces", spaces.toggle_sidebar())
+o.rebind("SUPER + P", "Find a space", spaces.find_space())
 o.rebind("SUPER + N", "New space", "space new")
 o.rebind("SUPER + SHIFT + J", "Next space", "space next")
 o.rebind("SUPER + SHIFT + K", "Previous space", "space prev")
@@ -154,19 +154,19 @@ for n = 1, 10 do
 end
 ```
 
-`o.rebind` replaces whatever Omarchy binds to that key, so pick others if you use those; `omarchy menu keybindings --print` lists what's taken. The number keys do exactly what Omarchy's workspace keys do while you're in `home`. Everything else you can bind is below, as `"space …"` commands or `omarchy-shell shell call com.t4t5.spaces <action> ''`.
+`o.rebind` replaces whatever Omarchy binds to that key, so pick others if you use those; `omarchy menu keybindings --print` lists what's taken. The number keys do exactly what Omarchy's workspace keys do while you're in `home`. Everything else you can bind is below, as `"space …"` commands or helpers on `spaces`.
 
 | Action | Does |
 |---|---|
-| `toggleSidebar` | Expand or collapse the spaces sidebar |
+| `spaces.toggle_sidebar()` | Expand or collapse the spaces sidebar |
 | `space next` / `space prev` | Next / previous space, down and up the sidebar. They wrap around, with `home` at the top |
 | `space new` | New space, with a terminal in the folder you are in |
 | `space window send next` / `space window send prev` | Send the window to the next / previous space, and go with it |
-| `renameTab` | Name the tab you are on: type over its name on the bar, Enter to keep it, Escape to stop. An empty name has it called after its window again |
-| `sendTab` | Move the tab you are on to another space, and go with it: type to filter the spaces, Enter to pick, Escape to stop. It starts on the space you left last |
+| `spaces.rename_tab()` | Name the tab you are on: type over its name on the bar, Enter to keep it, Escape to stop. An empty name has it called after its window again |
+| `spaces.send_tab()` | Move the tab you are on to another space, and go with it: type to filter the spaces, Enter to pick, Escape to stop. It starts on the space you left last |
 | `space tab send next` / `space tab send prev` | Move the tab you are on to the next / previous space, and go with it |
-| `renameSpace` | Rename the space you are in: type over its name in the sidebar, Enter to keep it, Escape to stop. An empty name has it called after its folder again |
-| the `com.t4t5.spaces` panel | Find a space: type to filter, Enter to switch, Escape to stop. Expands the sidebar for the search if it's collapsed |
+| `spaces.rename_space()` | Rename the space you are in: type over its name in the sidebar, Enter to keep it, Escape to stop. An empty name has it called after its folder again |
+| `spaces.find_space()` | Find a space: type to filter, Enter to switch, Escape to stop. Expands the sidebar for the search if it's collapsed |
 | `space terminal` | Terminal in the folder you are in; on an empty tab, the space's folder |
 | `space tab new` | New tab, with a terminal in the space's folder |
 | `spaces.go_to_tab(n)` | Go to tab N |
@@ -221,7 +221,7 @@ When `herdr-core` (`hc`) is installed and enabled (`herdr_core` unset or `true`)
 
 - `src/` is the `space` CLI, in Rust. It keeps no state about windows: it asks Hyprland over its socket, then dispatches. Terminal folders and foreground programs come from their shells in `/proc`, as Omarchy's `omarchy-cmd-terminal-cwd` does (or from herdr-core over its socket in `core.rs` for terminals running in it). Native agent statuses from `space status` live as per-window files under `$XDG_RUNTIME_DIR/omarchy-spaces/status/` and are pruned automatically as windows close or agents exit.
 - `omarchy/` is the Omarchy shell plugin (QML): the tabs as a bar widget (`TabsWidget.qml`), and the sidebar, which `Base.qml` draws under the windows. Their logic is in `Sidebar.qml`, `SidebarList.qml` and `Spaces.mjs`. Both draw what one `space watch` says (`src/view.rs`), which the plugin's service runs (`Watch.qml`) and restarts when it ends, as it does when Hyprland restarts or `space` is reinstalled. Each line is all of it as of one moment: where you are, each monitor's tabs and the spaces. The plugin binds to the last one, and neither copies it nor asks Hyprland where you are as well, as the two would come apart. It reads Hyprland again, at once when you go somewhere, when Hyprland's events say something changed, and every two seconds, as nothing says when a window is resized. It follows herdr-core's events for its terminals. A shell outside core changing folder or starting a program sends no event, so it reads the active space's other terminals' shells five times a second, the rest every two seconds, and all of them when a window's title changes, as terminals retitle themselves on `cd` and as a command starts. A terminal's program is the leader of the foreground process group on its shell's tty. What Chromium's windows hold it reads from the session files Chromium keeps open in its profile, matching them to Hyprland's windows by title, or the order they were opened in.
-- `hypr/omarchy-spaces.lua` holds the tab actions for your own keys, the hook that takes the other monitors along when you go to another space, the hook that moves on from a tab emptied by closing its last window (`space emptied`), and the blur behind a glassy sidebar and bar.
+- `hypr/omarchy-spaces.lua` holds the keybind helpers (tab actions and plugin calls), the hook that takes the other monitors along when you go to another space, the hook that moves on from a tab emptied by closing its last window (`space emptied`), and the blur behind a glassy sidebar and bar.
 - `~/.local/state/omarchy-spaces/spaces.json` holds what Hyprland can't about each live space: the name and icon you gave it, the terminal it follows and that terminal's last folder. `~/.config/omarchy-spaces/config.toml` can set `terminal`, the command that opens one (default: Omarchy's, `xdg-terminal-exec`), `herdr_core` (`true`/`false`, default: auto when herdr-core's `hc` is on `PATH`), `picker`, for `space go` with no space named, `[restore]`: `enabled`, `agents` and `browser` (all `true` by default), and `[sounds]`: `enabled`, `done` and `waiting`.
 
 ## Development

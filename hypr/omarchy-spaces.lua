@@ -310,6 +310,20 @@ local function move_window(slot, follow_it)
   end
 end
 
+-- Plugin actions for `o.rebind`, so bindings don't hardcode the plugin id or
+-- `omarchy-shell`'s call syntax.
+local PLUGIN = "com.t4t5.spaces"
+
+local function shell_call(action)
+  return function()
+    return "omarchy-shell shell call " .. PLUGIN .. " " .. action .. " ''"
+  end
+end
+
+local function find_space()
+  return { panel = PLUGIN }
+end
+
 -- `sync` is for `space`, when it renames the workspace you are on into
 -- another space: nothing else says that happened.
 local function sync()
@@ -325,7 +339,17 @@ local function show_tab(name)
   end
 end
 
-local M = { go_to_tab = focus, move_window_to_tab = move_window, sync = sync, show = show_tab }
+local M = {
+  go_to_tab = focus,
+  move_window_to_tab = move_window,
+  toggle_sidebar = shell_call("toggleSidebar"),
+  find_space = find_space,
+  rename_space = shell_call("renameSpace"),
+  rename_tab = shell_call("renameTab"),
+  send_tab = shell_call("sendTab"),
+  sync = sync,
+  show = show_tab,
+}
 
 -- A tab emptied by closing its last window doesn't linger, however the
 -- window went (super+w, `exit` in a terminal, an app quitting): `space
