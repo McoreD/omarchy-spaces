@@ -274,6 +274,25 @@ pub fn move_workspace(selector: &str, monitor: &str) -> String {
     )
 }
 
+/// Rename a workspace: its windows stay as they are.
+pub fn rename_workspace(selector: &str, name: &str) -> String {
+    format!(
+        "hl.dsp.workspace.rename({{ workspace = {}, name = {} }})",
+        lua_string(selector),
+        lua_string(name)
+    )
+}
+
+/// Move a window to a workspace by selector, without going along. A grouped
+/// one takes its group.
+pub fn move_window_to(address: &str, selector: &str) -> String {
+    format!(
+        "hl.dsp.window.move({{ workspace = {}, follow = false, window = {} }})",
+        lua_string(selector),
+        lua_string(&format!("address:{address}"))
+    )
+}
+
 /// Run a shell command, its first window placed on `workspace`, as
 /// `name:s1:1 silent`: there, without going there, and drawn whole at once,
 /// without its open animation (`animate_again` brings animations back).
@@ -347,6 +366,14 @@ mod tests {
         assert_eq!(
             move_window("name:ren:2", false),
             r#"hl.dsp.window.move({ workspace = "name:ren:2", follow = false })"#
+        );
+        assert_eq!(
+            rename_workspace("name:s1:2", "s2:3"),
+            r#"hl.dsp.workspace.rename({ workspace = "name:s1:2", name = "s2:3" })"#
+        );
+        assert_eq!(
+            move_window_to("0x55a4", "name:s1:2"),
+            r#"hl.dsp.window.move({ workspace = "name:s1:2", follow = false, window = "address:0x55a4" })"#
         );
         assert_eq!(lua_string(r#"a"b\c"#), r#""a\"b\\c""#);
         assert_eq!(

@@ -118,14 +118,23 @@ export function rowActions(row) {
 }
 
 // A tab's right-click menu on the bar, of `tabsFor`'s `model`: name it, as
-// double-clicking it does, or close it. An empty tab is only there while
+// double-clicking it does, move it to another space, of which there may be
+// none (`elsewhere`), or close it. An empty tab is only there while
 // you're on it, so closing it takes another to go to, or a space to end:
 // `home` doesn't.
-export function tabActions(tab, model) {
+export function tabActions(tab, model, elsewhere) {
   if (!tab) return []
   const leavable = model.space !== "home" || model.tabs.some((t) => t.slot !== tab.slot && t.windows > 0)
   return [
     { id: "rename-tab", icon: "\u{f0cb6}", label: "Rename", enabled: true, hint: "", separatorBefore: false },
+    {
+      id: "move-tab",
+      icon: "\u{f0054}",
+      label: "Move to space…",
+      enabled: !!elsewhere && tab.windows > 0,
+      hint: "",
+      separatorBefore: false,
+    },
     {
       id: "close-tab",
       icon: "\u{f0156}",

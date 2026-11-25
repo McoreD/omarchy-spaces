@@ -196,10 +196,14 @@ impl Tab {
     /// The Lua that makes it, for Hyprland's `eval`. Its windows float first
     /// and are tiled again one by one, each splitting a given one. It leaves
     /// you, and the cursor, where you were. Animations are off meanwhile, so
-    /// going to the tab and back isn't seen.
+    /// going to the tab and back isn't seen. What it notes about where you
+    /// were is copied: a workspace it leaves empty goes, and then its object
+    /// has nothing.
     pub fn script(&self) -> String {
         let mut lua = String::from(
             "local before, at = hl.get_active_window(), hl.get_active_workspace()\n\
+             before = before and \"address:\" .. before.address\n\
+             at = at and { name = at.name, selector = at.id > 0 and tostring(at.id) or \"name:\" .. at.name }\n\
              local pos = hl.get_cursor_pos()\n\
              local animated = hl.get_config(\"animations.enabled\")\n\
              local function go(a) pcall(function() hl.dispatch(a) end) end\n\
@@ -250,14 +254,17 @@ impl Tab {
         }
         lua.push_str(
             "end)\n\
+             local back, why = pcall(function()\n\
              local now = hl.get_active_workspace()\n\
              if at and (not now or now.name ~= at.name) then\n\
-             go(hl.dsp.focus({ workspace = at.id > 0 and tostring(at.id) or \"name:\" .. at.name }))\n\
+             go(hl.dsp.focus({ workspace = at.selector }))\n\
              end\n\
-             if before and not (now and at and now.name == at.name) then focus(\"address:\" .. before.address) end\n\
+             if before and not (now and at and now.name == at.name) then focus(before) end\n\
              if pos then go(hl.dsp.cursor.move({ x = pos.x, y = pos.y })) end\n\
+             end)\n\
              hl.config({ animations = { enabled = animated } })\n\
-             if not ok then error(err) end\n",
+             if not ok then error(err) end\n\
+             if not back then error(why) end\n",
         );
         lua
     }

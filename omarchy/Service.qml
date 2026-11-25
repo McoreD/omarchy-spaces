@@ -23,6 +23,7 @@ Item {
   function showOrHide(screen) { sidebarItem.showOrHide(screen) }
   function rename() { sidebarItem.renameActive() }
   function renameTab() { sidebarItem.renameTab(0) }
+  function moveTab() { sidebarItem.moveTab() }
 
   Base {
     sidebar: sidebarItem
@@ -31,6 +32,10 @@ Item {
   }
 
   SpaceMenu {
+    sidebar: sidebarItem
+  }
+
+  MovePicker {
     sidebar: sidebarItem
   }
 

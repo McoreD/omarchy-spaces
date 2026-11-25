@@ -1709,6 +1709,16 @@ pub enum SpaceTarget {
     Prev,
 }
 
+impl SpaceTarget {
+    pub fn of(raw: &str) -> Self {
+        match raw {
+            "next" => SpaceTarget::Next,
+            "prev" => SpaceTarget::Prev,
+            _ => SpaceTarget::Named(raw.to_string()),
+        }
+    }
+}
+
 /// `space send <space|next|prev>`: the focused window to another space, on
 /// the tab you'd land on going there, and you with it unless `silent`. Sent
 /// silently, a tab it leaves empty gives way as closing its last window does.
@@ -2022,10 +2032,7 @@ pub fn close(target: Option<String>) -> Result<()> {
 /// doesn't end: you stay on its last tab.
 fn close_tab(hypr: &Hypr, rows: &[Row], space: &str, slot: u8) -> Result<()> {
     let (id, key) = find_tab(hypr, rows, space, slot)?;
-    let on_tab = |ws_id: i64, ws_name: &str| match name::locate(ws_id, ws_name) {
-        Location::Space { name, slot } => name == id && slot == key,
-        Location::Home { .. } => id == HOME && ws_id == i64::from(key),
-    };
+    let on_tab = |ws_id, ws_name: &str| is_tab(&id, key, ws_id, ws_name);
     let windows: Vec<String> = hypr
         .clients()?
         .into_iter()
@@ -2048,12 +2055,22 @@ fn close_tab(hypr: &Hypr, rows: &[Row], space: &str, slot: u8) -> Result<()> {
     Ok(())
 }
 
-/// Goes from a space's tab that is ending, on the workspace `from`, to its
-/// next tab with windows, else the one before. With none left, the space ends
-/// and you go back to the space you were in before it, or `home`, whose own
-/// last tab you stay on.
-fn leave_tab(hypr: &Hypr, id: &str, slot: u8, from: i64) -> Result<()> {
-    let block = |id: i64| (id - 1).div_euclid(i64::from(name::SLOTS));
+/// Whether a workspace is a space's tab, by what `find_tab` says it goes by.
+fn is_tab(space: &str, key: u8, ws_id: i64, ws_name: &str) -> bool {
+    match name::locate(ws_id, ws_name) {
+        Location::Space { name, slot } => name == space && slot == key,
+        Location::Home { .. } => space == HOME && ws_id == i64::from(key),
+    }
+}
+
+/// Which monitor's block of ten one of `home`'s workspaces is in.
+fn block(id: i64) -> i64 {
+    (id - 1).div_euclid(i64::from(name::SLOTS))
+}
+
+/// The tab to go to from a space's tab that is ending, on the workspace
+/// `from`: its next tab with windows, else the one before.
+fn tab_beside(hypr: &Hypr, id: &str, slot: u8, from: i64) -> Result<Option<u8>> {
     let tabs: BTreeSet<u8> = hypr
         .workspaces()?
         .iter()
@@ -2067,7 +2084,212 @@ fn leave_tab(hypr: &Hypr, id: &str, slot: u8, from: i64) -> Result<()> {
         .collect();
     let after = tabs.range(slot + 1..).next();
     let before = tabs.range(..slot).next_back();
-    if let Some(&next) = after.or(before) {
+    Ok(after.or(before).copied())
+}
+
+/// `space send-tab [<space>:<n>] <space|next|prev>`: moves a tab, the one you
+/// are on by default, to another space, after the tabs it has, and goes
+/// there with it. Its windows stay arranged as they are and it keeps the name
+/// you gave it. A space whose only tab it was ends.
+pub fn send_tab(tab: Option<String>, to: SpaceTarget) -> Result<()> {
+    let hypr = Hypr::from_env()?;
+    let (rows, _) = load_rows(Some(&hypr))?;
+    let active = hypr.active_workspace()?;
+    let here = name::locate(active.id, &active.name);
+    let (from, slot) = match &tab {
+        Some(tab) => tab_target(&rows, tab)
+            .with_context(|| format!("'{tab}' isn't a tab: give it as s1:2"))?,
+        None => (here.space(), here.slot().context("you aren't on a tab")?),
+    };
+    let (id, key) = find_tab(&hypr, &rows, from, slot)?;
+    let to = match to {
+        SpaceTarget::Named(target) => resolve(&rows, &target)?,
+        SpaceTarget::Next | SpaceTarget::Prev => match neighbour(&rows, to == SpaceTarget::Next) {
+            Some(to) => to,
+            None => return Ok(()),
+        },
+    };
+    if to == id {
+        return Ok(());
+    }
+    let snapshot = snapshot(&hypr)?;
+    let windows: Vec<&SpaceWindow> = snapshot
+        .space_windows
+        .iter()
+        .filter(|w| w.space == id && w.tab == Some(key))
+        .collect();
+    if windows.is_empty() {
+        bail!("nothing is open on tab {slot}");
+    }
+    let workspaces = hypr.workspaces()?;
+    let from_id = workspaces
+        .iter()
+        .find(|ws| is_tab(&id, key, ws.id, &ws.name))
+        .map_or(active.id, |ws| ws.id);
+    let was_here = is_tab(&id, key, active.id, &active.name);
+    let beside = tab_beside(&hypr, &id, slot, from_id)?;
+
+    let label = rows.iter().find(|r| r.id == to).map_or("", |r| &r.label);
+    let (to_key, reserved) = if to == HOME {
+        (home_slot(&hypr, &workspaces, &active)?, None)
+    } else {
+        let (_, slot) = reserve::reserve(&paths::reserved_dir(), |reserved| {
+            let mut open: BTreeSet<u8> = hypr
+                .workspaces()?
+                .iter()
+                .filter_map(|ws| match name::locate(ws.id, &ws.name) {
+                    Location::Space { name, slot } if name == to => Some(slot),
+                    _ => None,
+                })
+                .collect();
+            let opening = reserved.iter().filter(|(of, _)| *of == to);
+            open.extend(opening.map(|(_, slot)| *slot));
+            Ok((to.clone(), slot_after(&open, label)?))
+        })?;
+        (slot, Some(name::workspace_name(&to, slot)))
+    };
+    let moved = move_tab(&hypr, &snapshot, (&id, key), (&to, to_key), &windows);
+    let went =
+        moved.and_then(|()| hypr.dispatch(&hypr::focus_workspace(&session_selector(&to, to_key))));
+    if let Some(reserved) = reserved {
+        reserve::release(&paths::reserved_dir(), &reserved);
+    }
+    went?;
+
+    let row = rows.iter().find(|r| r.id == id);
+    if let Some(name) = row.and_then(|r| r.tabs.get(&key)) {
+        let mut store = Store::lock(&paths::state_dir())?;
+        if let Some(entry) = store.spaces.get_mut(&id) {
+            entry.tabs.remove(&key);
+        }
+        store.entry(&to).tabs.insert(to_key, name.clone());
+        store.save()?;
+    }
+
+    // Where you left the spaces you did: never on the tab that went.
+    if let Some(next) = beside {
+        let last = Last::load(&paths::state_dir())?;
+        if was_here || last.get(&id).is_some_and(|visit| visit.slot == slot) {
+            remember(&id, next);
+        }
+    } else if id != HOME {
+        forget(&id);
+    }
+    let ended = here.space() == id && id != HOME && beside.is_none();
+    if let Some(left_at) = here.slot()
+        && here.space() != to
+        && !was_here
+        && !ended
+    {
+        remember(here.space(), left_at);
+    }
+    println!("Moved tab {slot} to '{label}'");
+    Ok(())
+}
+
+/// The slot after the last one open, else the first free.
+fn slot_after(open: &BTreeSet<u8>, label: &str) -> Result<u8> {
+    let open: Vec<u8> = open.iter().copied().collect();
+    if open.len() >= usize::from(name::SLOTS) {
+        bail!(
+            "all {} tabs of '{label}' are open; close one first",
+            name::SLOTS
+        );
+    }
+    Ok(pick_slot(Target::New, &open, None)?.expect("a new tab has a slot"))
+}
+
+/// The workspace for a new tab of `home`, on the monitor you are on.
+fn home_slot(hypr: &Hypr, workspaces: &[hypr::Workspace], active: &hypr::Workspace) -> Result<u8> {
+    let plain: Vec<&hypr::Workspace> = workspaces
+        .iter()
+        .filter(|ws| ws.id > 0 && matches!(name::locate(ws.id, &ws.name), Location::Home { .. }))
+        .collect();
+    let here = match plain.iter().find(|ws| ws.monitor == active.monitor) {
+        Some(ws) => block(ws.id),
+        // None of its own there yet: Omarchy knows which they'd be.
+        None => {
+            let last = Last::load(&paths::state_dir())?;
+            focus(hypr, HOME, landing_slot(hypr, &last, HOME)?)?;
+            block(hypr.active_workspace()?.id.max(1))
+        }
+    };
+    let open: BTreeSet<u8> = plain
+        .iter()
+        .filter(|ws| block(ws.id) == here)
+        .filter_map(|ws| name::locate(ws.id, &ws.name).slot())
+        .collect();
+    let slot = slot_after(&open, HOME)?;
+    u8::try_from(here * i64::from(name::SLOTS) + i64::from(slot))
+        .context("there are too many monitors")
+}
+
+/// Moves a tab's windows to another, both tabs as a session has them. Between
+/// spaces its workspace is renamed, which leaves them just as they are.
+/// Hyprland's numbered workspaces, `home`'s, can't become named ones or the
+/// other way around, so then each window moves, and the tiles are split again
+/// as they were, all between two frames.
+fn move_tab(
+    hypr: &Hypr,
+    snapshot: &Snapshot,
+    (from, key): (&str, u8),
+    (to, to_key): (&str, u8),
+    windows: &[&SpaceWindow],
+) -> Result<()> {
+    let selector = session_selector(to, to_key);
+    if from != HOME && to != HOME {
+        return hypr.dispatch(&hypr::rename_workspace(
+            &session_selector(from, key),
+            &session_workspace(to, to_key),
+        ));
+    }
+
+    // A group moves as one, by the window of it that shows.
+    let mut shown: Vec<&SpaceWindow> = windows.to_vec();
+    shown.sort_by_key(|w| w.focus);
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    shown.retain(|w| {
+        let first = !seen.contains(w.address.as_str());
+        seen.extend(w.grouped.iter().map(String::as_str));
+        first
+    });
+    let saved: Vec<session::Window> = shown
+        .iter()
+        .filter_map(|w| session_window(snapshot, w, &[]))
+        .collect();
+    let layout = session_layout(snapshot, from, key, &saved, &[]);
+    let address = |n: &usize| saved.get(*n).map(|w| w.address.clone());
+    let tab = layout::Tab {
+        tiles: layout.tiles.as_ref().and_then(|t| t.filter_map(&address)),
+        focused: layout.focused.as_ref().and_then(address),
+        ..Default::default()
+    };
+
+    let mut script = String::new();
+    for window in &shown {
+        script.push_str(&format!(
+            "hl.dispatch({})\n",
+            hypr::move_window_to(&window.address, &selector)
+        ));
+    }
+    // There first: the script comes back to where you were, which may be the
+    // tab that just went.
+    script.push_str(&format!(
+        "hl.dispatch({})\n",
+        hypr::focus_workspace(&selector)
+    ));
+    if !tab.is_plain() {
+        script.push_str(&tab.script());
+    }
+    hypr.eval(&script)
+}
+
+/// Goes from a space's tab that is ending, on the workspace `from`, to its
+/// next tab with windows, else the one before. With none left, the space ends
+/// and you go back to the space you were in before it, or `home`, whose own
+/// last tab you stay on.
+fn leave_tab(hypr: &Hypr, id: &str, slot: u8, from: i64) -> Result<()> {
+    if let Some(next) = tab_beside(hypr, id, slot, from)? {
         focus(hypr, id, next)?;
         remember(id, next);
         return Ok(());

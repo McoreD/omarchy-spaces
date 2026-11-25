@@ -337,10 +337,14 @@ test("offers rename, an icon and close, saying why close doesn't apply", () => {
   assert.deepEqual(rowActions(rows[1]).map((a) => a.separatorBefore), [false, false, true])
 })
 
-test("offers to rename or close a tab", () => {
+test("offers to rename, move or close a tab", () => {
   const tab = (slot, windows, active) => ({ slot, label: "", windows, active })
-  const closes = (space, tabs) => tabActions(tabs[0], { space, tabs }).map((a) => [a.id, a.enabled])[1]
-  assert.deepEqual(tabActions(tab(2, 1, true), { space: "s1", tabs: [] }).map((a) => a.id), ["rename-tab", "close-tab"])
+  const closes = (space, tabs) => tabActions(tabs[0], { space, tabs }).map((a) => [a.id, a.enabled]).at(-1)
+  const moves = (tab, elsewhere) => tabActions(tab, { space: "s1", tabs: [] }, elsewhere).find((a) => a.id === "move-tab").enabled
+  assert.deepEqual(tabActions(tab(2, 1, true), { space: "s1", tabs: [] }).map((a) => a.id), ["rename-tab", "move-tab", "close-tab"])
+  assert.equal(moves(tab(1, 1, true), true), true)
+  assert.equal(moves(tab(1, 0, true), true), false, "nothing to move")
+  assert.equal(moves(tab(1, 1, true), false), false, "nowhere to move it")
   assert.deepEqual(closes("home", [tab(1, 2, true)]), ["close-tab", true], "its windows")
   assert.deepEqual(closes("home", [tab(1, 0, true), tab(2, 1, false)]), ["close-tab", true], "another to go to")
   assert.deepEqual(closes("home", [tab(1, 0, true)]), ["close-tab", false], "home doesn't end")

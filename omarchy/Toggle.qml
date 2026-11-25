@@ -38,4 +38,10 @@ Item {
   function renameTab(arg) {
     if (service) service.renameTab()
   }
+
+  // Pick a space to move the tab you are on to, and go there with it. Called
+  // through `omarchy-shell shell call com.t4t5.spaces moveTab`.
+  function moveTab(arg) {
+    if (service) service.moveTab()
+  }
 }

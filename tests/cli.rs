@@ -171,6 +171,16 @@ impl Hyprland {
                             let on = on.strip_prefix("name:").unwrap_or(on).to_string();
                             self.browser_on = script.contains("enabled = true").then_some(on);
                         } else {
+                            // Windows moved by a script, one to a line.
+                            for line in script.lines() {
+                                let moved = line
+                                    .strip_prefix("hl.dispatch(")
+                                    .filter(|l| l.starts_with("hl.dsp.window.move("));
+                                if let Some(moved) = moved {
+                                    self.dispatch(moved);
+                                }
+                            }
+                            self.tidy();
                             self.evaluated.push(script.to_string());
                         }
                         "ok".into()
@@ -275,6 +285,29 @@ impl Hyprland {
             };
             self.windows.remove(index);
             self.addresses.remove(index);
+        } else if expression.starts_with("hl.dsp.workspace.rename(") {
+            let from = selector(quoted(expression).unwrap());
+            let to = field(expression, "name").unwrap();
+            let Some(renamed) = self.workspaces.iter_mut().find(|(_, n)| *n == from) else {
+                return "warning: no such workspace".into();
+            };
+            renamed.1 = to.clone();
+            for window in self.windows.iter_mut().filter(|w| **w == from) {
+                *window = to.clone();
+            }
+            if self.active == from {
+                self.active = to;
+            }
+        } else if expression.starts_with("hl.dsp.window.move(") && expression.contains("address:") {
+            let target = selector(quoted(expression).unwrap());
+            let address = field(expression, "window").unwrap();
+            let address = address.strip_prefix("address:0x").unwrap();
+            let address = u32::from_str_radix(address, 16).unwrap();
+            let Some(index) = self.addresses.iter().position(|a| *a == address) else {
+                return "error: no such window".into();
+            };
+            self.ensure(&target);
+            self.windows[index] = target;
         } else if expression.starts_with("hl.dsp.window.set_prop(") {
             let address = field(expression, "window").unwrap();
             let address = address.strip_prefix("address:0x").unwrap();
@@ -1547,6 +1580,91 @@ fn close_closes_the_spaces_windows_and_leaves_it() {
     assert!(err.contains("one by one"), "{err}");
     let err = env.fails(&["close", "nope"]);
     assert!(err.contains("no space called 'nope'"), "{err}");
+}
+
+#[test]
+fn send_tab_renames_a_tab_into_another_space_and_goes_there() {
+    let env = Env::new();
+    env.add_terminal("s1:1", &env.dir("ren"));
+    env.add_window("s1:2");
+    env.add_window("s1:2");
+    env.add_terminal("s2:1", &env.dir("mail"));
+    env.set_active("s1:2");
+    env.ok(&["rename", "s1:2", "server"]);
+    env.dispatched();
+
+    assert_eq!(env.ok(&["send-tab", "mail"]), "Moved tab 2 to 'mail'\n");
+    assert_eq!(
+        env.dispatched()[0],
+        r#"hl.dsp.workspace.rename({ workspace = "name:s1:2", name = "s2:2" })"#
+    );
+    assert_eq!(env.active(), "s2:2", "after mail's tabs");
+    assert_eq!(env.windows(), ["s1:1", "s2:2", "s2:2", "s2:1"]);
+    let rows = env.ls_json();
+    assert_eq!(rows[1]["tabs"], serde_json::json!({}));
+    assert_eq!(rows[2]["tabs"], serde_json::json!({ "2": "server" }));
+
+    // Going back lands on a tab ren still has.
+    env.ok(&["go", "ren"]);
+    assert_eq!(env.active(), "s1:1");
+
+    // Another tab than the one you're on, and ren's only one: it ends.
+    env.ok(&["go", "mail"]);
+    env.ok(&["send-tab", "ren:1", "s2"]);
+    assert_eq!(env.active(), "s2:3");
+    assert_eq!(env.ls_json().len(), 2);
+    let visits = fs::read_to_string(env.state().join("last")).unwrap();
+    assert!(!visits.contains("s1\t"), "{visits}");
+
+    // Already there, empty, or not a tab.
+    env.dispatched();
+    env.ok(&["send-tab", "mail"]);
+    assert!(env.dispatched().is_empty());
+    env.set_active("s2:5");
+    let err = env.fails(&["send-tab", "home"]);
+    assert!(err.contains("nothing is open on tab 5"), "{err}");
+    let err = env.fails(&["send-tab", "mail", "home"]);
+    assert!(err.contains("isn't a tab"), "{err}");
+}
+
+#[test]
+fn send_tab_moves_the_windows_of_homes_tabs() {
+    let env = Env::new();
+    env.add_window("1");
+    env.add_window("3");
+    env.add_window("3");
+    env.add_terminal("s1:1", &env.dir("ren"));
+    env.set_active("3");
+    env.ok(&["rename", "home:3", "mail"]);
+
+    env.ok(&["send-tab", "next"]);
+    assert_eq!(env.windows(), ["1", "s1:2", "s1:2", "s1:1"]);
+    assert_eq!(env.active(), "s1:2");
+    assert_eq!(
+        env.ls_json()[1]["tabs"],
+        serde_json::json!({ "2": "mail" }),
+        "it keeps its name"
+    );
+
+    env.ok(&["send-tab", "home"]);
+    assert_eq!(env.windows(), ["1", "2", "2", "s1:1"]);
+    assert_eq!(env.active(), "2");
+    assert_eq!(env.ls_json()[0]["tabs"], serde_json::json!({ "2": "mail" }));
+    env.ok(&["go", "ren"]);
+    assert_eq!(env.active(), "s1:1");
+}
+
+#[test]
+fn send_tab_needs_a_free_slot() {
+    let env = Env::new();
+    env.add_window("1");
+    for n in 1..=10 {
+        env.add_window(&format!("s1:{n}"));
+    }
+    env.set_active("1");
+    let err = env.fails(&["send-tab", "s1"]);
+    assert!(err.contains("all 10 tabs of 's1' are open"), "{err}");
+    assert_eq!(env.active(), "1");
 }
 
 #[test]

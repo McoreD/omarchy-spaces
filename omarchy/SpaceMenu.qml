@@ -10,8 +10,9 @@ import "Spaces.mjs" as Spaces
 
 // A space's menu, floating where you right-clicked it in the sidebar: rename
 // it, change its icon, or close it (Spaces.rowActions); or a tab's, where you
-// right-clicked it on the bar: name it, or close it (Spaces.tabActions), which
-// asks first when it has windows, in the menu's place. The sidebar is
+// right-clicked it on the bar: name it, move it to another space, which
+// MovePicker.qml picks in the menu's place, or close it, which asks first when
+// it has windows (Spaces.tabActions). The sidebar is
 // drawn under the windows, so the menu gets a surface of its own above them,
 // covering the screen while it is open: a click anywhere outside the card
 // closes it, as does Escape. Up and Down (or j and k) move through it, and
@@ -30,7 +31,7 @@ PanelWindow {
   readonly property int itemHeight: Math.max(Style.spacing.popupRowHeight, Style.font.body + Style.spacing.controlPaddingY * 2)
   readonly property int edge: Style.spacing.md
 
-  visible: actions.length > 0 && !!sidebar && !!sidebar.menuScreen
+  visible: actions.length > 0 && !!sidebar && !!sidebar.menuScreen && !sidebar.movingTab
   screen: sidebar ? sidebar.menuScreen : null
   anchors { top: true; bottom: true; left: true; right: true }
   exclusionMode: ExclusionMode.Ignore
@@ -91,7 +92,7 @@ PanelWindow {
       return at + height + root.edge <= root.height ? at : Math.max(root.edge, at - height)
     }
     // A tab's has only short labels, with nothing to say beside them.
-    width: Style.space(root.sidebar && root.sidebar.menuTabFor ? 140 : 240)
+    width: Style.space(root.sidebar && root.sidebar.menuTabFor ? 170 : 240)
     height: items.implicitHeight + contentTopInset + contentBottomInset
     color: Commons.Color.popups.background
     borderSpec: root.borderSpec

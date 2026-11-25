@@ -120,6 +120,15 @@ enum Cmd {
         #[arg(long)]
         silent: bool,
     },
+    /// Move a tab, the one you are on unless you say which, as `<space>:<n>`,
+    /// to another space, after the tabs there, and go with it.
+    #[command(override_usage = "space send-tab [SPACE:N] <SPACE>")]
+    SendTab {
+        #[arg(value_name = "SPACE")]
+        first: String,
+        #[arg(value_name = "TO")]
+        second: Option<String>,
+    },
     /// Move the focused window to workspace N of the active space.
     Move {
         #[arg(value_parser = slot)]
@@ -135,11 +144,7 @@ fn slot(raw: &str) -> Result<u8, String> {
 }
 
 fn space_target(raw: &str) -> Result<commands::SpaceTarget, String> {
-    Ok(match raw {
-        "next" => commands::SpaceTarget::Next,
-        "prev" => commands::SpaceTarget::Prev,
-        _ => commands::SpaceTarget::Named(raw.to_string()),
-    })
+    Ok(commands::SpaceTarget::of(raw))
 }
 
 fn target(raw: &str) -> Result<commands::Target, String> {
@@ -193,6 +198,10 @@ fn main() -> ExitCode {
         Cmd::Emptied { workspace } => commands::emptied(&workspace),
         Cmd::Ws { target } => commands::ws(target),
         Cmd::Send { space, silent } => commands::send(space, silent),
+        Cmd::SendTab { first, second } => match second {
+            Some(to) => commands::send_tab(Some(first), commands::SpaceTarget::of(&to)),
+            None => commands::send_tab(None, commands::SpaceTarget::of(&first)),
+        },
         Cmd::Move { n, silent } => commands::move_window(n, silent),
     };
 

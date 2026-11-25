@@ -8,7 +8,7 @@ A space is called after the folder its first terminal is in: the repository's fo
 
 The spaces have their own column down the left of the screen, and the active space's tabs sit beside it on Omarchy's bar, in place of its workspaces. Collapsed, the column is a rail of badges, one per space: two letters for its name, as T3 Code marks projects, in a colour from the theme that stays with the name, with the space you're in outlined. Right-click a space to give its badge an icon instead, a Nerd Font glyph or an emoji: Tab to switch between them, or type to search both at once, and the badge shows the icon under the cursor until you pick one. Click the toggle at its top, or press a key you bind to it (`super+b` in [Keys](#keys)), to expand it into the spaces sidebar, with each space's name: your windows and the bar's tabs slide aside to reveal it, and the keyboard stays with your windows. Another key (`super+p`) searches it.
 
-A tab is named after its most recently focused window: a terminal by what it's running (`claude`, `nvim`), or by the folder it's in when it's at its prompt, and any other app by its name. Name a tab yourself, by double-clicking it, by right-clicking it and choosing Rename, or with a key bound to `renameTab` (see Keys), and it keeps that name whatever runs in it, until you clear it with an empty name or close the tab. Close a tab from the same menu: if it has windows it asks first, as they close with it. `home`'s tabs show just their numbers, as Omarchy's workspaces do, until you name one; each monitor's are named on their own.
+A tab is named after its most recently focused window: a terminal by what it's running (`claude`, `nvim`), or by the folder it's in when it's at its prompt, and any other app by its name. Name a tab yourself, by double-clicking it, by right-clicking it and choosing Rename, or with a key bound to `renameTab` (see Keys), and it keeps that name whatever runs in it, until you clear it with an empty name or close the tab. Close a tab from the same menu: if it has windows it asks first, as they close with it. Or move it to another space, where it comes after the tabs there, with its windows arranged as they are and the name you gave it, and you go with it: pick the space from the menu, or with a key bound to `moveTab`. `home`'s tabs show just their numbers, as Omarchy's workspaces do, until you name one; each monitor's are named on their own.
 
 A dot shows which spaces need you. An agent in a terminal says what it's doing, and its tab and its space's badge show it: red when it's waiting for you (a permission prompt, a question, an error), green when it finished while you were elsewhere, and a breathing dot in the text's colour while it works. A space shows whichever of its agents most needs you, and green clears once you focus the agent's window. A sound plays when an agent starts waiting for you, and when one finishes while you aren't looking at its window: Herdr's own (`assets/sounds/`), unless `[sounds]` in the config names others or sets `enabled = false`. Any native terminal works out of the box through `space status` (see Agent status below); if [herdr-core](https://github.com/herdrdev/herdr-core) (`hc`) is installed, Spaces can also read OSC 7501 status from it automatically.
 
@@ -163,6 +163,8 @@ end
 | `space new` | New space, with a terminal in the folder you are in |
 | `space send next` / `space send prev` | Send the window to the next / previous space, and go with it |
 | `renameTab` | Name the tab you are on: type over its name on the bar, Enter to keep it, Escape to stop. An empty name has it called after its window again |
+| `moveTab` | Move the tab you are on to another space, and go with it: type to filter the spaces, Enter to pick, Escape to stop. It starts on the space you left last |
+| `space send-tab next` / `space send-tab prev` | Move the tab you are on to the next / previous space, and go with it |
 | `rename` | Rename the space you are in: type over its name in the sidebar, Enter to keep it, Escape to stop. An empty name has it called after its folder again |
 | the `com.t4t5.spaces` panel | Find a space: type to filter, Enter to switch, Escape to stop. Expands the sidebar for the search if it's collapsed |
 | `space terminal` | Terminal in the folder you are in; on an empty tab, the space's folder |
@@ -192,6 +194,7 @@ space terminal               # a terminal in the folder you are in, or the space
 space status <working|waiting|done|idle> [--window <addr>] [--pid <pid>]  # report agent status for this terminal
 space watch [--sounds]       # print the spaces as ls --json does, a line each time they change; --sounds also rings for agents
 space send <space|next|prev> [--silent]  # the window to another space, on the tab you left it on
+space send-tab [<space>:<n>] <space|next|prev>  # a tab, as s1:2, the one you are on by default, to another space
 space ws <n|new|next|prev>
 space move <n> [--silent]
 ```

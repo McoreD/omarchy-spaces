@@ -83,11 +83,20 @@ Item {
   }
   // Gone to another space, or the tab ended: the menu doesn't come back.
   onMenuTabChanged: if (!root.menuTab && root.menuTabFor) root.closeMenu()
-  readonly property var menuActions: root.menuTabFor ? Spaces.tabActions(root.menuTab, root.tabs.model) : Spaces.rowActions(root.menuRow)
+  readonly property var menuActions: root.menuTabFor ? Spaces.tabActions(root.menuTab, root.tabs.model, root.moveTargets.length > 0) : Spaces.rowActions(root.menuRow)
   // Whether the tab's menu has given way to asking whether to close it, and
   // what it asks.
   property bool confirmingClose: false
   readonly property string closeWarning: Spaces.closeTabWarning(root.menuTab)
+  // Whether it has given way to picking a space to move the tab to
+  // (MovePicker.qml), or a key opened that by itself, in the middle of the
+  // screen; and the spaces to pick from.
+  property bool movingTab: false
+  property bool moveCentered: false
+  readonly property var moveTargets: {
+    var space = root.tabs && root.tabs.model ? root.tabs.model.space : ""
+    return root.rows.filter(function(row) { return row.id !== space })
+  }
   property real menuX: 0
   property real menuY: 0
   property var menuScreen: null
@@ -413,13 +422,40 @@ Item {
     root.menuFor = ""
     root.menuTabFor = ""
     root.confirmingClose = false
+    root.movingTab = false
+    root.moveCentered = false
   }
 
   // Acts on whatever the menu is open on. A tab with windows asks first.
   function pickAction(id) {
     if (id === "close-tab" && root.closeWarning !== "") root.confirmingClose = true
     else if (id === "close-tab") root.closeTab()
+    else if (id === "move-tab") root.movingTab = true
     else root.act(id, root.menuTabFor ? root.menuTab : root.menuRow)
+  }
+
+  // Picks a space to move the tab you are on to, from the keyboard; again,
+  // it stops.
+  function moveTab() {
+    if (root.movingTab) {
+      root.closeMenu()
+      return
+    }
+    var workspace = Hyprland.focusedWorkspace
+    var here = workspace ? Spaces.locate(workspace.id, workspace.name) : null
+    if (!here || !here.slot) return
+    root.placeMenu(0, 0, root.focusedScreen())
+    // Before the tab, so its menu doesn't flash up first.
+    root.moveCentered = true
+    root.movingTab = true
+    root.menuTabFor = here.space + ":" + here.slot
+  }
+
+  // Moves the tab to a space, and you with it.
+  function moveTabTo(id) {
+    var target = root.menuTabFor
+    root.closeMenu()
+    if (target) root.run(["space", "send-tab", target, id])
   }
 
   // Closes the tab whose menu is open, and its windows.
