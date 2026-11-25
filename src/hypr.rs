@@ -38,6 +38,13 @@ pub struct Client {
     pub pid: i64,
     pub workspace: WorkspaceRef,
     #[serde(default)]
+    pub class: String,
+    #[serde(default)]
+    pub title: String,
+    /// In hex; goes up with each window opened.
+    #[serde(default, rename = "stableId")]
+    pub stable_id: String,
+    #[serde(default)]
     pub at: (i32, i32),
     #[serde(default)]
     pub size: (i32, i32),
@@ -276,6 +283,22 @@ pub fn exec_on(command: &str, workspace: &str) -> String {
         lua_string(command),
         lua_string(workspace)
     )
+}
+
+/// Has windows of a class open on `workspace`, as `name:s1:1 silent`, until
+/// `enabled` is false.
+pub fn open_class_on(class: &str, workspace: &str, enabled: bool) -> String {
+    format!(
+        "hl.window_rule({{ name = \"omarchy-spaces-restore\", match = {{ class = {} }}, \
+         workspace = {}, enabled = {enabled} }})",
+        lua_string(class),
+        lua_string(workspace)
+    )
+}
+
+/// Run a shell command.
+pub fn exec(command: &str) -> String {
+    format!("hl.dsp.exec_cmd({})", lua_string(command))
 }
 
 /// Lets a window placed by `exec_on` animate again, as others do. A value

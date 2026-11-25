@@ -31,6 +31,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Result, bail};
 
+use crate::browser::Browsers;
 use crate::commands;
 use crate::config::Config;
 use crate::core;
@@ -82,6 +83,13 @@ pub fn watch(sounds: bool) -> Result<()> {
     let mut saver = session::Saver::new(&state_dir, &hypr.instance)
         .inspect_err(|e| eprintln!("space: warning: {e:#}"))
         .ok();
+    // What the browser's windows hold, from before this watch to start with.
+    let mut browsers = Browsers::new(
+        saver
+            .as_mut()
+            .map(|saver| commands::known_browsers(&saver.before()))
+            .unwrap_or_default(),
+    );
     let mut last_seen = stamp(&state_dir.join("last"));
     // Core's terminals, while subscribed to it.
     let mut core: Option<core::Terminals> = None;
@@ -110,6 +118,7 @@ pub fn watch(sounds: bool) -> Result<()> {
             }
             // Hyprland has no event for a window resized or a split turned.
             snapshot = commands::snapshot(&hypr)?;
+            browsers.refresh(&snapshot.browser_windows, now);
             if !subscribed {
                 subscribed = core::subscribe(send.clone(), Message::Core).is_ok();
             }
@@ -227,6 +236,7 @@ pub fn watch(sounds: bool) -> Result<()> {
             &rows,
             &live,
             &snapshot,
+            &browsers,
             &saver
                 .as_mut()
                 .map(session::Saver::before)

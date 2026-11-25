@@ -3,6 +3,7 @@
 //! `<id>:10`. See the README.
 
 pub mod agent;
+pub mod browser;
 pub mod commands;
 pub mod config;
 pub mod core;

@@ -15,6 +15,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File, TryLockError};
 use std::io::{ErrorKind, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime};
@@ -23,6 +24,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::Conversation;
+use crate::browser::Browser;
 use crate::layout::{Rect, Tree};
 use crate::state;
 
@@ -64,12 +66,16 @@ pub struct Space {
     /// How its tabs' windows are arranged, by slot.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub layouts: BTreeMap<u8, Layout>,
-    /// Oldest first.
-    pub terminals: Vec<Terminal>,
+    /// Where new tabs open, for a space without windows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<PathBuf>,
+    /// Its windows, oldest first, then its browser windows.
+    #[serde(alias = "terminals")]
+    pub windows: Vec<Window>,
 }
 
 /// How a tab's windows are arranged. Windows are places in the space's
-/// `terminals`.
+/// `windows`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Layout {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -82,10 +88,15 @@ pub struct Layout {
     pub monitor: Option<String>,
 }
 
+/// A terminal, or else a browser's window.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Terminal {
+pub struct Window {
     pub slot: u8,
+    /// A terminal's folder.
+    #[serde(default)]
     pub folder: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser: Option<Browser>,
     /// Its window, under the Hyprland it was saved under.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub address: String,
@@ -105,11 +116,11 @@ fn is_zero(n: &u8) -> bool {
 }
 
 impl Session {
-    /// The terminal in this window, and its space.
-    pub fn find(&self, address: &str) -> Option<(&Space, &Terminal)> {
+    /// What was in this window, and its space.
+    pub fn find(&self, address: &str) -> Option<(&Space, &Window)> {
         self.spaces.iter().find_map(|space| {
-            let terminal = space.terminals.iter().find(|t| t.address == address)?;
-            Some((space, terminal))
+            let window = space.windows.iter().find(|t| t.address == address)?;
+            Some((space, window))
         })
     }
 
@@ -117,7 +128,7 @@ impl Session {
     fn parts(&self) -> HashSet<String> {
         self.spaces
             .iter()
-            .flat_map(|space| &space.terminals)
+            .flat_map(|space| &space.windows)
             .flat_map(|t| {
                 let talk = t.conversation.as_ref();
                 let talk = talk.map(|c| format!("{} {}", t.address, c.agent));
@@ -138,8 +149,8 @@ fn merge(left: Session, mut saved: Session) -> Session {
         && let Some(home) = saved.spaces.iter_mut().find(|s| s.home)
     {
         let left = spaces.remove(i);
-        let offset = home.terminals.len();
-        home.terminals.extend(left.terminals);
+        let offset = home.windows.len();
+        home.windows.extend(left.windows);
         for (slot, mut layout) in left.layouts {
             layout.tiles = layout
                 .tiles
@@ -195,7 +206,13 @@ fn write(path: &Path, session: &Session) -> Result<()> {
     let dir = path.parent().expect("sessions live in a directory");
     fs::create_dir_all(dir).with_context(|| format!("can't create {}", dir.display()))?;
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
-    File::create(&tmp)
+    // It has the pages you had open: nobody else's business.
+    File::options()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(&tmp)
         .and_then(|mut file| {
             file.write_all(text.as_bytes())?;
             file.sync_all()
@@ -459,7 +476,7 @@ mod tests {
             spaces: folders
                 .iter()
                 .map(|folder| Space {
-                    terminals: vec![Terminal {
+                    windows: vec![Window {
                         slot: 1,
                         folder: folder.into(),
                         address: format!("0x{folder}"),
@@ -521,7 +538,7 @@ mod tests {
         // /y closes, while /x goes from folder to folder.
         for secs in 2..=13 {
             let mut now = session("a", &["/x"]);
-            now.spaces[0].terminals[0].folder = format!("/x/{}", secs / 2).into();
+            now.spaces[0].windows[0].folder = format!("/x/{}", secs / 2).into();
             saver.update(now, at(secs)).unwrap();
         }
         let saved = read(&path).unwrap().unwrap();
@@ -536,7 +553,7 @@ mod tests {
         let at = |secs| start + Duration::from_secs(secs);
         let mut saver = saver(dir.path());
         let mut talking = session("a", &["/x"]);
-        talking.spaces[0].terminals[0].conversation = Some(Conversation {
+        talking.spaces[0].windows[0].conversation = Some(Conversation {
             agent: "claude".into(),
             id: "id".into(),
             folder: "/x".into(),
@@ -663,7 +680,7 @@ mod tests {
         let all = merge(home("/x"), saved);
         assert_eq!(all.spaces.len(), 2);
         assert!(all.spaces[0].home && all.spaces[0].active);
-        let folders: Vec<_> = all.spaces[0].terminals.iter().map(|t| &t.folder).collect();
+        let folders: Vec<_> = all.spaces[0].windows.iter().map(|t| &t.folder).collect();
         assert_eq!(folders, [Path::new("/y"), Path::new("/x")]);
         assert_eq!(
             all.spaces[0].layouts[&1].tiles,

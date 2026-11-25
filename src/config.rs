@@ -28,6 +28,15 @@ pub const DEFAULT_PICKERS: &[(&str, &str)] = &[
 const OMARCHY_TERMINAL: &str = "exec setsid uwsm-app -- xdg-terminal-exec --dir=\"$SPACES_DIR\"";
 const PLAIN_TERMINAL: &str = "exec xdg-terminal-exec --dir=\"$SPACES_DIR\"";
 
+/// Runs an app as Omarchy does, in a scope of its own.
+pub fn app_launcher() -> &'static str {
+    if on_path("uwsm-app") {
+        "exec setsid uwsm-app --"
+    } else {
+        "exec"
+    }
+}
+
 /// This program, to run as `space shell`, by its path so it needn't be on
 /// the terminal's PATH.
 fn space_shell() -> String {
@@ -51,6 +60,8 @@ pub struct Config {
     /// Whether a restart picks up the agents' conversations again. When unset,
     /// it does.
     pub resume_agents: Option<bool>,
+    /// Whether a restart opens Chromium's windows again. When unset, it does.
+    pub restore_browser: Option<bool>,
     /// The sounds when an agent needs you (`sound.rs`).
     pub sounds: Option<Sounds>,
 }

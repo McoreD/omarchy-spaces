@@ -39,6 +39,10 @@ struct Hyprland {
     dispatched: Vec<String>,
     /// Every script received.
     evaluated: Vec<String>,
+    /// Where a rule has the browser's windows open.
+    browser_on: Option<String>,
+    /// The classes of windows that aren't terminals.
+    classes: std::collections::HashMap<u32, String>,
     /// Whether it says how windows are laid out, as 0.56 does.
     layouts: bool,
     next_named_id: i64,
@@ -46,7 +50,13 @@ struct Hyprland {
 
 /// What runs on the desktop the tests run on, if a test's own "terminal" isn't
 /// used: none of it may, as it would open real windows there.
-const LAUNCHERS: &[&str] = &["uwsm-app", "xdg-terminal-exec", "setsid", "kitty"];
+const LAUNCHERS: &[&str] = &[
+    "uwsm-app",
+    "xdg-terminal-exec",
+    "setsid",
+    "kitty",
+    "chromium",
+];
 
 /// A PATH on which each of those notes that it was run, and does nothing.
 fn safe_path(home: &Path) -> String {
@@ -130,7 +140,8 @@ impl Hyprland {
                         .zip(addresses)
                         .map(|(ws, address)| {
                             let id = self.ensure(ws);
-                            json!({ "address": format!("0x{address:x}"), "pid": 1000 + address, "workspace": { "id": id, "name": ws } })
+                            let class = self.classes.get(&address).cloned().unwrap_or_default();
+                            json!({ "address": format!("0x{address:x}"), "class": class, "pid": 1000 + address, "workspace": { "id": id, "name": ws } })
                         })
                         .collect(),
                 )
@@ -154,7 +165,14 @@ impl Hyprland {
                 }
                 None => match request.strip_prefix("eval ") {
                     Some(script) => {
-                        self.evaluated.push(script.to_string());
+                        if script.contains("omarchy-spaces-restore") {
+                            let on = script.split("workspace = \"").nth(1).unwrap();
+                            let on = on.split(" silent").next().unwrap();
+                            let on = on.strip_prefix("name:").unwrap_or(on).to_string();
+                            self.browser_on = script.contains("enabled = true").then_some(on);
+                        } else {
+                            self.evaluated.push(script.to_string());
+                        }
                         "ok".into()
                     }
                     None => "unknown request".into(),
@@ -186,6 +204,22 @@ impl Hyprland {
             Some(e[start..end].to_string())
         };
 
+        if expression.starts_with("hl.dsp.exec_cmd(") && expression.contains(" chromium ") {
+            self.next_address += 1;
+            let address = self.next_address;
+            self.classes.insert(address, "chromium".into());
+            let on = self.browser_on.clone().unwrap_or(self.active.clone());
+            self.starting.push((Instant::now(), on.clone(), address));
+            self.show_started();
+            let listeners = Arc::clone(&self.listeners);
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(50));
+                for stream in listeners.lock().unwrap().iter_mut() {
+                    let _ = writeln!(stream, "openwindow>>{address:x},{on},chromium,New Tab");
+                }
+            });
+            return "ok".into();
+        }
         if expression.starts_with("hl.dsp.exec_cmd(") {
             if !self.exec_rules {
                 return "error: exec_cmd: bad argument 2".into();
@@ -1157,6 +1191,45 @@ fn restore_picks_up_conversations_where_they_were() {
             String::new()
         };
         assert_eq!(fs::read_to_string(log).unwrap(), format!("{first}\n\n\n"));
+    }
+}
+
+#[test]
+fn restore_opens_the_browsers_windows_among_the_terminals() {
+    for wanted in [true, false] {
+        let env = Env::new();
+        let notes = env.dir("notes");
+        env.hypr.lock().unwrap().layouts = true;
+        env.write_config(&format!("restore_browser = {wanted}"));
+        fs::create_dir_all(env.state()).unwrap();
+        let saved = json!({ "instance": "before", "spaces": [
+            {
+                "layouts": { "1": { "tiles":
+                    { "split": "right", "share": 0.4, "first": [1], "second": [0] } } },
+                "windows": [
+                    { "slot": 1, "folder": notes },
+                    { "slot": 1, "browser": { "window": 7, "profile": "Default",
+                        "urls": ["https://a/", "https://b/"], "tab": 1 } },
+                ],
+            },
+            { "name": "Reading", "windows": [{ "slot": 2, "browser":
+                { "window": 8, "profile": "Default", "urls": ["https://c/"] } }] },
+        ] });
+        fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
+        env.ok(&["restore"]);
+        let hypr = env.hypr.lock().unwrap();
+        assert_eq!(hypr.browser_on, None, "the rule is gone");
+        if !wanted {
+            assert_eq!(hypr.windows, ["s1:1"]);
+            continue;
+        }
+        assert_eq!(hypr.windows, ["s1:1", "s1:1", "s2:2"]);
+        let (terminal, browser) = (hypr.addresses[0], hypr.addresses[1]);
+        let split =
+            format!(r#"split("address:0x{browser:x}", "address:0x{terminal:x}", "r", 0.8000)"#);
+        assert!(hypr.evaluated[0].contains(&split), "{}", hypr.evaluated[0]);
+        let opened = "'--new-window' 'https://b/' 'https://a/'";
+        assert!(hypr.dispatched.iter().any(|d| d.contains(opened)));
     }
 }
 

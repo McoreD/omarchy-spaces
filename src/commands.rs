@@ -10,7 +10,8 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
-use crate::config::Config;
+use crate::browser::{self, Browser, Browsers};
+use crate::config::{self, Config};
 use crate::core;
 use crate::hypr::{self, Hypr};
 use crate::layout::{self, Rect, Tree};
@@ -222,6 +223,8 @@ pub(crate) struct Snapshot {
     home: BTreeSet<i64>,
     /// The windows on spaces' workspaces, `home`'s included.
     pub space_windows: Vec<SpaceWindow>,
+    /// Every window, spaces' or not, for the browser's to be told apart.
+    pub browser_windows: Vec<browser::Window>,
     /// The tab you're on, as a session has it.
     active_tab: Option<u8>,
     /// Where the tabs are, by space and tab as a session has it.
@@ -360,6 +363,15 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
         snapshot.group_bar = group_bar(hypr);
     }
     for client in clients {
+        if let Ok(pid) = u32::try_from(client.pid) {
+            snapshot.browser_windows.push(browser::Window {
+                address: client.address.clone(),
+                pid,
+                class: client.class,
+                title: client.title,
+                opened: u64::from_str_radix(&client.stable_id, 16).unwrap_or(0),
+            });
+        }
         // Windows not on any workspace yet report id -1 and no name.
         if client.workspace.name.is_empty() || client.workspace.name.starts_with("special:") {
             continue;
@@ -812,7 +824,19 @@ pub fn new(dir: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// The session to save: every space with a terminal, in the sidebar's order.
+/// The browser's windows in sessions, latest first, by address.
+pub(crate) fn known_browsers(sessions: &[&Session]) -> HashMap<String, Browser> {
+    sessions
+        .iter()
+        .rev()
+        .flat_map(|session| &session.spaces)
+        .flat_map(|space| &space.windows)
+        .filter_map(|w| Some((w.address.clone(), w.browser.clone()?)))
+        .collect()
+}
+
+/// The session to save: every space with a terminal or a browser's window, in
+/// the sidebar's order.
 /// `before` are the ones before it, latest first, for how windows were
 /// arranged before one of them went fullscreen.
 pub(crate) fn session_of(
@@ -820,37 +844,49 @@ pub(crate) fn session_of(
     rows: &[Row],
     live: &Live,
     snapshot: &Snapshot,
+    browsers: &Browsers,
     before: &[&Session],
 ) -> Session {
     let spaces = rows
         .iter()
         .filter_map(|row| {
-            let windows: Vec<(&Terminal, &SpaceWindow, u8)> = live
-                .terminals
-                .get(&row.id)?
-                .iter()
+            let terminals = live.terminals.get(&row.id).into_iter().flatten();
+            let mut windows: Vec<session::Window> = terminals
                 .filter_map(|t| {
                     let window = snapshot
                         .space_windows
                         .iter()
                         .find(|w| w.address == t.address)?;
-                    Some((t, window, window.tab?))
+                    let conversation = t.shell.conversation.clone();
+                    Some(session::Window {
+                        folder: conversation
+                            .as_ref()
+                            .map_or_else(|| t.shell.cwd.clone(), |c| c.folder.clone()),
+                        conversation,
+                        ..session_window(snapshot, window, before)?
+                    })
                 })
                 .collect();
+            for window in snapshot.space_windows.iter().filter(|w| w.space == row.id) {
+                if let Some(browser) = browsers.get(&window.address)
+                    && let Some(place) = session_window(snapshot, window, before)
+                {
+                    windows.push(session::Window {
+                        browser: Some(browser.clone()),
+                        ..place
+                    });
+                }
+            }
             if windows.is_empty() {
                 return None;
             }
-            let terminals: Vec<session::Terminal> = windows
-                .iter()
-                .map(|(t, window, tab)| session_terminal(snapshot, t, window, *tab, before))
-                .collect();
-            let tabs: BTreeSet<u8> = windows.iter().map(|(.., tab)| *tab).collect();
+            let tabs: BTreeSet<u8> = windows.iter().map(|w| w.slot).collect();
             let layouts = tabs
                 .into_iter()
                 .map(|tab| {
                     (
                         tab,
-                        session_layout(snapshot, &row.id, tab, &terminals, before),
+                        session_layout(snapshot, &row.id, tab, &windows, before),
                     )
                 })
                 .collect();
@@ -867,7 +903,8 @@ pub(crate) fn session_of(
                 last,
                 tabs: row.tabs.clone(),
                 layouts,
-                terminals,
+                folder: row.folder.clone(),
+                windows,
             })
         })
         .collect();
@@ -877,23 +914,19 @@ pub(crate) fn session_of(
     }
 }
 
-fn session_terminal(
+/// Where a window is, as a session has it.
+fn session_window(
     snapshot: &Snapshot,
-    terminal: &Terminal,
     window: &SpaceWindow,
-    tab: u8,
     before: &[&Session],
-) -> session::Terminal {
-    let conversation = terminal.shell.conversation.clone();
+) -> Option<session::Window> {
+    let slot = window.tab?;
     let corner = snapshot
         .places
-        .get(&(window.space.clone(), tab))
+        .get(&(window.space.clone(), slot))
         .map_or((0, 0), |place| place.corner);
-    session::Terminal {
-        slot: tab,
-        folder: conversation
-            .as_ref()
-            .map_or_else(|| terminal.shell.cwd.clone(), |c| c.folder.clone()),
+    Some(session::Window {
+        slot,
         address: window.address.clone(),
         floating: match window.fullscreen {
             _ if !window.floating => None,
@@ -908,21 +941,21 @@ fn session_terminal(
                 .find_map(|session| session.find(&window.address)?.1.floating),
         },
         fullscreen: window.fullscreen,
-        conversation,
-    }
+        ..Default::default()
+    })
 }
 
 /// How a tab's windows are arranged: how its tiles are split, less those that
-/// aren't terminals.
+/// aren't saved.
 fn session_layout(
     snapshot: &Snapshot,
     space: &str,
     tab: u8,
-    terminals: &[session::Terminal],
+    saved: &[session::Window],
     before: &[&Session],
 ) -> session::Layout {
     let on_tab = |w: &&SpaceWindow| w.space == space && w.tab == Some(tab);
-    let index = |address: &str| terminals.iter().position(|t| t.address == address);
+    let index = |address: &str| saved.iter().position(|t| t.address == address);
     let mut windows: Vec<&SpaceWindow> = snapshot.space_windows.iter().filter(on_tab).collect();
     // The one that shows comes first in its group.
     windows.sort_by_key(|w| w.focus);
@@ -936,7 +969,7 @@ fn session_layout(
         // changed as long as the same windows are.
         before
             .iter()
-            .find_map(|session| layout_before(session, tab, terminals, &tiled))
+            .find_map(|session| layout_before(session, tab, saved, &tiled))
     } else {
         let mut groups: Vec<(Vec<String>, Rect)> = Vec::new();
         for window in &tiled {
@@ -965,33 +998,33 @@ fn session_layout(
     }
 }
 
-/// How a tab's tiles were split before, if by the same terminals.
+/// How a tab's tiles were split before, if by the same windows.
 fn layout_before(
     before: &Session,
     tab: u8,
-    terminals: &[session::Terminal],
+    saved: &[session::Window],
     tiled: &[&&SpaceWindow],
 ) -> Option<Tree<usize>> {
     let there: BTreeSet<&str> = tiled
         .iter()
         .map(|w| w.address.as_str())
-        .filter(|address| terminals.iter().any(|t| t.address == *address))
+        .filter(|address| saved.iter().any(|t| t.address == *address))
         .collect();
     let (space, _) = before.find(there.first()?)?;
     let tiles = space.layouts.get(&tab)?.tiles.as_ref()?;
-    let address = |window: &usize| space.terminals.get(*window).map(|t| t.address.as_str());
+    let address = |window: &usize| space.windows.get(*window).map(|t| t.address.as_str());
     let were: BTreeSet<&str> = tiles.windows().into_iter().filter_map(address).collect();
     if were != there {
         return None;
     }
     tiles.filter_map(&|window| {
         let address = address(window)?;
-        terminals.iter().position(|t| t.address == address)
+        saved.iter().position(|t| t.address == address)
     })
 }
 
 /// `space restore`: the spaces that were up before Hyprland last restarted,
-/// in new terminals arranged as they were, or those of an earlier session
+/// in new windows arranged as they were, or those of an earlier session
 /// kept in `file`. Each is struck off as it opens, so none opens twice. It
 /// takes you back to the space you were in, unless you have started on
 /// something else. The plugin runs it as it starts.
@@ -1018,31 +1051,86 @@ pub fn restore(file: Option<PathBuf>) -> Result<()> {
 
     let start = hypr.active_workspace()?;
     let mut opened: HashSet<String> = HashSet::new();
-    let mut back = None;
-    let count = session.spaces.len();
+    // The terminals of every space first: a browser takes a while to start.
+    let mut spaces: Vec<Restoring> = Vec::new();
+    let now = state::now();
     while !session.spaces.is_empty() {
-        let saved = session.spaces[0].clone();
-        let id = restore_space(&hypr, &config, &saved, &mut opened, || {
-            let mut left = session.clone();
-            left.spaces.remove(0);
-            session::set_previous(&state_dir, &left)
-        })?;
-        if saved.active
-            && let Some(id) = id
-        {
-            let first = saved.terminals.first().map_or(1, |t| t.slot);
-            back = Some(session_selector(&id, saved.last.unwrap_or(first)));
+        let mut space = Restoring {
+            addresses: vec![None; session.spaces[0].windows.len()],
+            saved: session.spaces[0].clone(),
+            id: String::new(),
+            // In the sidebar, they keep their order.
+            created: now + spaces.len() as u64,
+        };
+        if !space.saved.windows.is_empty() {
+            space.open_terminals(&hypr, &config, &mut opened, || {
+                let mut left = session.clone();
+                left.spaces.remove(0);
+                session::set_previous(&state_dir, &left)
+            })?;
+            if !space.has_browser(None) {
+                space.note_restored(&hypr)?;
+            }
+            for slot in space.slots() {
+                if !space.has_browser(Some(slot)) {
+                    space.arrange(&hypr, slot);
+                }
+            }
+            if space.addresses.iter().any(Option::is_some) {
+                space.describe()?;
+            }
+            spaces.push(space);
         }
         session.spaces.remove(0);
+        session::set_previous(&state_dir, &session)?;
     }
-    if let Some(back) = back
-        && still_at(&hypr, &start, &opened)?
-    {
-        hypr.dispatch(&hypr::focus_workspace(&back))?;
+
+    let active = spaces.iter().find(|space| space.saved.active);
+    let back = active.and_then(Restoring::back);
+    let mut landed = go_back(&hypr, &start, &opened, back.as_deref(), false)?;
+    let mut browser_works = config.restore_browser.unwrap_or(true);
+    for space in spaces.iter_mut().filter(|s| s.has_browser(None)) {
+        space.open_browsers(&hypr, &mut opened, &mut browser_works);
+        space.note_restored(&hypr)?;
+        for slot in space.slots() {
+            if space.has_browser(Some(slot)) {
+                space.arrange(&hypr, slot);
+            }
+        }
+        if space.addresses.iter().any(Option::is_some) {
+            space.describe()?;
+        }
+        if space.saved.active && !landed {
+            landed = go_back(&hypr, &start, &opened, space.back().as_deref(), true)?;
+        }
     }
+    let count = spaces.len();
     let plural = if count == 1 { "" } else { "s" };
     println!("Restored {count} space{plural}");
     Ok(())
+}
+
+/// Takes you to the tab you were on, unless you have started on something
+/// else or, unless `empty` will do, nothing is open there yet. Whether it did.
+fn go_back(
+    hypr: &Hypr,
+    start: &hypr::Workspace,
+    opened: &HashSet<String>,
+    back: Option<&str>,
+    empty: bool,
+) -> Result<bool> {
+    let Some(back) = back else {
+        return Ok(false);
+    };
+    let name = back.strip_prefix("name:").unwrap_or(back);
+    let there = |ws: &hypr::Workspace| ws.name == name && ws.windows > 0;
+    if !empty && !hypr.workspaces()?.iter().any(there) {
+        return Ok(false);
+    }
+    if still_at(hypr, start, opened)? {
+        hypr.dispatch(&hypr::focus_workspace(back))?;
+    }
+    Ok(true)
 }
 
 /// Whether you are where you started, on a workspace that had nothing on it
@@ -1075,108 +1163,215 @@ fn session_workspace(space: &str, tab: u8) -> String {
     }
 }
 
-/// Opens one saved space, calling `opening` once its first terminal is on
-/// its way, and returns its id. Its windows are added to `opened`.
-fn restore_space(
-    hypr: &Hypr,
-    config: &Config,
-    saved: &session::Space,
-    opened: &mut HashSet<String>,
-    opening: impl FnOnce() -> Result<()>,
-) -> Result<Option<String>> {
-    let state_dir = paths::state_dir();
-    let Some(first) = saved.terminals.first() else {
-        opening()?;
-        return Ok(None);
-    };
-    let id = if saved.home {
-        HOME.to_string()
-    } else {
-        fresh_space(hypr, first.slot)?
-    };
+/// A space being restored.
+struct Restoring {
+    saved: session::Space,
+    id: String,
+    /// The windows of `saved`, those open by now.
+    addresses: Vec<Option<String>>,
+    created: u64,
+}
 
-    let mut opening = Some(opening);
-    let mut addresses: Vec<Option<String>> = Vec::new();
-    for (n, terminal) in saved.terminals.iter().enumerate() {
-        let workspace = session_workspace(&id, terminal.slot);
-        let selector = session_selector(&id, terminal.slot);
-        let token = format!("{}-{id}-{n}", std::process::id());
-        let events = hypr.events()?;
-        hypr.dispatch(&hypr::exec_on(
-            &restored_command(config, terminal, &token),
-            &format!("{selector} silent"),
-        ))?;
-        if let Some(opening) = opening.take() {
-            opening()?;
-        }
-        // You may be opening windows of your own there by now.
-        let ours = |address: &str| {
-            hypr.clients().is_ok_and(|clients| {
-                clients
-                    .iter()
-                    .find(|c| c.address == address)
-                    .and_then(|c| u32::try_from(c.pid).ok())
-                    .is_some_and(|pid| terminal::was_given(pid, shell::RESTORE, &token))
-            })
+impl Restoring {
+    /// Whether any of its windows, or of those on a tab, is a browser's.
+    fn has_browser(&self, slot: Option<u8>) -> bool {
+        self.saved
+            .windows
+            .iter()
+            .any(|w| w.browser.is_some() && slot.is_none_or(|slot| w.slot == slot))
+    }
+
+    fn slots(&self) -> BTreeSet<u8> {
+        self.saved.windows.iter().map(|w| w.slot).collect()
+    }
+
+    /// The tab you were on.
+    fn back(&self) -> Option<String> {
+        let first = self.saved.windows.first()?.slot;
+        Some(session_selector(&self.id, self.saved.last.unwrap_or(first)))
+    }
+
+    /// Opens its terminals, calling `opening` once the first is on its way, or
+    /// when there are none. Their windows are added to `opened`.
+    fn open_terminals(
+        &mut self,
+        hypr: &Hypr,
+        config: &Config,
+        opened: &mut HashSet<String>,
+        opening: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        self.id = match self.saved.windows.first() {
+            Some(first) if !self.saved.home => fresh_space(hypr, first.slot)?,
+            _ => HOME.to_string(),
         };
-        let window = wait_for_window(&events, &workspace, RESTORE_TIMEOUT, ours);
-        match &window {
-            Some(address) => {
-                reserve::release(&paths::reserved_dir(), &workspace);
-                opened.insert(address.clone());
-                if let Err(e) = hypr.dispatch(&hypr::animate_again(address)) {
-                    eprintln!("space: warning: {e:#}");
-                }
+        let mut opening = Some(opening);
+        for n in 0..self.saved.windows.len() {
+            let window = &self.saved.windows[n];
+            if window.browser.is_some() {
+                continue;
             }
-            None => eprintln!("space: warning: no terminal yet on {workspace}"),
+            let token = format!("{}-{}-{n}", std::process::id(), self.id);
+            let opening = || opening.take().map_or(Ok(()), |opening| opening());
+            let address = reopen_terminal(hypr, config, &self.id, window, &token, opening)?;
+            self.opened(n, address, opened);
         }
-        addresses.push(window);
+        opening.take().map_or(Ok(()), |opening| opening())
     }
-    let mut restored = saved.clone();
-    for (terminal, address) in restored.terminals.iter_mut().zip(&addresses) {
-        terminal.address = address.clone().unwrap_or_default();
+
+    /// Opens its browser windows, for as long as the browser `works`.
+    fn open_browsers(&mut self, hypr: &Hypr, opened: &mut HashSet<String>, works: &mut bool) {
+        for n in 0..self.saved.windows.len() {
+            let window = &self.saved.windows[n];
+            let Some(browser) = window.browser.as_ref().filter(|_| *works) else {
+                continue;
+            };
+            // Nothing it can open: no fault of the browser's.
+            let Some(command) = browser.command(config::app_launcher()) else {
+                continue;
+            };
+            // Spaces are worth having without it.
+            let address = open_browser(hypr, &self.id, window, browser, &command)
+                .inspect_err(|e| eprintln!("space: warning: {e:#}"))
+                .unwrap_or(None);
+            *works = address.is_some();
+            self.opened(n, address, opened);
+        }
     }
-    if let Err(e) = session::add_restored(&state_dir, &hypr.instance, restored) {
-        eprintln!("space: warning: {e:#}");
+
+    fn opened(&mut self, n: usize, address: Option<String>, opened: &mut HashSet<String>) {
+        if let Some(address) = &address {
+            let workspace = session_workspace(&self.id, self.saved.windows[n].slot);
+            reserve::release(&paths::reserved_dir(), &workspace);
+            opened.insert(address.clone());
+        }
+        self.addresses[n] = address;
     }
-    for slot in saved
-        .terminals
-        .iter()
-        .map(|t| t.slot)
-        .collect::<BTreeSet<u8>>()
-    {
+
+    fn note_restored(&self, hypr: &Hypr) -> Result<()> {
+        let mut restored = self.saved.clone();
+        for (window, address) in restored.windows.iter_mut().zip(&self.addresses) {
+            window.address = address.clone().unwrap_or_default();
+        }
+        session::add_restored(&paths::state_dir(), &hypr.instance, restored)
+    }
+
+    /// Arranges a tab's windows as they were.
+    fn arrange(&self, hypr: &Hypr, slot: u8) {
         // Everything is open; only where is off.
-        if let Err(e) = arrange(hypr, &id, slot, saved, &addresses) {
+        if let Err(e) = arrange(hypr, &self.id, slot, &self.saved, &self.addresses) {
             eprintln!("space: warning: {e:#}");
         }
     }
 
-    // Only now that its tabs are up, as the watcher forgets the names of tabs
-    // that aren't. It may have made the space's entry by now.
-    let mut store = Store::lock(&state_dir)?;
-    let entry = store.entry(&id);
-    if saved.home {
+    /// Gives it back its name, its icon and its tabs' names. Again once more
+    /// tabs are up, as the watcher forgets the names of tabs that aren't, and
+    /// may have made the space's entry by now.
+    fn describe(&self) -> Result<()> {
+        let saved = &self.saved;
+        let mut store = Store::lock(&paths::state_dir())?;
+        let entry = store.entry(&self.id);
         for (tab, name) in &saved.tabs {
             entry.tabs.entry(*tab).or_insert_with(|| name.clone());
         }
-    } else {
-        entry.name = saved.name.clone();
-        entry.icon = saved.icon.clone();
-        entry.tabs = saved.tabs.clone();
-        if entry.created == 0 {
-            entry.created = state::now();
+        if !saved.home {
+            entry.name = entry.name.take().or_else(|| saved.name.clone());
+            entry.icon = entry.icon.take().or_else(|| saved.icon.clone());
+            entry.folder = entry.folder.take().or_else(|| saved.folder.clone());
+            entry.created = self.created;
         }
+        store.save()?;
+        drop(store);
+        if let Some(last) = saved.last.filter(|_| !saved.home) {
+            remember(&self.id, last);
+        }
+        Ok(())
     }
-    store.save()?;
-    drop(store);
-    if let Some(last) = saved.last.filter(|_| !saved.home) {
-        remember(&id, last);
-    }
-    Ok(Some(id))
 }
 
-/// The command for a restored terminal. `token` tells its window from others.
-fn restored_command(config: &Config, terminal: &session::Terminal, token: &str) -> String {
+/// Opens a saved terminal, calling `opening` once it's on its way, and
+/// returns its window once it's up. `token` tells its window from others.
+fn reopen_terminal(
+    hypr: &Hypr,
+    config: &Config,
+    id: &str,
+    terminal: &session::Window,
+    token: &str,
+    opening: impl FnOnce() -> Result<()>,
+) -> Result<Option<String>> {
+    let workspace = session_workspace(id, terminal.slot);
+    let events = hypr.events()?;
+    hypr.dispatch(&hypr::exec_on(
+        &restored_command(config, terminal, token),
+        &format!("{} silent", session_selector(id, terminal.slot)),
+    ))?;
+    opening()?;
+    // You may be opening windows of your own there by now.
+    let ours = |address: &str| {
+        hypr.clients().is_ok_and(|clients| {
+            clients
+                .iter()
+                .find(|c| c.address == address)
+                .and_then(|c| u32::try_from(c.pid).ok())
+                .is_some_and(|pid| terminal::was_given(pid, shell::RESTORE, token))
+        })
+    };
+    let window = wait_for_window(&events, &workspace, RESTORE_TIMEOUT, ours);
+    match &window {
+        Some(address) => {
+            if let Err(e) = hypr.dispatch(&hypr::animate_again(address)) {
+                eprintln!("space: warning: {e:#}");
+            }
+        }
+        None => eprintln!("space: warning: no terminal yet on {workspace}"),
+    }
+    Ok(window)
+}
+
+/// Opens a saved browser window, as `reopen_terminal` does a terminal. A
+/// browser that's running already opens it itself, from a process Hyprland
+/// can't tell is ours, so a rule has the next such window open there.
+fn open_browser(
+    hypr: &Hypr,
+    id: &str,
+    window: &session::Window,
+    browser: &Browser,
+    command: &str,
+) -> Result<Option<String>> {
+    if browser::restores_itself(&browser.profile) && !browser::is_running() {
+        eprintln!("space: warning: Chromium opens its last windows itself; leaving it to that");
+        return Ok(None);
+    }
+    let workspace = session_workspace(id, window.slot);
+    let rule = |enabled| {
+        let on = format!("{} silent", session_selector(id, window.slot));
+        hypr.eval(&hypr::open_class_on(browser.class_pattern(), &on, enabled))
+    };
+    let events = hypr.events()?;
+    rule(true)?;
+    let launched = hypr.dispatch(&hypr::exec(command));
+    let opened = launched.map(|()| {
+        let ours = |address: &str| {
+            hypr.clients().is_ok_and(|clients| {
+                clients
+                    .iter()
+                    .any(|c| c.address == address && browser.is_class(&c.class))
+            })
+        };
+        wait_for_window(&events, &workspace, BROWSER_TIMEOUT, ours)
+    });
+    rule(false)?;
+    let opened = opened?;
+    if opened.is_none() {
+        eprintln!("space: warning: no browser window yet on {workspace}");
+    }
+    Ok(opened)
+}
+
+/// How long a browser has to show its window: it may be starting.
+const BROWSER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The command for a saved terminal.
+fn restored_command(config: &Config, terminal: &session::Window, token: &str) -> String {
     // A folder that's gone gives way to the nearest one still there.
     let dir = terminal
         .folder
@@ -1241,7 +1436,7 @@ fn arrange(
         ..Default::default()
     };
     let monitor = monitors.iter().find(|m| m.name == workspace.monitor);
-    for (n, terminal) in saved.terminals.iter().enumerate() {
+    for (n, terminal) in saved.windows.iter().enumerate() {
         let Some(address) = window(&n).filter(|_| terminal.slot == slot) else {
             continue;
         };

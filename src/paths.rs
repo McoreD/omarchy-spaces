@@ -16,9 +16,14 @@ fn xdg(var: &str, fallback: &str) -> PathBuf {
     }
 }
 
+/// `~/.config`.
+pub fn config_dir() -> PathBuf {
+    xdg("XDG_CONFIG_HOME", ".config")
+}
+
 /// `~/.config/omarchy-spaces/config.toml`.
 pub fn config_file() -> PathBuf {
-    xdg("XDG_CONFIG_HOME", ".config").join("omarchy-spaces/config.toml")
+    config_dir().join("omarchy-spaces/config.toml")
 }
 
 /// `~/.local/state/omarchy-spaces/`: safe to delete at any time, losing only names,
