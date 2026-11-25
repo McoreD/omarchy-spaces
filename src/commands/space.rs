@@ -41,7 +41,7 @@ pub fn new(dir: Option<PathBuf>) -> Result<()> {
 
     // On the monitor you are on.
     let first = name::key_in(Blocks::load().of(&hypr.active_workspace()?), 1);
-    let id = fresh_space(&hypr, first)?;
+    let id = fresh_space(&hypr, first, None)?;
     let workspace = name::workspace_name(&id, first);
     open_terminal_then(&hypr, &config, &dir, &workspace, || switch(&hypr, &id))?;
 

@@ -1282,6 +1282,70 @@ fn restore_opens_the_last_sessions_spaces_once() {
 }
 
 #[test]
+fn restored_spaces_keep_their_ids_and_new_ones_get_their_own() {
+    let env = Env::new();
+    let (notes, mail) = (env.dir("notes"), env.dir("mail"));
+    fs::create_dir_all(env.state()).unwrap();
+    // As a restart leaves them, with a space ended since: the sidebar's order
+    // isn't the ids', and nothing has pruned the entries.
+    let entries = json!({ "version": 1, "next": 5, "spaces": {
+        "s1": { "name": "Taxes", "icon": "T", "order": 20 },
+        "s3": { "order": 10 },
+        "s4": { "name": "Over", "order": 30 } } });
+    fs::write(env.state().join("spaces.json"), entries.to_string()).unwrap();
+    fs::write(env.state().join("last"), "s1\t2\t100\ns4\t7\t200\n").unwrap();
+    let saved = json!({ "version": 1, "instance": "before", "spaces": [
+        { "id": "s3", "windows": [{ "tab": 1, "folder": notes }] },
+        { "id": "s1", "name": "Taxes", "icon": "T", "windows": [
+            { "tab": 1, "folder": mail } ] },
+    ] });
+    fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
+
+    env.ok(&["restore"]);
+    let spaces = |env: &Env| -> Vec<(Value, Value)> {
+        let rows = env.ls_json();
+        let rows = rows[1..].iter();
+        rows.map(|r| (r["id"].clone(), r["named"].clone()))
+            .collect()
+    };
+    assert_eq!(
+        spaces(&env),
+        [(json!("s3"), json!(false)), (json!("s1"), json!(true))]
+    );
+
+    // Not `s2`, which some space once was, nor `s4`.
+    env.ok(&["new", notes.to_str().unwrap()]);
+    let rows = spaces(&env);
+    assert_eq!(rows[2], (json!("s5"), json!(false)));
+    env.close_window(&env.newest_window());
+    env.ok(&["new", notes.to_str().unwrap()]);
+    assert_eq!(spaces(&env)[2].0, "s6");
+}
+
+#[test]
+fn restore_gives_a_space_another_id_when_its_own_is_in_use() {
+    let env = Env::new();
+    let notes = env.dir("notes");
+    fs::create_dir_all(env.state()).unwrap();
+    env.add_window("s1:1");
+    env.ok(&["rename", "s1", "Here"]);
+    let saved = json!({ "version": 1, "instance": "before", "spaces": [
+        { "id": "s1", "name": "Before", "windows": [{ "tab": 1, "folder": notes }] },
+    ] });
+    fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
+    env.ok(&["restore"]);
+    let rows = env.ls_json();
+    let names: Vec<_> = rows[1..].iter().map(|r| (&r["id"], &r["label"])).collect();
+    assert_eq!(
+        names,
+        [
+            (&json!("s1"), &json!("Here")),
+            (&json!("s2"), &json!("Before"))
+        ]
+    );
+}
+
+#[test]
 fn restore_brings_back_home_and_where_you_were() {
     let env = Env::new();
     let (notes, mail) = (env.dir("notes"), env.dir("mail"));
@@ -1725,9 +1789,9 @@ fn spaces_end_with_their_windows_and_keep_the_order_they_were_made_in() {
     let store = fs::read_to_string(env.state().join("spaces.json")).unwrap();
     assert!(!store.contains("\"s1\""), "{store}");
 
-    // Its id is free again.
+    // Its id isn't another's.
     env.ok(&["new"]);
-    assert_eq!(env.active(), "s1:1");
+    assert_eq!(env.active(), "s3:1");
 }
 
 #[test]

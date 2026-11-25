@@ -1,6 +1,7 @@
 //! Files under `~/.local/state/omarchy-spaces/`. The project folders and
 //! Hyprland are the sources of truth: deleting this directory loses only
-//! names, icons, where each space was last left and the session to restore.
+//! names, icons, where each space was last left, which ids have been used and
+//! the session to restore.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -88,6 +89,9 @@ pub fn lock(dir: &Path, name: &str) -> Result<File> {
     Ok(file)
 }
 
+/// How many spaces' visits are kept: those of ones long gone run out.
+const VISITS: usize = 100;
+
 /// When a space was last left, and on which workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Visit {
@@ -132,6 +136,13 @@ impl Last {
         let latest = self.visits.values().map(|v| v.at).max().unwrap_or(0);
         let at = now().max(latest + 1);
         self.visits.insert(space.to_string(), Visit { key, at });
+        while self.visits.len() > VISITS {
+            let oldest = self.visits.iter().min_by_key(|(_, visit)| visit.at);
+            let Some(oldest) = oldest.map(|(space, _)| space.clone()) else {
+                break;
+            };
+            self.visits.remove(&oldest);
+        }
     }
 
     /// Follows a space's tabs to their new slots, when they were left.
@@ -210,6 +221,17 @@ mod tests {
         assert_eq!(last.get("ren").unwrap().key, 5);
         assert!(last.get("ren").unwrap().at > 100);
         assert!(last.get("tax").unwrap().at > last.get("ren").unwrap().at);
+    }
+
+    #[test]
+    fn last_keeps_the_latest_visits() {
+        let mut last = Last::default();
+        for n in 1..=VISITS + 2 {
+            last.set(&format!("s{n}"), 1);
+        }
+        assert_eq!(last.visits.len(), VISITS);
+        assert_eq!(last.get("s2"), None);
+        assert!(last.get("s3").is_some());
     }
 
     #[test]

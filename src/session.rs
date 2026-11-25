@@ -52,6 +52,10 @@ pub struct Space {
     /// 3 (3 and 13).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub home: bool,
+    /// Its id, which it gets back. `None` for `home`, and in sessions from
+    /// before ids were kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

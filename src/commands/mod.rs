@@ -62,17 +62,19 @@ pub fn open_terminal() -> Result<()> {
 }
 
 /// An id for a new space whose first terminal opens on tab `key`, reserved
-/// until that terminal is up.
-pub(crate) fn fresh_space(hypr: &Hypr, key: u8) -> Result<String> {
+/// until that terminal is up: the one it `had`, if it's being restored.
+pub(crate) fn fresh_space(hypr: &Hypr, key: u8, had: Option<&str>) -> Result<String> {
     let (id, _) = reserve::reserve(&paths::reserved_dir(), |reserved| {
         let mut taken = live::snapshot(hypr)?.spaces();
-        let mut store = Store::load(&paths::state_dir())?;
-        store.prune(&taken);
         taken.extend(reserved.iter().map(|(space, _)| space.clone()));
-        Ok((store.fresh_id(&taken), key))
+        let mut store = Store::lock(&paths::state_dir())?;
+        let id = match had.filter(|had| store.claim_id(had, &taken)) {
+            Some(had) => had.to_string(),
+            None => store.fresh_id(&taken),
+        };
+        store.save()?;
+        Ok((id, key))
     })?;
-    // A space by this id before may have left a visit behind.
-    forget(&id);
     Ok(id)
 }
 

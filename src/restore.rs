@@ -107,6 +107,7 @@ pub(crate) fn session_of(
             };
             Some(session::Space {
                 home: row.id == HOME,
+                id: (row.id != HOME).then(|| row.id.clone()),
                 name: row.named.then(|| row.label.clone()),
                 icon: row.icon.clone(),
                 active: row.active,
@@ -234,7 +235,7 @@ fn layout_before(
 }
 
 /// `space restore`: the spaces that were up before Hyprland last restarted,
-/// in new windows arranged as they were, or those of an earlier session
+/// with their ids, in new windows arranged as they were, or those of an earlier session
 /// kept in `file`. Each is struck off as it opens, so none opens twice. It
 /// takes you back to the space you were in, unless you have started on
 /// something else. The plugin runs it as it starts.
@@ -401,7 +402,9 @@ impl Restoring {
         opening: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
         self.id = match self.saved.windows.first() {
-            Some(first) if !self.saved.home => fresh_space(hypr, first.tab)?,
+            Some(first) if !self.saved.home => {
+                fresh_space(hypr, first.tab, self.saved.id.as_deref())?
+            }
             _ => HOME.to_string(),
         };
         let mut opening = Some(opening);

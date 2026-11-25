@@ -7,6 +7,10 @@
 //! source of truth for which spaces exist and their windows; this file only
 //! adds what Hyprland can't hold. Entries for spaces Hyprland no longer has
 //! are pruned whenever the live list is read.
+//!
+//! An id is a space's for good: no other is ever given it, and the space gets
+//! it back when it's restored (`restore.rs`). So what's still kept by an id,
+//! here, in `last` or in a script, is never taken for another space's.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -15,6 +19,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::folder::Folder;
+use crate::name;
 use crate::state;
 
 /// What Spaces remembers about one space.
@@ -57,6 +62,10 @@ fn is_zero(n: &u64) -> bool {
 struct File {
     #[serde(default)]
     version: u32,
+    /// The number of the next new space's id. 0 in files from before ids were
+    /// kept from being used again.
+    #[serde(default)]
+    next: u32,
     #[serde(default)]
     spaces: BTreeMap<String, Entry>,
 }
@@ -65,8 +74,10 @@ struct File {
 pub struct Store {
     path: PathBuf,
     pub spaces: BTreeMap<String, Entry>,
+    next: u32,
     /// What was read, to write only when something changed.
     read: BTreeMap<String, Entry>,
+    read_next: u32,
     /// Held to save it. A failure to lock only matters then.
     lock: Result<std::fs::File>,
 }
@@ -104,6 +115,8 @@ impl Store {
             path,
             read: file.spaces.clone(),
             spaces: file.spaces,
+            next: file.next,
+            read_next: file.next,
             lock,
         })
     }
@@ -124,19 +137,32 @@ impl Store {
     /// Forgets spaces Hyprland no longer has. `home` is always there.
     pub fn prune(&mut self, live: &BTreeSet<String>) {
         self.spaces
-            .retain(|id, _| id == crate::name::HOME || live.contains(id));
+            .retain(|id, _| id == name::HOME || live.contains(id));
     }
 
-    /// An id for a new space: `s1`, `s2`, ..., the first not in use.
-    pub fn fresh_id(&self, live: &BTreeSet<String>) -> String {
-        (1..)
-            .map(|n| format!("s{n}"))
-            .find(|id| !live.contains(id) && !self.spaces.contains_key(id))
-            .expect("some id is free")
+    /// An id for a new space: `s1`, `s2`, ..., the next that never was one's.
+    /// `taken` are those in use, which may not all have an entry.
+    pub fn fresh_id(&mut self, taken: &BTreeSet<String>) -> String {
+        let first = self.next.max(1);
+        let (n, id) = (first..)
+            .map(|n| (n, format!("s{n}")))
+            .find(|(_, id)| !taken.contains(id) && !self.spaces.contains_key(id))
+            .expect("some id is free");
+        self.next = n.saturating_add(1);
+        id
+    }
+
+    /// Gives a restored space its id back, unless it's in use.
+    pub fn claim_id(&mut self, id: &str, taken: &BTreeSet<String>) -> bool {
+        let Some(number) = name::id_number(id).filter(|_| !taken.contains(id)) else {
+            return false;
+        };
+        self.next = self.next.max(number.saturating_add(1));
+        true
     }
 
     pub fn save(&mut self) -> Result<()> {
-        if self.spaces == self.read {
+        if self.spaces == self.read && self.next == self.read_next {
             return Ok(());
         }
         if let Err(e) = &self.lock {
@@ -144,11 +170,13 @@ impl Store {
         }
         let text = serde_json::to_string_pretty(&File {
             version: state::VERSION,
+            next: self.next,
             spaces: self.spaces.clone(),
         })?;
         state::write_atomic(&self.path, &(text + "\n"))
             .with_context(|| format!("can't save {}", self.path.display()))?;
         self.read = self.spaces.clone();
+        self.read_next = self.next;
         Ok(())
     }
 }
@@ -183,7 +211,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trips_prunes_and_hands_out_ids() {
+    fn round_trips_and_prunes() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::lock(dir.path()).unwrap();
         assert!(store.spaces.is_empty());
@@ -207,9 +235,30 @@ mod tests {
         let live: BTreeSet<String> = ["s2".to_string(), "s4".to_string()].into();
         store.prune(&live);
         assert_eq!(store.spaces.keys().collect::<Vec<_>>(), ["home", "s2"]);
-        assert_eq!(store.fresh_id(&live), "s1");
-        let live: BTreeSet<String> = ["s1".to_string()].into();
-        assert_eq!(store.fresh_id(&live), "s3", "s2 is still remembered");
+    }
+
+    #[test]
+    fn hands_out_each_id_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect();
+        let mut store = Store::lock(dir.path()).unwrap();
+        assert_eq!(store.fresh_id(&set(&[])), "s1");
+        assert_eq!(store.fresh_id(&set(&["s1", "s2"])), "s3", "s2 is in use");
+        store.save().unwrap();
+        drop(store);
+
+        // Even once they're gone.
+        let mut store = Store::lock(dir.path()).unwrap();
+        assert_eq!(store.fresh_id(&set(&[])), "s4");
+        // A restored one is its own again, unless it's in use.
+        assert!(store.claim_id("s2", &set(&["s1"])));
+        assert_eq!(store.fresh_id(&set(&[])), "s5");
+        assert!(!store.claim_id("s2", &set(&["s2"])));
+        assert!(!store.claim_id("home", &set(&[])));
+        assert!(!store.claim_id("", &set(&[])));
+        // From before the count was lost, or from another computer.
+        assert!(store.claim_id("s20", &set(&[])));
+        assert_eq!(store.fresh_id(&set(&[])), "s21");
     }
 
     #[test]
@@ -248,7 +297,7 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
             saved,
-            serde_json::json!({ "version": 1, "spaces": { "s1": { "order": 6 } } })
+            serde_json::json!({ "version": 1, "next": 0, "spaces": { "s1": { "order": 6 } } })
         );
     }
 

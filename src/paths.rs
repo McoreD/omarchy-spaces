@@ -27,7 +27,7 @@ pub fn config_file() -> PathBuf {
 }
 
 /// `~/.local/state/omarchy-spaces/`: safe to delete at any time, losing only names,
-/// icons and the session to restore.
+/// icons, which ids have been used and the session to restore.
 pub fn state_dir() -> PathBuf {
     xdg("XDG_STATE_HOME", ".local/state").join("omarchy-spaces")
 }

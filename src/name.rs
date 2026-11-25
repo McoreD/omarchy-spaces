@@ -25,6 +25,14 @@ pub fn is_id(id: &str) -> bool {
     })
 }
 
+/// The number in a space's id: 3 for `s3`. `None` for one too large for
+/// Spaces to have made it.
+pub fn id_number(id: &str) -> Option<u32> {
+    id.strip_prefix('s')
+        .filter(|_| is_id(id))
+        .and_then(|number| number.parse().ok())
+}
+
 /// A tab's slot, the number it shows, 1-10.
 pub fn parse_slot(raw: &str) -> Option<u8> {
     if raw.starts_with(['0', '+']) {
@@ -161,6 +169,15 @@ fn levenshtein(a: &str, b: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numbers_ids() {
+        assert_eq!(id_number("s1"), Some(1));
+        assert_eq!(id_number("s120"), Some(120));
+        assert_eq!(id_number("s99999999999"), None);
+        assert_eq!(id_number("home"), None);
+        assert_eq!(id_number("s+1"), None);
+    }
 
     #[test]
     fn recognizes_ids() {
