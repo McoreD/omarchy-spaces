@@ -53,29 +53,23 @@ It builds outside the plugin's folder, as the shell watches that for changes.
 
 ## Uninstall
 
-1. Bring back any windows you want to keep. Once the plugin is off, Omarchy's workspace keys can't reach windows still in a space. From each of those windows, run:
+```sh
+omarchy plugin remove com.t4t5.spaces
+```
 
-   ```sh
-   space window send home
-   ```
+The plugin undoes what it set up, with `uninstall.sh`. A few things stay:
 
-2. Turn the plugin off, and put Omarchy's menu and workspaces back on the bar:
+- Your own settings, in `~/.config/omarchy-spaces`.
+- Your keys in `~/.config/hypr/bindings.lua`. The `if` around them skips them once Spaces is gone. Without it, take them out before you remove the plugin, or Hyprland reports an error.
+- A `space` you built from source. Before you remove the plugin, run:
 
-   ```sh
-   omarchy plugin disable com.t4t5.spaces
-   omarchy plugin enable omarchy.menu --section left --index 0
-   omarchy plugin enable omarchy.workspaces --after omarchy.menu
-   ```
+  ```sh
+  cargo uninstall --root ~/.local omarchy-spaces
+  rm -rf ~/.cache/omarchy-spaces
+  ```
 
-3. Take the `require("hypr.omarchy-spaces")` line and the Spaces keys out of `~/.config/hypr/bindings.lua`, and save.
+Turning the plugin off with `omarchy plugin disable com.t4t5.spaces` only puts Omarchy's menu and workspaces back on the bar. If you removed it while it was off, the rest is still there. To finish:
 
-4. Only then remove the file it loaded, so Hyprland's config never points at a missing file, along with the plugin, the command and what it remembers:
-
-   ```sh
-   rm ~/.config/hypr/omarchy-spaces.lua
-   omarchy plugin remove com.t4t5.spaces --yes
-   rm ~/.local/bin/space
-   rm -rf ~/.local/state/omarchy-spaces ~/.config/omarchy-spaces ~/.cache/omarchy-spaces
-   ```
-
-   If you built it from source, run `cargo uninstall --root ~/.local omarchy-spaces` in place of `rm ~/.local/bin/space`.
+```sh
+~/.local/state/omarchy-spaces/uninstall.sh
+```

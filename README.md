@@ -18,25 +18,27 @@ omarchy plugin add https://github.com/t4t5/omarchy-spaces.git --enable
 
 This also downloads the `space` command and links a file into your Hyprland config. A notification then asks whether Spaces should replace Omarchy's menu and workspaces on the bar. Nothing is lost if you say yes: the menu still opens with its key, or a right-click on the logo.
 
-**2. Choose your keys.** Add this at the end of `~/.config/hypr/bindings.lua`. The first line is required; change or drop any of the others. They replace whatever Omarchy has on those keys.
+**2. Choose your keys.** Add this at the end of `~/.config/hypr/bindings.lua`. Keep the first two lines and the last, and change or drop any of the others. They replace whatever Omarchy has on those keys, until you remove Spaces.
 
 ```lua
-local spaces = require("hypr.omarchy-spaces")
+if package.searchpath("hypr.omarchy-spaces", package.path) then
+  local spaces = require("hypr.omarchy-spaces")
 
-o.rebind("SUPER + B", "Show or hide spaces", spaces.toggle_sidebar())
-o.rebind("SUPER + P", "Find a space", spaces.find_space())
-o.rebind("SUPER + N", "New space", spaces.new_space())
-o.rebind("SUPER + SHIFT + J", "Next space", spaces.next_space())
-o.rebind("SUPER + SHIFT + K", "Previous space", spaces.prev_space())
-o.rebind("SUPER + T", "New tab", spaces.new_tab())
-for n = 1, 10 do
-  local key = "code:" .. tostring(n + 9)
-  o.rebind("SUPER + " .. key, "Go to tab " .. n, spaces.go_to_tab(n))
-  o.rebind("SUPER + SHIFT + " .. key, "Move window to tab " .. n, spaces.move_window_to_tab(n))
+  o.rebind("SUPER + B", "Show or hide spaces", spaces.toggle_sidebar())
+  o.rebind("SUPER + P", "Find a space", spaces.find_space())
+  o.rebind("SUPER + N", "New space", spaces.new_space())
+  o.rebind("SUPER + SHIFT + J", "Next space", spaces.next_space())
+  o.rebind("SUPER + SHIFT + K", "Previous space", spaces.prev_space())
+  o.rebind("SUPER + T", "New tab", spaces.new_tab())
+  for n = 1, 10 do
+    local key = "code:" .. tostring(n + 9)
+    o.rebind("SUPER + " .. key, "Go to tab " .. n, spaces.go_to_tab(n))
+    o.rebind("SUPER + SHIFT + " .. key, "Move window to tab " .. n, spaces.move_window_to_tab(n))
+  end
 end
 ```
 
-To update, uninstall or build from source, see [Installation](docs/guide/install.md).
+To update or build from source, see [Installation](docs/guide/install.md). To remove it, see [Uninstall](#uninstall).
 
 ## Getting started
 
@@ -58,6 +60,14 @@ A dot shows which spaces need you: **yellow** while an agent works, **red** when
 - [Command line](docs/guide/cli.md)
 
 See [all the docs](docs/README.md) for the rest, including [how it works](docs/internals/architecture.md) and [developing Spaces](docs/internals/development.md).
+
+## Uninstall
+
+```sh
+omarchy plugin remove com.t4t5.spaces
+```
+
+This moves your windows back to the plain workspaces, gives you back Omarchy's keys and bar, and removes the `space` command and your saved sessions. The keys you added to `bindings.lua` do nothing from then on, so you can delete them whenever you like.
 
 ## License
 

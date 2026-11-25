@@ -89,6 +89,12 @@ Item {
   // doesn't stop it halfway.
   Component.onCompleted: Quickshell.execDetached(["space", "restore", "--auto"])
 
+  // When the plugin is removed this is all that runs, so it has uninstall.sh
+  // undo the setup, from the copy the setup kept. That tells it apart from the
+  // shell restarting. Detached, as the folder goes next; a linked clone has none.
+  Component.onDestruction: Quickshell.execDetached(["sh", "-c",
+    "exec \"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-spaces/uninstall.sh\" 2>/dev/null"])
+
   Sidebar {
     id: sidebarItem
     watch: watchItem

@@ -1,10 +1,9 @@
 -- Spaces for Hyprland. It binds no keys: bind the ones you want in
 -- ~/.config/hypr/bindings.lua, after the require (see docs/guide/keys.md).
 --
--- Install: link this file to ~/.config/hypr/omarchy-spaces.lua and add
---   local spaces = require("hypr.omarchy-spaces")
--- at the end of ~/.config/hypr/bindings.lua, which loads after Omarchy's
--- defaults. Remove that line to undo it.
+-- The plugin links this file to ~/.config/hypr/omarchy-spaces.lua (install.sh).
+-- The require goes at the end of bindings.lua, which loads after Omarchy's
+-- defaults, in an `if` that skips it once the plugin is removed (README.md).
 
 -- Each helper it returns makes an action for `o.bind` and `o.rebind`. What an
 -- action is (a command, a function) is up to the helper and can change, so

@@ -3205,7 +3205,12 @@ fn install_setup_asks_before_it_changes_the_bar() {
     let answer = home.join(".local/state/omarchy-spaces/bar");
     let plugin = tmp.path().join("plugin");
     fs::create_dir_all(plugin.join("hypr")).unwrap();
-    for file in ["install.sh", "manifest.json", "hypr/omarchy-spaces.lua"] {
+    for file in [
+        "install.sh",
+        "uninstall.sh",
+        "manifest.json",
+        "hypr/omarchy-spaces.lua",
+    ] {
         fs::copy(root.join(file), plugin.join(file)).unwrap();
     }
 
@@ -3221,6 +3226,7 @@ fn install_setup_asks_before_it_changes_the_bar() {
     let note = format!("echo \"${{0##*/}} $*\" >>'{}'", log.display());
     stub("omarchy", &note);
     stub("omarchy-notification-send", &note);
+    stub("hyprctl", &note);
     stub(
         "omarchy-shell",
         &format!("cat '{}/'$2.json", tmp.path().display()),
@@ -3266,6 +3272,7 @@ fn install_setup_asks_before_it_changes_the_bar() {
     assert!(!out.status.success());
     assert!(did.contains("Couldn't install"), "{did}");
     assert!(!did.contains("--bar"), "{did}");
+    assert!(did.contains("hyprctl reload"), "{did}");
     assert_eq!(
         fs::read_link(&link).unwrap(),
         plugin.join("hypr/omarchy-spaces.lua")
@@ -3324,6 +3331,123 @@ fn install_setup_asks_before_it_changes_the_bar() {
     fs::write(&link, "-- mine\n").unwrap();
     assert!(run(&plugin, &["--setup"]).0.status.success());
     assert_eq!(fs::read_to_string(&link).unwrap(), "-- mine\n");
+}
+
+#[test]
+fn uninstall_undoes_the_setup_once_the_plugin_is_gone() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let plugin = home.join(".config/omarchy/plugins/com.t4t5.spaces");
+    let link = home.join(".config/hypr/omarchy-spaces.lua");
+    let config = home.join(".config/omarchy/shell.json");
+    let state = home.join(".local/state/omarchy-spaces");
+    let space = home.join(".local/bin/space");
+    let mine = home.join(".config/omarchy-spaces/config.toml");
+    for dir in [&link, &config, &space, &mine] {
+        fs::create_dir_all(dir.parent().unwrap()).unwrap();
+    }
+    fs::create_dir_all(&state).unwrap();
+    fs::write(&mine, "").unwrap();
+
+    let stubs = tmp.path().join("stubs");
+    let log = tmp.path().join("log");
+    fs::create_dir_all(&stubs).unwrap();
+    let stub = |name: &str, body: &str| {
+        let path = stubs.join(name);
+        let note = format!("echo \"${{0##*/}} $*\" >>'{}'", log.display());
+        fs::write(&path, format!("#!/bin/bash\n{note}\n{body}\n")).unwrap();
+        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    };
+    stub("omarchy", "");
+    let clients = json!([
+        { "address": "0x1", "workspace": { "name": "s1:2" } },
+        { "address": "0x2", "workspace": { "name": "3" } },
+        { "address": "0x3", "workspace": { "name": "special:s1:2" } },
+        { "address": "0x4", "workspace": { "name": "s12:11" } },
+    ]);
+    stub(
+        "hyprctl",
+        &format!(
+            "case $1 in clients) echo '{clients}' ;; activeworkspace) echo '{{\"name\":\"s1:2\"}}' ;; esac"
+        ),
+    );
+
+    let built = "#!/bin/sh\n# omarchy-spaces\n";
+    let set_up = || {
+        fs::create_dir_all(plugin.join("hypr")).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::copy(root.join("uninstall.sh"), state.join("uninstall.sh")).unwrap();
+        let _ = fs::remove_file(&link);
+        std::os::unix::fs::symlink(plugin.join("hypr/omarchy-spaces.lua"), &link).unwrap();
+        fs::write(&space, built).unwrap();
+        let sum = Command::new("sha256sum").arg(&space).output().unwrap();
+        let sum = String::from_utf8(sum.stdout).unwrap();
+        let sum = sum.split_whitespace().next().unwrap();
+        fs::write(state.join("installed"), format!("{sum}\n")).unwrap();
+        fs::write(state.join("bar"), "replace\n").unwrap();
+    };
+    let run = || {
+        fs::write(&log, "").unwrap();
+        let out = Command::new(state.join("uninstall.sh"))
+            .env("HOME", &home)
+            .env_remove("XDG_STATE_HOME")
+            .env("SPACES_TRIES", "1")
+            .env("PATH", format!("{}:/usr/bin:/bin", stubs.display()))
+            .output()
+            .unwrap();
+        assert!(out.stderr.is_empty(), "{out:?}");
+        fs::read_to_string(&log).unwrap()
+    };
+    let put_back = "omarchy bar put omarchy.menu --section left --index 0\n\
+                    omarchy bar put omarchy.workspaces --after omarchy.menu\n";
+
+    // The shell restarting, or its config not to be read, changes nothing.
+    set_up();
+    for text in [
+        r#"{"bar":{"layout":{"left":[{"id":"com.t4t5.spaces"}]}}}"#,
+        "{",
+        "",
+    ] {
+        fs::write(&config, text).unwrap();
+        assert_eq!(run(), "", "{text}");
+    }
+    fs::remove_file(&config).unwrap();
+    assert_eq!(run(), "");
+
+    // Turned off, it only puts the bar back, once.
+    fs::write(&config, r#"{"bar":{"layout":{"left":[]}}}"#).unwrap();
+    assert_eq!(run(), put_back);
+    assert_eq!(run(), "");
+    assert!(link.is_symlink() && space.exists() && state.exists());
+
+    // Removed, it undoes all of it.
+    set_up();
+    fs::remove_dir_all(&plugin).unwrap();
+    let did = run();
+    let moved = |address: &str, key: &str| {
+        format!(
+            "hyprctl dispatch hl.dsp.window.move({{ workspace = \"{key}\", follow = false, window = \"address:{address}\" }})\n"
+        )
+    };
+    assert!(did.contains(&moved("0x1", "2")), "{did}");
+    assert!(did.contains(&moved("0x4", "11")), "{did}");
+    assert_eq!(did.matches("window.move").count(), 2, "{did}");
+    assert!(did.contains("hl.dsp.focus({ workspace = \"2\" })"), "{did}");
+    assert!(did.ends_with(put_back), "{did}");
+    assert!(!link.is_symlink() && !space.exists() && !state.exists());
+    assert!(mine.exists());
+
+    // But not what it didn't make, nor a bar that kept Omarchy's.
+    set_up();
+    fs::remove_dir_all(&plugin).unwrap();
+    fs::remove_file(&link).unwrap();
+    fs::write(&link, "-- mine\n").unwrap();
+    fs::write(&space, "#!/bin/sh\n# omarchy-spaces, built here\n").unwrap();
+    fs::write(state.join("bar"), "keep\n").unwrap();
+    let did = run();
+    assert!(!did.contains("omarchy bar"), "{did}");
+    assert!(link.exists() && space.exists() && !state.exists());
 }
 
 #[test]

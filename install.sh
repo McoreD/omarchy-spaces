@@ -66,12 +66,17 @@ setup() {
   # A clone someone works in has `just setup`.
   [[ ! -L $plugin_dir ]] || return 0
 
-  # First, as it needs no network and the user's keys load it. One that's
+  # What undoes all this, kept where removing the plugin leaves it.
+  install -Dm755 uninstall.sh "$state/uninstall.sh"
+
+  # Before the rest, as it needs no network and the user's keys load it. One that's
   # theirs stays; one that leads nowhere is from an earlier install.
   local link="$HOME/.config/hypr/omarchy-spaces.lua"
   if [[ ! -e $link ]]; then
     mkdir -p "${link%/*}"
     ln -sfn "$PWD/hypr/omarchy-spaces.lua" "$link"
+    # Keys there already were skipped without it.
+    hyprctl reload >/dev/null || true
   fi
 
   local said

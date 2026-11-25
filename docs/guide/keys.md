@@ -3,11 +3,15 @@
 Spaces binds no keys, so it never takes one of Omarchy's or yours. Bind the ones you want in `~/.config/hypr/bindings.lua`, after the `require` line. For example:
 
 ```lua
-local spaces = require("hypr.omarchy-spaces")
+if package.searchpath("hypr.omarchy-spaces", package.path) then
+  local spaces = require("hypr.omarchy-spaces")
 
-o.rebind("SUPER + B", "Show or hide spaces", spaces.toggle_sidebar())
-o.rebind("SUPER + N", "New space", spaces.new_space())
+  o.rebind("SUPER + B", "Show or hide spaces", spaces.toggle_sidebar())
+  o.rebind("SUPER + N", "New space", spaces.new_space())
+end
 ```
+
+The `if` skips them when Spaces isn't there, so that removing it gives you Omarchy's keys back.
 
 The [README](../../README.md#install) has a set to start from.
 
