@@ -3310,8 +3310,68 @@ fn an_unplugged_monitors_tab_put_somewhere_by_hand_stays() {
 #[test]
 fn the_plugin_has_the_same_version_as_space() {
     let manifest: Value =
-        serde_json::from_str(include_str!("../omarchy/manifest.json")).expect("manifest.json");
+        serde_json::from_str(include_str!("../manifest.json")).expect("manifest.json");
     assert_eq!(manifest["version"], env!("CARGO_PKG_VERSION"));
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for file in manifest["entryPoints"].as_object().unwrap().values() {
+        assert!(root.join(file.as_str().unwrap()).is_file(), "{file}");
+    }
+}
+
+#[test]
+fn install_takes_the_release_of_the_plugins_version() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let version = env!("CARGO_PKG_VERSION");
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let installed = home.join(".local/bin/space");
+    let release = tmp.path().join(format!("v{version}"));
+    let arch = std::env::consts::ARCH;
+    let install = || {
+        Command::new(root.join("install.sh"))
+            .env("HOME", &home)
+            .env(
+                "SPACES_RELEASES",
+                format!("file://{}", tmp.path().display()),
+            )
+            .output()
+            .unwrap()
+    };
+
+    let missing = install();
+    assert!(!missing.status.success());
+    let said = String::from_utf8_lossy(&missing.stderr).into_owned();
+    assert!(said.contains("is version"), "{said}");
+    assert!(!installed.exists());
+
+    let package = Command::new(root.join("scripts/package.sh"))
+        .arg(env!("CARGO_BIN_EXE_space"))
+        .arg(arch)
+        .arg(&release)
+        .output()
+        .unwrap();
+    assert!(package.status.success(), "{package:?}");
+    for again in [false, true] {
+        let done = install();
+        assert!(done.status.success(), "{again}: {done:?}");
+        let space = Command::new(&installed).arg("--version").output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&space.stdout),
+            format!("space {version}\n")
+        );
+    }
+
+    // Not what was released: the one there stays.
+    let archive = release.join(format!("space-{version}-{arch}-linux.tar.gz"));
+    fs::write(&archive, "something else").unwrap();
+    let before = fs::read(&installed).unwrap();
+    assert!(!install().status.success());
+    assert!(fs::read(&installed).unwrap() == before);
+
+    // Nor does it replace another program of that name.
+    fs::write(&installed, "#!/bin/sh\n").unwrap();
+    let said = String::from_utf8_lossy(&install().stderr).into_owned();
+    assert!(said.contains("is another program"), "{said}");
 }
 
 #[test]

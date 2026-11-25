@@ -20,25 +20,21 @@ Click `+` at the end of the list to open a new space with a terminal in the fold
 
 Spaces has two parts: the `space` command, in Rust, and an Omarchy shell plugin that draws the tabs and the sidebar. Each step below does only what it says, and [Undo](#undo) reverses each one. Nothing binds keys for you.
 
-You need Omarchy 4.5 or newer, and Rust: check with `cargo --version`, and if it's missing, `sudo pacman -S rust`.
+You need Omarchy 4.5 or newer, on x86-64 or ARM64.
 
-1. Get the code, and build `space` into `~/.local/bin`, which Omarchy has on its PATH. Keep the folder: the plugin is linked from it.
-
-   ```sh
-   git clone https://github.com/t4t5/omarchy-spaces.git ~/.local/share/omarchy-spaces
-   cd ~/.local/share/omarchy-spaces
-   cargo build --release
-   install -Dm755 target/release/space ~/.local/bin/space
-   ```
-
-2. Link the plugin into Omarchy's plugins and have the shell look for it:
+1. Add the plugin. When it asks whether to enable it, say no: step 3 does, in the right place on the bar.
 
    ```sh
-   ln -sfn ~/.local/share/omarchy-spaces/omarchy ~/.config/omarchy/plugins/com.t4t5.spaces
-   omarchy-shell shell rescanPlugins
+   omarchy plugin add https://github.com/t4t5/omarchy-spaces.git
    ```
 
-3. Turn it on, first on the bar, and take off Omarchy's menu and workspaces, which its logo and tabs replace. The menu still opens with a right-click on the logo, or its key (`super+space` by default). If the first command says the plugin is unknown, the rescan hasn't finished: wait a second and run it again.
+2. Install `space` into `~/.local/bin`, which Omarchy has on its PATH. The script downloads the build for the plugin's version from its GitHub release and checks it against the release's checksum. To build it yourself instead, see [From source](#from-source).
+
+   ```sh
+   ~/.config/omarchy/plugins/com.t4t5.spaces/install.sh
+   ```
+
+3. Turn it on, first on the bar, and take off Omarchy's menu and workspaces, which its logo and tabs replace. The menu still opens with a right-click on the logo, or its key (`super+space` by default).
 
    ```sh
    omarchy plugin enable com.t4t5.spaces --section left --index 0
@@ -51,7 +47,7 @@ You need Omarchy 4.5 or newer, and Rust: check with `cargo --version`, and if it
 4. Link the Hyprland part. It keeps every monitor on the same space, ends a tab when you close its last window, and holds the tab actions for your keys:
 
    ```sh
-   ln -sfn ~/.local/share/omarchy-spaces/hypr/omarchy-spaces.lua ~/.config/hypr/omarchy-spaces.lua
+   ln -sfn ~/.config/omarchy/plugins/com.t4t5.spaces/hypr/omarchy-spaces.lua ~/.config/hypr/omarchy-spaces.lua
    ```
 
    Then add this line at the end of `~/.config/hypr/bindings.lua`, with the keys you want after it (see [Keys](#keys)):
@@ -62,13 +58,21 @@ You need Omarchy 4.5 or newer, and Rust: check with `cargo --version`, and if it
 
 ### Update
 
+The plugin and `space` go together, so update both:
+
 ```sh
-cd ~/.local/share/omarchy-spaces
-git pull
-cargo build --release
-install -Dm755 target/release/space ~/.local/bin/space
-omarchy restart shell
+omarchy plugin update com.t4t5.spaces && ~/.config/omarchy/plugins/com.t4t5.spaces/install.sh && omarchy restart shell
 ```
+
+### From source
+
+With Rust (`sudo pacman -S rust` if `cargo --version` fails), in place of `install.sh`, when you install and when you update:
+
+```sh
+cargo install --locked --force --root ~/.local --target-dir ~/.cache/omarchy-spaces --path ~/.config/omarchy/plugins/com.t4t5.spaces
+```
+
+It builds outside the plugin's folder, as the shell watches that for changes.
 
 ### Undo
 
@@ -80,8 +84,6 @@ omarchy restart shell
    omarchy plugin disable com.t4t5.spaces
    omarchy plugin enable omarchy.menu --section left --index 0
    omarchy plugin enable omarchy.workspaces --after omarchy.menu
-   rm ~/.config/omarchy/plugins/com.t4t5.spaces
-   omarchy-shell shell rescanPlugins
    ```
 
 3. Take the `require("hypr.omarchy-spaces")` line and the Spaces keys out of `~/.config/hypr/bindings.lua`, and save. Only then remove the file it loads, so Hyprland's config never points at a missing file:
@@ -90,12 +92,15 @@ omarchy restart shell
    rm ~/.config/hypr/omarchy-spaces.lua
    ```
 
-4. Remove the command, what it remembers, and the code. Take out any `space status` hooks you added to your agents too.
+4. Remove the plugin, the command and what it remembers. Take out any `space status` hooks you added to your agents too.
 
    ```sh
+   omarchy plugin remove com.t4t5.spaces --yes
    rm ~/.local/bin/space
-   rm -rf ~/.local/state/omarchy-spaces ~/.config/omarchy-spaces ~/.local/share/omarchy-spaces
+   rm -rf ~/.local/state/omarchy-spaces ~/.config/omarchy-spaces ~/.cache/omarchy-spaces
    ```
+
+   If you built it from source, run `cargo uninstall --root ~/.local omarchy-spaces` in place of `rm ~/.local/bin/space`.
 
 Spaces opens plain Omarchy terminals (`xdg-terminal-exec`) by default. To get agent status dots and sounds in any native terminal, wire up your agent's hooks to `space status` (below). If you prefer [herdr-core](https://github.com/herdrdev/herdr-core) (`hc`), install it on your `PATH` and Spaces uses it automatically (set `herdr_core = false` under `[terminal]` in `config.toml` to keep plain terminals even when `hc` is installed).
 
@@ -238,7 +243,11 @@ just stress             # goes between your spaces quickly, and checks that what
 
 The justfile's `install` and `setup` do Install's steps for a clone you work in, building into `~/.cargo/bin` and adding the `require` line for you. The plugin and `space` go together: after changing what `space watch` prints, do both `just install` and `just reload`, and raise `VERSION` in `src/view.rs` and `omarchy/Spaces.mjs` if the one can't read the other.
 
-`space` and the plugin share one version, in `Cargo.toml` and `omarchy/manifest.json`; the tests fail if they differ. CI (`.github/workflows/ci.yml`) runs on pull requests and on `main`: the tests above, `cargo fmt --check`, `cargo clippy` with warnings as errors, and a syntax check of the Lua.
+`space` and the plugin share one version, in `Cargo.toml` and `manifest.json`; the tests fail if they differ. CI (`.github/workflows/ci.yml`) runs on pull requests and on `main`: the tests above, `cargo fmt --check`, `cargo clippy` with warnings as errors, a syntax check of the Lua, and a check that there are no symlinks, which `omarchy plugin add` refuses.
+
+### Releasing
+
+`omarchy plugin add` and `update` take whatever is on `main`, and `install.sh` takes the release of the version in its `manifest.json`. So `main` has to go with the latest release: keep work that changes both the plugin and `space` on a branch until it's released. To release, raise the version in `Cargo.toml`, `Cargo.lock` and `manifest.json`, commit, and push `main` together with the version's tag, `v0.2.0`. The tag has `.github/workflows/release.yml` run CI, build `space` for x86-64 and ARM64 and make the GitHub release. Until it's done, a few minutes later, `install.sh` says there's no such release and changes nothing.
 
 ## License
 

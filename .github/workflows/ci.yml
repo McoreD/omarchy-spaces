@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
@@ -33,3 +34,6 @@ jobs:
       - run: node --test omarchy/tests/*.test.mjs
       - run: luac5.4 -p hypr/omarchy-spaces.lua
       - run: lua5.4 hypr/tests/keys.lua
+      # `omarchy plugin add` refuses a repository with any.
+      - name: Check that there are no symlinks
+        run: "! git ls-files --stage | grep ^120000"

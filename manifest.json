@@ -4,7 +4,7 @@
   "name": "Spaces",
   "version": "0.1.0",
   "author": "T4T5",
-  "description": "The active space's tabs on the bar, and a sidebar of spaces named after their folders",
+  "description": "Project-based layout for Omarchy",
   "kinds": [
     "overlay",
     "service",
@@ -12,13 +12,13 @@
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "overlay": "Toggle.qml",
-    "service": "Service.qml",
-    "barWidget": "TabsWidget.qml"
+    "overlay": "omarchy/Toggle.qml",
+    "service": "omarchy/Service.qml",
+    "barWidget": "omarchy/TabsWidget.qml"
   },
   "barWidget": {
     "displayName": "Space tabs",
-    "description": "The active space's name and its tabs, in place of the workspaces",
+    "description": "The active space's tabs, in place of the workspaces",
     "category": "Compositor",
     "allowMultiple": false,
     "defaultSection": "left"

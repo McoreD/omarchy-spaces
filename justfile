@@ -4,9 +4,9 @@ default:
 install:
     cargo install --path .
 
-# Add the tabs to the bar and the sidebar to the Omarchy shell, and bind the keys
+# Add the tabs to the bar and the sidebar to the Omarchy shell, and load the Hyprland part
 setup:
-    ln -sfn {{justfile_directory()}}/omarchy ~/.config/omarchy/plugins/com.t4t5.spaces
+    ln -sfn {{justfile_directory()}} ~/.config/omarchy/plugins/com.t4t5.spaces
     omarchy-shell shell rescanPlugins
     # The rescan finishes after the call returns; wait until the shell lists the plugin.
     for i in $(seq 50); do omarchy-shell shell listPlugins | grep -q '"com.t4t5.spaces"' && break; sleep 0.1; done

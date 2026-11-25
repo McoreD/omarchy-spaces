@@ -15,7 +15,8 @@ import "Spaces.mjs" as Spaces
 // it agrees or a moment has passed.
 //
 // `space watch` ends when Hyprland restarts or its binary is replaced, so it
-// is started again, a little later each time it fails in a row.
+// is started again, a little later each time it fails in a row. So is one that
+// couldn't start, as when `space` isn't installed yet.
 Item {
   id: root
 
@@ -27,6 +28,17 @@ Item {
   // Why it isn't running, when it keeps failing before printing anything.
   property string error: ""
   property int failures: 0
+  // What it exited with. One that couldn't start never exits.
+  property var exitCode: null
+
+  function ended() {
+    root.ready = false
+    root.failures++
+    if (root.exitCode === null) root.error = "The space command isn't installed: run install.sh in the plugin's folder"
+    else if (root.failures > 1 && !root.error) root.error = "space watch exited with " + root.exitCode
+    again.interval = Math.min(10000, 250 * Math.pow(2, Math.min(root.failures, 6)))
+    again.restart()
+  }
 
   Process {
     id: proc
@@ -48,17 +60,16 @@ Item {
     stderr: StdioCollector {
       onStreamFinished: if (!root.ready && text.trim()) root.error = text.trim()
     }
-    onExited: function(exitCode) {
-      root.ready = false
-      root.failures++
-      if (root.failures > 1 && !root.error) root.error = "space watch exited with " + exitCode
-      again.interval = Math.min(10000, 250 * Math.pow(2, Math.min(root.failures, 6)))
-      again.restart()
-    }
+    onExited: function(exitCode) { root.exitCode = exitCode }
+    // Later, once `exited` has said how.
+    onRunningChanged: if (!proc.running) Qt.callLater(root.ended)
   }
 
   Timer {
     id: again
-    onTriggered: proc.running = true
+    onTriggered: {
+      root.exitCode = null
+      proc.running = true
+    }
   }
 }
