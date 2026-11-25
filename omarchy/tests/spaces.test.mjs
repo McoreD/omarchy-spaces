@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { cursorIndex, EMPTY, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, barToggle, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs } from "../Spaces.mjs"
+import { cursorIndex, EMPTY, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, headerOnBar, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs } from "../Spaces.mjs"
 
 // A line of `space watch`, with a tab on each of two monitors.
 const line = (spaces, more) => JSON.stringify({ version: 1, focused: "eDP-1", monitors: [
@@ -231,13 +231,16 @@ test("reads the bar's background look", () => {
 
 test("reads whether the sidebar's header is on the bar", () => {
   const id = "com.t4t5.spaces"
-  assert.equal(barToggle({ layout: { left: [{ id: "omarchy.menu" }, { id }] } }, id), false)
-  assert.equal(barToggle({ layout: { left: [{ id, toggle: true }] } }, id), true)
-  assert.equal(barToggle({ position: "bottom", layout: { left: [{ id, toggle: true }] } }, id), true)
-  assert.equal(barToggle({ position: "left", layout: { left: [{ id, toggle: true }] } }, id), false, "a vertical bar")
-  assert.equal(barToggle({ layout: { right: [{ id, toggle: true }] } }, id), false, "only the left section lines up")
-  assert.equal(barToggle({ layout: { left: [null, { id, toggle: "yes" }] } }, id), false)
-  assert.equal(barToggle(null, id), false)
+  assert.equal(headerOnBar({ layout: { left: [{ id }] } }, id), true)
+  assert.equal(headerOnBar({ layout: { left: [{ id }, { id: "omarchy.menu" }] } }, id), true)
+  assert.equal(headerOnBar({ position: "bottom", layout: { left: [{ id }] } }, id), true)
+  assert.equal(headerOnBar({ layout: { left: [{ id: "omarchy.menu" }, { id }] } }, id), false, "the menu has the corner")
+  assert.equal(headerOnBar({ position: "left", layout: { left: [{ id }] } }, id), false, "a vertical bar")
+  assert.equal(headerOnBar({ position: "right", layout: { left: [{ id }] } }, id), false, "a vertical bar")
+  assert.equal(headerOnBar({ layout: { right: [{ id }] } }, id), false, "only the left section lines up")
+  assert.equal(headerOnBar({ layout: { left: [null, { id }] } }, id), false)
+  assert.equal(headerOnBar({ layout: { left: [] } }, id), false)
+  assert.equal(headerOnBar(null, id), false)
 })
 
 test("offers rename, an icon and close, saying why close doesn't apply", () => {

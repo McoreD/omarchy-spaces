@@ -124,8 +124,8 @@ Item {
   property var palette: Spaces.DEFAULT_PALETTE
   // The colours of agents' statuses, from it too (StatusDot.qml).
   property var statusColors: null
-  // Whether its header, the toggle and title, is on the bar in place of the
-  // menu (TabsWidget.qml), so the list starts without one.
+  // Whether its header, the toggle and title, is on the bar, the tabs being
+  // first there (TabsWidget.qml), so the list starts without one.
   property bool headerOnBar: false
 
   readonly property int panelWidth: Style.space(200)

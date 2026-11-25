@@ -500,14 +500,14 @@ export function recessAlpha(r, g, b) {
   return luminance > 0.5 ? 0.07 : 0.3
 }
 
-// Whether the sidebar's header, its toggle and title, sits on the bar in
-// place of Omarchy's menu: `"toggle": true` on the entry for the widget `id`
-// in the bar's left section, on a bar along the top or bottom, where the
-// widget lines up with the sidebar.
-export function barToggle(config, id) {
+// Whether the sidebar's header, its toggle and title, sits on the bar: when
+// the widget `id` comes first in the bar's left section, on a bar along the
+// top or bottom, so the corner over the sidebar is its own. With something
+// before it, as Omarchy's menu, the sidebar keeps its header.
+export function headerOnBar(config, id) {
   if (!config || config.position === "left" || config.position === "right") return false
   const left = config.layout && config.layout.left
-  return Array.isArray(left) && left.some((entry) => !!entry && entry.id === id && entry.toggle === true)
+  return Array.isArray(left) && !!left[0] && left[0].id === id
 }
 
 // The bar's background, as Omarchy's shell config holds it: opaque, glassy

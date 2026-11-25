@@ -8,7 +8,7 @@ With more than one monitor, they all show the same space, and each has tabs of i
 
 A space is called after the folder its first terminal is in: the repository's folder when it's in one, `~` for home. It follows that terminal as it changes folder. Name a space when you want a name that stays. A space lasts as long as its windows: close the last one, however it goes (`super+w`, `exit`, the app quitting), and the space ends, taking you back to the space you were in before. Closing the last window on one of a space's tabs takes you to its next tab on that monitor, or the one before; with none there, it stays, empty, as long as the space has windows on another.
 
-The spaces have their own column down the left of the screen, and the active space's tabs sit beside it on Omarchy's bar, in place of its workspaces. Collapsed, the column is a rail of badges, one per space: two letters for its name, as T3 Code marks projects, in a colour from the theme that stays with the name, with the space you're in outlined. Right-click a space to give its badge an icon instead, a Nerd Font glyph or an emoji: Tab to switch between them, or type to search both at once, and the badge shows the icon under the cursor until you pick one. Click the toggle at its top, or press a key you bind to it (`super+b` in [Keys](#keys)), to expand it into the spaces sidebar, with each space's name: your windows and the bar's tabs slide aside to reveal it, and the keyboard stays with your windows. Another key (`super+p`) searches it.
+The spaces have their own column down the left of the screen, and the active space's tabs sit beside it on Omarchy's bar, in place of its workspaces. Collapsed, the column is a rail of badges, one per space: two letters for its name, as T3 Code marks projects, in a colour from the theme that stays with the name, with the space you're in outlined. Right-click a space to give its badge an icon instead, a Nerd Font glyph or an emoji: Tab to switch between them, or type to search both at once, and the badge shows the icon under the cursor until you pick one. Click the logo above it, or press a key you bind to it (`super+b` in [Keys](#keys)), to expand it into the spaces sidebar, with each space's name: your windows and the bar's tabs slide aside to reveal it, and the keyboard stays with your windows. Another key (`super+p`) searches it.
 
 A tab is named after its most recently focused window: a terminal by what it's running (`claude`, `nvim`), or by the folder it's in when it's at its prompt, and any other app by its name. Name a tab yourself, by double-clicking it, by right-clicking it and choosing Rename, or with a key bound to `renameTab` (see Keys), and it keeps that name whatever runs in it, until you clear it with an empty name or close the tab. Close a tab from the same menu: if it has windows it asks first, as they close with it. Or move it to another space, where it comes after the tabs there, with its windows arranged as they are and the name you gave it, and you go with it: pick the space from the menu, or with a key bound to `sendTab`. Drag a tab along the bar to move it among its space's tabs; the space keeps the numbers its tabs have, what's on them moves along, and you stay on the tab you're on. (Dragging the tabs' `+` still moves the whole widget on the bar.) `home`'s tabs show just their numbers, as Omarchy's workspaces do, until you name one; each monitor's are named on their own.
 
@@ -38,14 +38,15 @@ You need Omarchy 4.5 or newer, and Rust: check with `cargo --version`, and if it
    omarchy-shell shell rescanPlugins
    ```
 
-3. Turn it on, with the tabs after Omarchy's menu, and turn off Omarchy's workspaces, which the tabs replace. If the first command says the plugin is unknown, the rescan hasn't finished: wait a second and run it again.
+3. Turn it on, first on the bar, and take off Omarchy's menu and workspaces, which its logo and tabs replace. The menu still opens with a right-click on the logo, or its key (`super+space` by default). If the first command says the plugin is unknown, the rescan hasn't finished: wait a second and run it again.
 
    ```sh
-   omarchy plugin enable com.t4t5.spaces --after omarchy.menu
+   omarchy plugin enable com.t4t5.spaces --section left --index 0
+   omarchy plugin disable omarchy.menu
    omarchy plugin disable omarchy.workspaces
    ```
 
-   The rail of spaces appears down the left of the screen and the tabs on the bar.
+   The rail of spaces appears down the left of the screen, and the logo and tabs on the bar. To keep the menu on the bar, see [The logo](#the-logo).
 
 4. Link the Hyprland part. It keeps every monitor on the same space, ends a tab when you close its last window, and holds the tab actions for your keys:
 
@@ -73,16 +74,15 @@ omarchy restart shell
 
 1. Bring back any windows you want to keep from your spaces: from each one, `space window send home`. Once the plugin is off, Omarchy's workspace keys can't reach windows still in a space.
 
-2. Turn the plugin off, which takes the tabs off the bar, and put Omarchy's workspaces back:
+2. Turn the plugin off, which takes the logo and tabs off the bar, and put Omarchy's menu and workspaces back:
 
    ```sh
    omarchy plugin disable com.t4t5.spaces
+   omarchy plugin enable omarchy.menu --section left --index 0
    omarchy plugin enable omarchy.workspaces --after omarchy.menu
    rm ~/.config/omarchy/plugins/com.t4t5.spaces
    omarchy-shell shell rescanPlugins
    ```
-
-   If you took `omarchy.menu` off the bar for the [toggle](#toggle-in-place-of-the-menu), put it back first with `omarchy plugin enable omarchy.menu --section left --index 0`.
 
 3. Take the `require("hypr.omarchy-spaces")` line and the Spaces keys out of `~/.config/hypr/bindings.lua`, and save. Only then remove the file it loads, so Hyprland's config never points at a missing file:
 
@@ -124,17 +124,15 @@ notify = ["space", "status", "done"]
 
 It also works for plain shell commands — e.g. `cargo test && space status done` lights up the tab green and rings when the build finishes while you're in another space. If an agent is killed (`Ctrl-C`) while `working` or `waiting`, Spaces notices its process exited and clears the dot automatically.
 
-### Toggle in place of the menu
+### The logo
 
-To save the rail a row, the sidebar's header can move up onto the bar, where Omarchy's menu is: the Omarchy logo sits over the rail and expands or collapses the sidebar, and when the sidebar expands, its title shows beside the logo with a toggle at its right edge. A right-click on the logo opens the Omarchy menu, as its key (`super+space` by default) still does. Take `omarchy.menu` off the bar and set `toggle` on the tabs' entry in `~/.config/omarchy/shell.json`:
+With the tabs first in the left section of a bar along the top or bottom of the screen, the sidebar's header is on the bar, over the rail: the Omarchy logo expands or collapses the sidebar, and when the sidebar expands, its title shows beside the logo with a toggle at its right edge. A right-click on the logo opens the Omarchy menu.
 
-```json
-"left": [
-  { "id": "com.t4t5.spaces", "toggle": true }
-]
+Anywhere else, the sidebar has its header, with the toggle, at its own top. So to keep Omarchy's menu on the bar, put it before the tabs:
+
+```sh
+omarchy plugin enable omarchy.menu --section left --index 0
 ```
-
-It needs the bar along the top or bottom of the screen, with the tabs first in its left section.
 
 ## Keys
 

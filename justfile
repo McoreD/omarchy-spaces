@@ -10,10 +10,10 @@ setup:
     omarchy-shell shell rescanPlugins
     # The rescan finishes after the call returns; wait until the shell lists the plugin.
     for i in $(seq 50); do omarchy-shell shell listPlugins | grep -q '"com.t4t5.spaces"' && break; sleep 0.1; done
-    omarchy plugin enable com.t4t5.spaces
-    # The space's tabs take the place of the bar's workspaces, after the menu.
+    # First on the bar, the space's logo and tabs take the place of the menu and the workspaces.
+    omarchy plugin enable com.t4t5.spaces --section left --index 0
+    omarchy plugin disable omarchy.menu
     omarchy plugin disable omarchy.workspaces
-    omarchy bar put com.t4t5.spaces --after omarchy.menu
     ln -sfn {{justfile_directory()}}/hypr/omarchy-spaces.lua ~/.config/hypr/omarchy-spaces.lua
     grep -q 'require("hypr.omarchy-spaces")' ~/.config/hypr/bindings.lua || echo 'local spaces = require("hypr.omarchy-spaces")' >> ~/.config/hypr/bindings.lua
 

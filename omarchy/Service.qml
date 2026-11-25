@@ -68,7 +68,7 @@ Item {
   Sidebar {
     id: sidebarItem
     watch: watchItem
-    headerOnBar: Spaces.barToggle(root.shell ? root.shell.barConfig : null, (root.manifest && root.manifest.id) || "com.t4t5.spaces")
+    headerOnBar: Spaces.headerOnBar(root.shell ? root.shell.barConfig : null, (root.manifest && root.manifest.id) || "com.t4t5.spaces")
     // Ended from inside (a pick, Escape), so the shell stops counting the
     // overlay as open and the next toggle searches again.
     onSearchEnded: {

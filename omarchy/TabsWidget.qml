@@ -32,11 +32,11 @@ import "Spaces.mjs" as Spaces
 // bar's left section does: anywhere else, growing would move it out from
 // under the line.
 //
-// With `"toggle": true` on its entry (Spaces.barToggle), the sidebar's
-// header moves up onto the bar, in place of Omarchy's menu, which you take
-// off it: the logo over the rail, which shows or hides the sidebar, and once
-// it expands, its title and a toggle riding the windows' edge to the right.
-// A right-click on the logo opens the menu.
+// First in the left section (Spaces.headerOnBar), it has the sidebar's header
+// on the bar too, in place of Omarchy's menu: the logo over the rail, which
+// shows or hides the sidebar, and once it expands, its title and a toggle
+// riding the windows' edge to the right. A right-click on the logo opens the
+// menu.
 BarWidget {
   id: root
   moduleName: "com.t4t5.spaces"
