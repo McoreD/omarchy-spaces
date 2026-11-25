@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::browser;
 use crate::live::{Live, Row, Snapshot};
 use crate::monitors;
 use crate::name::{self, HOME};
@@ -118,14 +119,8 @@ fn tab(space: &str, key: u8, snapshot: &Snapshot, live: &Live, row: Option<&Row>
 /// `Quick-terminal`, Omarchy's `chrome-app.hey.com__-Default` web apps are
 /// `Hey.com`.
 fn app_name(class: &str) -> String {
-    let web_app = ["chrome-", "chromium-", "brave-"]
-        .iter()
-        .find_map(|browser| class.strip_prefix(browser))
-        .and_then(|rest| rest.split_once("__"))
-        .map(|(site, _)| site)
-        .filter(|site| !site.is_empty());
-    let name = match web_app {
-        Some(site) => ["app.", "www."]
+    let name = match browser::web_app(class) {
+        Some((_, site)) => ["app.", "www."]
             .iter()
             .find_map(|prefix| site.strip_prefix(prefix))
             .unwrap_or(site),

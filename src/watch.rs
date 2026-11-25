@@ -8,21 +8,17 @@
 //! its state is read again then, and every `SLOW` for what it doesn't say: a
 //! window resized, which the saved session (`session.rs`) has. Going somewhere
 //! shows at once, and again once the burst it's part of has settled. When
-//! Hyprland can't be read, what it last said stands. herdr-core says what runs in its
-//! terminals, their folders and what their agents report (`core.rs`), so
-//! windows showing its terminals are kept current from its events. Nothing
-//! says what other terminals' shells do, so those are read from `/proc`,
+//! Hyprland can't be read, what it last said stands. Nothing
+//! says what the terminals' shells do, so those are read from `/proc`,
 //! which costs a few small reads: the active space's every `FAST`, the rest
 //! every `SLOW`, and all of them at once when a window's title changes, as
 //! terminals retitle themselves on `cd` and when a command starts.
 //!
 //! An agent's `done` shows until you focus its window: then its turn is
-//! seen, which it notes on core's terminal as Herdr's clients do, so it
-//! stays seen when the watch restarts. What Claude notes itself has no turns:
-//! those are told apart here (`status::Turns`), and a new watch starts over. With `--sounds`, as the plugin runs
-//! it, it plays a sound when an agent starts needing you or finishes while
-//! you aren't looking (`sound.rs`). Without core it subscribes again every `SLOW`, so starting core
-//! later is noticed.
+//! seen. What agents note has no turns: those are told apart here
+//! (`status::Turns`), and a new watch starts over. With `--sounds`, as the
+//! plugin runs it, it plays a sound, if the config has them on, when an agent
+//! starts needing you or finishes while you aren't looking (`sound.rs`).
 //!
 //! It exits when Hyprland's event socket closes, when nobody reads what it
 //! prints, and when its binary has been replaced (`cargo install`), so that
@@ -38,7 +34,6 @@ use anyhow::{Result, bail};
 
 use crate::browser::Browsers;
 use crate::config::Config;
-use crate::core;
 use crate::hypr::Hypr;
 use crate::live;
 use crate::paths;
@@ -50,8 +45,7 @@ use crate::{sound, status, terminal, view};
 
 /// How often the active space's terminals' shells are read.
 const FAST: Duration = Duration::from_millis(200);
-/// How often every other terminal's shell is read, the binary checked, and
-/// core subscribed to when it isn't.
+/// How often every other terminal's shell is read, and the binary checked.
 const SLOW: Duration = Duration::from_secs(2);
 /// How long to let a burst of events settle before reading again: opening a
 /// window sends several.
@@ -61,21 +55,19 @@ const SETTLE: Duration = Duration::from_millis(20);
 enum Message {
     Hyprland(String),
     HyprlandGone,
-    Core(core::Update),
 }
 
 pub fn watch(sounds: bool) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (send, messages) = mpsc::channel();
     let events = hypr.events()?;
-    let to_main = send.clone();
     std::thread::spawn(move || {
         for event in events {
-            if to_main.send(Message::Hyprland(event)).is_err() {
+            if send.send(Message::Hyprland(event)).is_err() {
                 return;
             }
         }
-        let _ = to_main.send(Message::HyprlandGone);
+        let _ = send.send(Message::HyprlandGone);
     });
     let state_dir = paths::state_dir();
 
@@ -97,16 +89,13 @@ pub fn watch(sounds: bool) -> Result<()> {
             .unwrap_or_default(),
     );
     let mut last_seen = stamp(&state_dir.join("last"));
-    // Core's terminals, while subscribed to it.
-    let mut core: Option<core::Terminals> = None;
-    let mut subscribed = false;
-    // The turn each agent was on when you last looked at it; core's
-    // terminals then say so too.
+    // The turn each agent was on when you last looked at it.
     let mut seen: HashMap<String, u64> = HashMap::new();
-    // What each agent last reported, to ring on a change.
+    // What each agent was last doing, to ring on a change.
     let mut words: HashMap<String, String> = HashMap::new();
     let mut turns = status::Turns::default();
-    let mut config = Config::load_or_default();
+    // `None` until the config can be read.
+    let mut config = read_config();
     let mut config_seen = stamp(&paths::config_file());
     let mut focused = hypr.active_window_address()?;
     let mut read_all = true;
@@ -126,14 +115,16 @@ pub fn watch(sounds: bool) -> Result<()> {
             }
             // Hyprland has no event for a window resized or a split turned.
             refresh(&hypr, &mut snapshot);
-            browsers.refresh(&snapshot.browser_windows, now);
-            if !subscribed {
-                subscribed = core::subscribe(send.clone(), Message::Core).is_ok();
+            match config.as_ref().map(|config| config.restore.browsers) {
+                Some(true) => browsers.refresh(&snapshot.browser_windows, now),
+                Some(false) => browsers.forget(),
+                // It may be about to say not to.
+                None => {}
             }
         }
 
         // What the terminals' shells are doing: the active space's now, and
-        // new ones', the rest when due. Core's are in memory.
+        // new ones', the rest when due.
         let live_addresses: HashSet<String> = snapshot
             .space_windows
             .iter()
@@ -146,8 +137,8 @@ pub fn watch(sounds: bool) -> Result<()> {
                 || snapshot.active() == Some(window.space.as_str())
                 || known.is_none_or(|(place, _)| *place != window.place)
             {
-                let before = known.and_then(|(_, shell)| shell.as_ref()?.pid);
-                let shell = terminal::shell_of(window.place, core.as_ref(), before);
+                let before = known.and_then(|(_, shell)| Some(shell.as_ref()?.pid));
+                let shell = terminal::shell(window.place, before);
                 shells.insert(window.address.clone(), (window.place, shell));
             }
         }
@@ -162,49 +153,39 @@ pub fn watch(sounds: bool) -> Result<()> {
         let configured = stamp(&paths::config_file());
         if configured != config_seen {
             // Halfway through a change, or mistaken, what it last said stands.
-            match Config::load() {
-                Ok(read) => config = read,
-                Err(e) => eprintln!("space: warning: {e:#}"),
-            }
+            config = read_config().or(config);
             config_seen = configured;
         }
 
         let mut live = live::live_from(&snapshot, |window| shells.get(&window.address)?.1.clone());
         turns.follow(live.agents_mut());
-        // The agent in the window you're looking at is seen, once a turn.
+        // The agent in the window you're looking at is seen.
         if let Some(focused) = &focused {
             for (window, agent) in live.agents() {
-                let key = agent.key();
-                if window == focused && !agent.seen() && seen.get(&key) != Some(&agent.turn) {
-                    seen.insert(key, agent.turn);
-                    if let terminal::AgentSource::Core(address) = &agent.source
-                        && let Err(e) = core::mark_seen(address, agent.turn)
-                    {
-                        eprintln!("space: warning: {e:#}");
-                    }
+                if window == focused {
+                    seen.insert(agent.process.clone(), agent.turn);
                 }
             }
         }
-        // A change in what an agent reports may call for a sound. Statuses
-        // already present when `watch` starts (or when core first connects)
-        // don't ring.
+        // A change in what an agent is doing may call for a sound. Statuses
+        // already present when `watch` starts don't ring.
         for (window, agent) in live.agents() {
-            let key = agent.key();
-            let before = words.insert(key, agent.word.clone());
+            let before = words.insert(agent.process.clone(), agent.word.clone());
             if !sounds {
                 continue;
             }
             let looking = focused.as_deref() == Some(window);
             if let Some(before) = before
+                && let Some(config) = &config
                 && let Some(alert) = sound::alert(&before, &agent.word, looking)
             {
-                sound::play(&config, alert);
+                sound::play(config, alert);
             }
         }
-        let live_keys: HashSet<String> = live.agents().map(|(_, a)| a.key()).collect();
+        let live_keys: HashSet<String> = live.agents().map(|(_, a)| a.process.clone()).collect();
         seen.retain(|key, _| live_keys.contains(key));
         words.retain(|key, _| live_keys.contains(key));
-        live.set_statuses(|agent| agent.seen() || seen.get(&agent.key()) == Some(&agent.turn));
+        live.set_statuses(|agent| seen.get(&agent.process) == Some(&agent.turn));
 
         let mut store = Store::lock(&state_dir)?;
         // Another command changed the spaces, perhaps adding one that the
@@ -277,25 +258,6 @@ pub fn watch(sounds: bool) -> Result<()> {
                     }
                 }
                 Message::HyprlandGone => bail!("Hyprland's events stopped"),
-                Message::Core(update) => {
-                    let shown = match update {
-                        core::Update::Snapshot(terminals) => {
-                            core = Some(core::Terminals::new(terminals));
-                            true
-                        }
-                        core::Update::Event(event) => {
-                            core.as_mut().is_some_and(|core| core.apply(&event))
-                        }
-                        core::Update::Gone => {
-                            core = None;
-                            subscribed = false;
-                            true
-                        }
-                    };
-                    if shown {
-                        changed = changed.max(Change::Folders);
-                    }
-                }
             }
         }
         let now = Instant::now();
@@ -361,6 +323,13 @@ fn follow(event: &str, focused: &mut Option<String>) {
         let data = data.trim().trim_start_matches("0x");
         *focused = (!data.is_empty() && data != ",").then(|| format!("0x{data}"));
     }
+}
+
+/// The config, or `None` when it can't be read.
+fn read_config() -> Option<Config> {
+    Config::load()
+        .inspect_err(|e| eprintln!("space: warning: {e:#}"))
+        .ok()
 }
 
 /// When a file last changed, and its size, to notice another `space`

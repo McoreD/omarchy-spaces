@@ -17,8 +17,8 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::config::Config;
 use crate::hypr::{self, Hypr};
+use crate::launch;
 use crate::live;
 use crate::name::{self, HOME};
 use crate::paths;
@@ -53,12 +53,11 @@ impl SpaceTarget {
 /// `space terminal`: a terminal in the folder you are in, so an empty tab of
 /// a space opens on its folder rather than home.
 pub fn open_terminal() -> Result<()> {
-    let config = Config::load()?;
     let dir = match Hypr::from_env() {
         Ok(hypr) => live::here_folder(&hypr)?,
         Err(_) => paths::home(),
     };
-    terminal::launch(&config.terminal(), &dir)
+    terminal::launch(&launch::terminal(), &dir)
 }
 
 /// An id for a new space whose first terminal opens on tab `key`, reserved
@@ -87,13 +86,12 @@ pub(crate) fn fresh_space(hypr: &Hypr, key: u8, had: Option<&str>) -> Result<Str
 /// if reserved, is released once its window is up.
 pub(super) fn open_terminal_then(
     hypr: &Hypr,
-    config: &Config,
     dir: &Path,
     workspace: &str,
     arrive: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
     let events = hypr.events().ok();
-    let command = terminal::command_in(&config.terminal(), dir, &[]);
+    let command = terminal::command_in(&launch::terminal(), dir, &[]);
     let placed = hypr
         .dispatch(&hypr::exec_on(
             &command,
@@ -104,7 +102,7 @@ pub(super) fn open_terminal_then(
         (true, Some(events)) => wait_for_window(&events, workspace, OPEN_TIMEOUT, |_| true),
         (true, None) => None,
         (false, _) => {
-            terminal::launch(&config.terminal(), dir)?;
+            terminal::launch(&launch::terminal(), dir)?;
             None
         }
     };

@@ -1,6 +1,5 @@
-//! What the agent in a terminal is doing, as the bar and the sidebar show it:
-//! as Claude Code notes it itself (`agent.rs`), or as herdr-core has it from an
-//! agent's OSC 7501 reports (`core.rs`).
+//! What the agent in a terminal is doing, as the bar and the sidebar show it,
+//! from what it notes about itself (`agent/`).
 
 use std::collections::HashMap;
 
@@ -16,8 +15,7 @@ pub enum Status {
     Working,
     /// Finished while you were looking elsewhere.
     Done,
-    /// Stopped until you answer it (a permission prompt, a question), or
-    /// stopped by an error.
+    /// Stopped until you answer it (a permission prompt, a question).
     Waiting,
 }
 
@@ -26,14 +24,14 @@ pub enum Status {
 pub fn from_report(word: &str, seen: bool) -> Option<Status> {
     match word {
         "working" => Some(Status::Working),
-        "waiting" | "blocked" | "error" => Some(Status::Waiting),
+        "waiting" => Some(Status::Waiting),
         "done" if !seen => Some(Status::Done),
         _ => None,
     }
 }
 
-/// What Claude's processes were doing when last read. Claude only says it's
-/// idle, so whether it has finished, or not started, is in what it did before.
+/// What agents were doing when last read. They only say they're
+/// idle, so whether one has finished, or not started, is in what it did before.
 #[derive(Debug, Default)]
 pub struct Turns {
     /// Each one's word, and the turns it has finished, by its key.
@@ -41,11 +39,11 @@ pub struct Turns {
 }
 
 impl Turns {
-    /// Brings Claude's among `agents`, as just read, up to date.
+    /// Brings `agents`, as just read, up to date.
     pub fn follow<'a>(&mut self, agents: impl Iterator<Item = &'a mut Agent>) {
         let mut now = HashMap::new();
-        for agent in agents.filter(|agent| agent.is_claude()) {
-            let key = agent.key();
+        for agent in agents {
+            let key = agent.process.clone();
             let (before, mut turn) = self.last.get(&key).cloned().unwrap_or_default();
             match (agent.word.as_str(), before.as_str()) {
                 ("idle", "working" | "waiting") => {
@@ -75,8 +73,6 @@ mod tests {
     fn reads_the_programs_own_words() {
         assert_eq!(from_report("working", false), Some(Status::Working));
         assert_eq!(from_report("waiting", false), Some(Status::Waiting));
-        assert_eq!(from_report("blocked", true), Some(Status::Waiting));
-        assert_eq!(from_report("error", false), Some(Status::Waiting));
         assert_eq!(from_report("done", false), Some(Status::Done));
         assert_eq!(from_report("done", true), None, "seen");
         assert_eq!(from_report("idle", false), None);
@@ -84,10 +80,10 @@ mod tests {
     }
 
     #[test]
-    fn claude_is_done_once_it_stops_working() {
+    fn an_agent_is_done_once_it_stops_working() {
         let mut turns = Turns::default();
         let mut follow = |word: &str| {
-            let mut agent = Agent::from_claude("7/42", word);
+            let mut agent = Agent::new("7/42", word);
             turns.follow([&mut agent].into_iter());
             (agent.word, agent.turn)
         };
@@ -105,7 +101,7 @@ mod tests {
 
         // It ends, and so does what it did.
         turns.follow(std::iter::empty());
-        let mut agent = Agent::from_claude("7/42", "idle");
+        let mut agent = Agent::new("7/42", "idle");
         turns.follow([&mut agent].into_iter());
         assert_eq!((agent.word.as_str(), agent.turn), ("idle", 0));
     }

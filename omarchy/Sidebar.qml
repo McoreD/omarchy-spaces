@@ -19,8 +19,8 @@ import "Spaces.mjs" as Spaces
 // runs `space go`, which stays the only thing that knows how spaces map to
 // workspaces.
 //
-// Expanding it (`super+b`, or the toggle at its top) is only visual: the
-// keyboard stays with the windows. Searching it (`super+p`) takes the keyboard
+// Expanding it (with a key, or the toggle at its top) is only visual: the
+// keyboard stays with the windows. Searching it takes the keyboard
 // through Controller.qml to filter the list; a pick, Escape, or focus moving
 // to a window ends the search. A sidebar expanded just for the search
 // collapses again with it.

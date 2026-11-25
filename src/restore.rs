@@ -6,13 +6,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::browser::{self, Browser, Browsers};
+use crate::browser::{Browser, Browsers};
 use crate::commands::{
     fresh_space, remember, session_selector, session_workspace, wait_for_window,
 };
-use crate::config::{self, Config};
+use crate::config::Config;
 use crate::folder::Folder;
 use crate::hypr::{self, Hypr};
+use crate::launch;
 use crate::layout::{self, Rect, Tree};
 use crate::live::{Live, Row, Snapshot, SpaceWindow};
 use crate::monitors::Blocks;
@@ -242,7 +243,7 @@ fn layout_before(
 pub fn restore(file: Option<PathBuf>, auto: bool) -> Result<()> {
     // A mistake in the config shouldn't cost you your spaces.
     let config = Config::load_or_default();
-    if auto && !config.restore.enabled {
+    if auto && !config.restore.auto {
         return Ok(());
     }
     let hypr = Hypr::from_env()?;
@@ -280,7 +281,7 @@ pub fn restore(file: Option<PathBuf>, auto: bool) -> Result<()> {
                 session::set_previous(&state_dir, &left)
             })?;
             if !space.has_browser(None) {
-                space.note_restored(&hypr)?;
+                space.note_restored(&hypr, config.restore.browsers)?;
             }
             for key in space.tabs() {
                 if !space.has_browser(Some(key)) {
@@ -299,10 +300,12 @@ pub fn restore(file: Option<PathBuf>, auto: bool) -> Result<()> {
     let active = spaces.iter().find(|space| space.saved.active);
     let back = active.and_then(Restoring::back);
     let mut landed = go_back(&hypr, &start, &opened, back.as_deref(), false)?;
-    let mut browser_works = config.restore.browser;
+    let mut broken = HashSet::new();
     for space in spaces.iter_mut().filter(|s| s.has_browser(None)) {
-        space.open_browsers(&hypr, &mut opened, &mut browser_works);
-        space.note_restored(&hypr)?;
+        if config.restore.browsers {
+            space.open_browsers(&hypr, &mut opened, &mut broken);
+        }
+        space.note_restored(&hypr, config.restore.browsers)?;
         for key in space.tabs() {
             if space.has_browser(Some(key)) {
                 space.arrange(&hypr, key);
@@ -421,22 +424,34 @@ impl Restoring {
         opening.take().map_or(Ok(()), |opening| opening())
     }
 
-    /// Opens its browser windows, for as long as the browser `works`.
-    fn open_browsers(&mut self, hypr: &Hypr, opened: &mut HashSet<String>, works: &mut bool) {
+    /// Opens its browser windows, but for `broken` browsers, which haven't
+    /// shown one.
+    fn open_browsers(
+        &mut self,
+        hypr: &Hypr,
+        opened: &mut HashSet<String>,
+        broken: &mut HashSet<String>,
+    ) {
         for n in 0..self.saved.windows.len() {
             let window = &self.saved.windows[n];
-            let Some(browser) = window.browser.as_ref().filter(|_| *works) else {
+            let Some(browser) = window
+                .browser
+                .as_ref()
+                .filter(|b| !broken.contains(&b.name))
+            else {
                 continue;
             };
             // Nothing it can open: no fault of the browser's.
-            let Some(command) = browser.command(config::app_launcher()) else {
+            let Some(command) = browser.command(launch::app_launcher()) else {
                 continue;
             };
             // Spaces are worth having without it.
             let address = open_browser(hypr, &self.id, window, browser, &command)
                 .inspect_err(|e| eprintln!("space: warning: {e:#}"))
                 .unwrap_or(None);
-            *works = address.is_some();
+            if address.is_none() {
+                broken.insert(browser.name.clone());
+            }
             self.opened(n, address, opened);
         }
     }
@@ -450,10 +465,15 @@ impl Restoring {
         self.addresses[n] = address;
     }
 
-    fn note_restored(&self, hypr: &Hypr) -> Result<()> {
+    /// Notes it for `watch`, with what its browser windows held if that's to
+    /// be saved.
+    fn note_restored(&self, hypr: &Hypr, browsers: bool) -> Result<()> {
         let mut restored = self.saved.clone();
         for (window, address) in restored.windows.iter_mut().zip(&self.addresses) {
             window.address = address.clone().unwrap_or_default();
+            if !browsers {
+                window.browser = None;
+            }
         }
         session::add_restored(&paths::state_dir(), &hypr.instance, restored)
     }
@@ -540,14 +560,15 @@ fn open_browser(
     browser: &Browser,
     command: &str,
 ) -> Result<Option<String>> {
-    if browser::restores_itself(&browser.profile) && !browser::is_running() {
-        eprintln!("space: warning: Chromium opens its last windows itself; leaving it to that");
+    if browser.opens_itself() {
+        let name = &browser.name;
+        eprintln!("space: warning: {name} opens its last windows itself; leaving it to that");
         return Ok(None);
     }
     let workspace = session_workspace(id, window.tab);
     let rule = |enabled| {
         let on = format!("{} silent", session_selector(id, window.tab));
-        hypr.eval(&hypr::open_class_on(browser.class_pattern(), &on, enabled))
+        hypr.eval(&hypr::open_class_on(&browser.class_pattern(), &on, enabled))
     };
     let events = hypr.events()?;
     rule(true)?;
@@ -572,12 +593,11 @@ fn open_browser(
 
 /// The command for a saved terminal.
 fn restored_command(config: &Config, terminal: &session::Window, token: &str) -> String {
-    // A folder that's gone gives way to the nearest one still there, and one
-    // on another machine to home.
+    // A folder that's gone gives way to the nearest one still there.
     let dir = terminal
         .folder
         .as_ref()
-        .and_then(Folder::local)
+        .map(Folder::path)
         .and_then(|dir| dir.ancestors().find(|dir| dir.is_dir()))
         .map_or_else(paths::home, Path::to_path_buf);
     let resume = terminal
@@ -591,9 +611,9 @@ fn restored_command(config: &Config, terminal: &session::Window, token: &str) ->
     let command = match &resume {
         Some(resume) => {
             env.push((shell::RESUME, resume));
-            config.resuming_terminal()
+            launch::resuming_terminal()
         }
-        None => config.terminal(),
+        None => launch::terminal(),
     };
     terminal::command_in(&command, &dir, &env)
 }

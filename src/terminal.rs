@@ -1,8 +1,6 @@
 //! Terminals: the folder a terminal window's shell is in, which names its
-//! space, what it runs, and opening a new terminal in a folder.
-//!
-//! A window's shell is herdr-core's when the window shows one of its
-//! terminals (`core.rs`), and is found in `/proc` otherwise.
+//! space, what it runs, and opening a new terminal in a folder. A window's
+//! shell is found in `/proc`.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,76 +10,45 @@ use anyhow::{Context, Result};
 
 use crate::agent::{self, Conversation};
 use crate::folder::Folder;
-use crate::{core, hypr};
+use crate::hypr;
 
 /// What the shell of a terminal window is doing: the folder it's in, and
 /// the program it's running, unless it's at its prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shell {
-    /// Its process, to tell it from others of the same terminal app's. `None`
-    /// for core's.
-    pub pid: Option<u32>,
+    /// Its process, to tell it from others of the same terminal app's.
+    pub pid: u32,
     pub folder: Folder,
     /// The command running in the terminal's foreground (`claude`, `nvim`),
     /// or `None` at the prompt.
     pub program: Option<String>,
-    /// What an agent in this terminal is doing, from herdr-core or Claude's own
-    /// notes. `None` when neither says.
+    /// What an agent in this terminal is doing, when one says.
     pub agent: Option<Agent>,
     /// The conversation the agent it's running is in, to pick up again.
     pub conversation: Option<Conversation>,
 }
 
-/// Where an agent's status came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgentSource {
-    /// A herdr-core terminal, by its core address (`t7`).
-    Core(String),
-    /// What Claude notes itself, by its process (`agent::Noted`).
-    Claude(String),
-}
-
-/// What a terminal's agent last said it's doing.
+/// What a terminal's agent is doing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Agent {
-    pub source: AgentSource,
-    /// The program's word: idle, working, done, waiting, blocked, error; empty
-    /// when it reports nothing.
+    /// Its process, to tell it from others (`agent::Process`).
+    pub process: String,
+    /// working, waiting, idle or done; empty when it doesn't say.
     pub word: String,
     /// Goes up each time it stops working, so a `done` seen can be told
     /// from the next.
     pub turn: u64,
-    /// The last turn someone looked at; `None` when no client has said.
-    pub seen_turn: Option<u64>,
 }
 
 impl Agent {
-    /// Claude's, as it notes it. Whether it has finished a turn is for
-    /// `status::Turns` to tell.
-    pub fn from_claude(process: &str, word: &str) -> Self {
+    /// As it notes it. Whether it has finished a turn is for `status::Turns`
+    /// to tell.
+    pub fn new(process: &str, word: &str) -> Self {
         Self {
-            source: AgentSource::Claude(process.to_string()),
+            process: process.to_string(),
             word: word.to_string(),
             turn: 0,
-            seen_turn: None,
         }
-    }
-
-    /// Unique key for tracking this agent across updates in `space watch`.
-    pub fn key(&self) -> String {
-        match &self.source {
-            AgentSource::Core(address) => format!("core:{address}"),
-            AgentSource::Claude(process) => format!("claude:{process}"),
-        }
-    }
-
-    pub fn is_claude(&self) -> bool {
-        matches!(self.source, AgentSource::Claude(_))
-    }
-
-    /// Whether someone has looked at it since its turn ended.
-    pub fn seen(&self) -> bool {
-        self.seen_turn.is_some_and(|seen| seen >= self.turn)
     }
 }
 
@@ -126,27 +93,7 @@ pub fn places(clients: &[hypr::Client]) -> HashMap<String, Place> {
 /// The folder a terminal window's shell is in, or `None` when the window isn't
 /// a terminal.
 pub fn shell_folder(place: Place) -> Option<Folder> {
-    let core = core::list().ok().map(core::Terminals::new);
-    shell_of(place, core.as_ref(), None).map(|shell| shell.folder)
-}
-
-/// A terminal window's shell: core's terminal in it, when `core` has one, else
-/// the window's own (`shell`). `before` is its process, when it was last read.
-pub fn shell_of(
-    place: Place,
-    core: Option<&core::Terminals>,
-    before: Option<u32>,
-) -> Option<Shell> {
-    let terminals = core.map(|core| core.in_window(place.pid));
-    let terminals = terminals.unwrap_or_default();
-    if let Some(first) = terminals.first() {
-        let terminal = match terminals.len() == place.of {
-            true => terminals[place.nth],
-            false => first,
-        };
-        return Some(from_core(terminal));
-    }
-    shell(place, before)
+    shell(place, None).map(|shell| shell.folder)
 }
 
 /// Which of a terminal app's shells, oldest first, is in a window. Nothing
@@ -166,48 +113,8 @@ fn in_place(shells: &[u32], place: Place, before: Option<u32>) -> Option<u32> {
     shells.last().copied()
 }
 
-/// A core terminal's shell: its foreground program's folder and name, a
-/// shell counting as its prompt.
-fn from_core(terminal: &core::Terminal) -> Shell {
-    let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
-    let (cwd, program) = match &terminal.foreground {
-        Some(fg) => {
-            let shell = shells
-                .lines()
-                .filter_map(|line| line.trim().rsplit('/').next())
-                .any(|name| !name.is_empty() && name == fg.name);
-            let program = display_name(&fg.name, fg.argv.iter().map(String::as_str));
-            (fg.cwd.clone(), program.filter(|_| !shell))
-        }
-        None => (terminal.cwd.clone(), None),
-    };
-    let machine = terminal.machine();
-    let noted = terminal
-        .foreground
-        .as_ref()
-        // Another machine's pid would be some other process here.
-        .filter(|_| machine.is_none())
-        .and_then(|fg| agent::noted(fg.pid?));
-    let reported = terminal.status.as_ref().filter(|s| !s.state.is_empty());
-    let agent = match (reported, &noted) {
-        (None, Some(noted)) => Agent::from_claude(&noted.process, noted.word),
-        _ => Agent {
-            source: AgentSource::Core(terminal.address.clone()),
-            word: reported.map(|s| s.state.clone()).unwrap_or_default(),
-            turn: terminal.turn,
-            seen_turn: terminal.seen_turn(),
-        },
-    };
-    Shell {
-        pid: None,
-        folder: Folder::on(machine, cwd),
-        program,
-        agent: Some(agent),
-        conversation: noted.and_then(|noted| noted.conversation),
-    }
-}
-
-/// The window's own shell, or `None` when the window isn't a terminal.
+/// A window's shell, or `None` when the window isn't a terminal. `before` is
+/// its process, when it was last read.
 pub fn shell(place: Place, before: Option<u32>) -> Option<Shell> {
     let shell = in_place(&shells(place.pid), place, before)?;
     if let Some(fake) = fakes() {
@@ -217,12 +124,12 @@ pub fn shell(place: Place, before: Option<u32>) -> Option<Shell> {
             .map(|p| p.trim().to_string())
             .filter(|p| !p.is_empty());
         return Some(Shell {
-            pid: Some(shell),
+            pid: shell,
             folder: Folder::here(cwd),
             program,
-            agent: std::fs::read_to_string(fake.join(format!("{shell}.claude")))
+            agent: std::fs::read_to_string(fake.join(format!("{shell}.agent")))
                 .ok()
-                .map(|word| Agent::from_claude(&shell.to_string(), word.trim())),
+                .map(|word| Agent::new(&shell.to_string(), word.trim())),
             conversation: std::fs::read_to_string(fake.join(format!("{shell}.conversation")))
                 .ok()
                 .and_then(|text| serde_json::from_str(&text).ok()),
@@ -234,19 +141,19 @@ pub fn shell(place: Place, before: Option<u32>) -> Option<Shell> {
     let program = foreground(&stat, &known);
     let noted = program.and_then(agent::noted);
     Some(Shell {
-        pid: Some(shell),
+        pid: shell,
         folder: Folder::here(cwd),
         program: program.and_then(program_name),
         agent: noted
             .as_ref()
-            .map(|noted| Agent::from_claude(&noted.process, noted.word)),
-        conversation: noted.and_then(|noted| noted.conversation),
+            .map(|(process, noted)| Agent::new(&process.key(), noted.word)),
+        conversation: noted.and_then(|(_, noted)| noted.conversation),
     })
 }
 
 /// For tests, `SPACES_FAKE_CWDS` names a folder that stands in for `/proc`: a
 /// symlink per shell, pointing at the folder it's in, and `<shell>.program`,
-/// `<shell>.conversation` and `<shell>.claude` (what Claude is doing, as
+/// `<shell>.conversation` and `<shell>.agent` (what its agent is doing, as
 /// `agent::Noted` has it) files holding what it runs. A terminal's shell
 /// is called as its window's process, or, when it has several,
 /// `<pid>.shells` holds what they are, oldest first.
@@ -415,9 +322,9 @@ pub fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-/// Opens a terminal in `dir` with `command` (`terminal.command` in the
-/// config), run by `sh -c` in that folder with `SPACES_DIR` set to it. It runs
-/// on its own, outliving `space`.
+/// Opens a terminal in `dir` with `command` (`launch.rs`), run by `sh -c` in
+/// that folder with `SPACES_DIR` set to it. It runs on its own, outliving
+/// `space`.
 pub fn launch(command: &str, dir: &Path) -> Result<()> {
     Command::new("sh")
         .arg("-c")
@@ -435,40 +342,6 @@ pub fn launch(command: &str, dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn seen_once_someone_looked_at_its_last_turn() {
-        let agent = |turn, seen_turn| Agent {
-            source: AgentSource::Core("t1".into()),
-            word: "done".into(),
-            turn,
-            seen_turn,
-        };
-        assert!(agent(3, Some(3)).seen());
-        assert!(agent(3, Some(4)).seen());
-        assert!(!agent(3, Some(2)).seen(), "a turn ended since");
-        assert!(!agent(3, None).seen(), "no client has said");
-    }
-
-    #[test]
-    fn a_terminal_on_another_machine_is_in_a_folder_there() {
-        let mut terminal = core::Terminal {
-            address: "box/t1".into(),
-            cwd: "/srv".into(),
-            foreground: Some(core::Foreground {
-                pid: Some(std::process::id()),
-                name: "claude".into(),
-                argv: vec!["claude".into()],
-                cwd: "/srv/app".into(),
-            }),
-            ..Default::default()
-        };
-        let shell = from_core(&terminal);
-        assert_eq!(shell.folder, Folder::on(Some("box"), "/srv/app"));
-        assert_eq!(shell.conversation, None);
-        terminal.address = "t1".into();
-        assert_eq!(from_core(&terminal).folder, Folder::here("/srv/app"));
-    }
 
     #[test]
     fn runs_the_terminal_command_in_a_folder() {
@@ -540,7 +413,7 @@ mod tests {
     #[test]
     fn labels_a_terminal_by_its_program_else_its_folder() {
         let at = |cwd: &Path, program: Option<&str>| Shell {
-            pid: None,
+            pid: 1,
             folder: Folder::here(cwd),
             program: program.map(String::from),
             agent: None,

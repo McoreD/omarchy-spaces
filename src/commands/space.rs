@@ -3,12 +3,10 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 
 use super::{focus, forget, fresh_space, moved, open_terminal_then, remember, take_turn};
-use crate::config::Config;
 use crate::folder::Folder;
 use crate::hypr::{self, Hypr};
 use crate::list;
@@ -23,7 +21,6 @@ use crate::state::{self, Last};
 /// in, with a terminal open there. It is called after the folder that
 /// terminal is in, and follows it.
 pub fn new(dir: Option<PathBuf>) -> Result<()> {
-    let config = Config::load()?;
     let hypr = Hypr::from_env()?;
     let dir = match dir {
         Some(dir) => {
@@ -43,7 +40,7 @@ pub fn new(dir: Option<PathBuf>) -> Result<()> {
     let first = name::key_in(Blocks::load().of(&hypr.active_workspace()?), 1);
     let id = fresh_space(&hypr, first, None)?;
     let workspace = name::workspace_name(&id, first);
-    open_terminal_then(&hypr, &config, &dir, &workspace, || switch(&hypr, &id))?;
+    open_terminal_then(&hypr, &dir, &workspace, || switch(&hypr, &id))?;
 
     // The watcher may have seen the space by now, and made its entry.
     let mut store = Store::lock(&paths::state_dir())?;
@@ -57,18 +54,11 @@ pub fn new(dir: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// `space go [space]`: the space's last-focused workspace, or its first. With
-/// no space named, a picker.
-pub fn go(target: Option<String>) -> Result<()> {
+/// `space go <space>`: the space's last-focused workspace, or its first.
+pub fn go(target: String) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (rows, _) = live::load_rows(Some(&hypr))?;
-    let id = match target {
-        Some(target) => live::resolve(&rows, &target)?,
-        None => match pick(&rows)? {
-            Some(id) => id,
-            None => return Ok(()),
-        },
-    };
+    let id = live::resolve(&rows, &target)?;
     switch(&hypr, &id)
 }
 
@@ -369,76 +359,6 @@ fn format_rows(rows: &[Row]) -> String {
     out
 }
 
-/// The picker for `space go` with no space named: most recently left first,
-/// the active space last, so Enter goes back to the previous space.
-fn pick(rows: &[Row]) -> Result<Option<String>> {
-    let config = Config::load()?;
-    let mut order: Vec<&Row> = rows.iter().collect();
-    order.sort_by(|a, b| {
-        a.active
-            .cmp(&b.active)
-            .then(b.left_at.cmp(&a.left_at))
-            .then(a.label.cmp(&b.label))
-    });
-
-    let lines = picker_lines(&order);
-    let Some(picker) = config.picker() else {
-        bail!(
-            "no picker found: install vicinae or walker, or set `picker` in {}",
-            paths::tilde(&paths::config_file())
-        );
-    };
-    let Some(choice) = run_picker(&picker, &lines.concat())? else {
-        return Ok(None);
-    };
-    Ok(lines
-        .iter()
-        .position(|line| line.trim() == choice)
-        .map(|i| order[i].id.clone()))
-}
-
-fn picker_lines(rows: &[&Row]) -> Vec<String> {
-    let width = rows
-        .iter()
-        .map(|r| r.label.chars().count())
-        .max()
-        .unwrap_or(0);
-    rows.iter()
-        .map(|row| {
-            let mut details = Vec::new();
-            match row.windows {
-                Some(1) => details.push("1 window".to_string()),
-                Some(n) => details.push(format!("{n} windows")),
-                None => {}
-            }
-            if let Some(folder) = &row.folder {
-                details.push(folder.display());
-            }
-            if row.active {
-                details.push("current".into());
-            }
-            format!("{:width$}   {}\n", row.label, details.join(" · "))
-        })
-        .collect()
-}
-
-/// Runs a dmenu-style picker: lines in, the chosen line out. `None` when it
-/// was dismissed.
-fn run_picker(command: &str, input: &str) -> Result<Option<String>> {
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("can't run the picker `{command}`"))?;
-    // A picker that exits without reading all of its input is fine.
-    let _ = child.stdin.take().unwrap().write_all(input.as_bytes());
-    let output = child.wait_with_output()?;
-    let choice = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok((output.status.success() && !choice.is_empty()).then_some(choice))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,15 +389,5 @@ mod tests {
         let place = |id| store.get(id).unwrap().order;
         assert!(place("s3") < place("s1") && place("s1") < place("s2"));
         assert!(place("s2") <= 30, "{}", place("s2"));
-    }
-
-    #[test]
-    fn runs_a_picker() {
-        assert_eq!(
-            run_picker("grep tax", "ren  x\ntax  y\n").unwrap(),
-            Some("tax  y".into())
-        );
-        assert_eq!(run_picker("exit 1", "ren\n").unwrap(), None);
-        assert_eq!(run_picker("true", "ren\n").unwrap(), None);
     }
 }

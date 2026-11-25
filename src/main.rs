@@ -23,10 +23,10 @@ enum Cmd {
         /// Open it here instead.
         dir: Option<PathBuf>,
     },
-    /// Go to a space where you left it. With none named, pick one.
+    /// Go to a space where you left it.
     Go {
         /// What it's called, or its id; 'home' for the plain workspaces.
-        space: Option<String>,
+        space: String,
     },
     /// Go to the next space down the sidebar, wrapping around to `home`.
     Next,
@@ -73,7 +73,7 @@ enum Cmd {
         /// ~/.local/state/omarchy-spaces/sessions/.
         file: Option<PathBuf>,
         /// Run by the plugin on startup: does nothing when `[restore]` sets
-        /// `enabled = false`.
+        /// `auto = false`.
         #[arg(long, hide = true)]
         auto: bool,
     },
@@ -86,14 +86,10 @@ enum Cmd {
         #[arg(long)]
         sounds: bool,
     },
-    /// Run as a terminal window's program: a shell in herdr-core, attached
-    /// here and ended with the window, else your own shell.
+    /// Run as the program of a terminal that's restored: your own shell, in
+    /// the conversation that was in it.
     #[command(hide = true)]
-    Shell {
-        /// Your own shell, without herdr-core.
-        #[arg(long)]
-        plain: bool,
-    },
+    Shell,
     /// Run by Hyprland when closing a window empties the workspace you are
     /// on: go to another tab, or end the space.
     #[command(hide = true)]
@@ -219,10 +215,8 @@ fn main() -> ExitCode {
     // notification.
     // `watch` ends whenever Hyprland restarts, and the plugin restarts it: not
     // worth a notification.
-    let unseen = !matches!(
-        cli.command,
-        Cmd::Ls { .. } | Cmd::Watch { .. } | Cmd::Shell { .. }
-    ) && !std::io::stderr().is_terminal();
+    let unseen = !matches!(cli.command, Cmd::Ls { .. } | Cmd::Watch { .. } | Cmd::Shell)
+        && !std::io::stderr().is_terminal();
 
     let result = match cli.command {
         Cmd::New { dir } => commands::new(dir),
@@ -243,7 +237,7 @@ fn main() -> ExitCode {
         Cmd::Restore { file, auto } => commands::restore(file, auto),
         Cmd::Terminal => commands::open_terminal(),
         Cmd::Watch { sounds } => watch::watch(sounds),
-        Cmd::Shell { plain } => shell::shell(plain),
+        Cmd::Shell => shell::shell(),
         Cmd::Emptied { workspace } => commands::emptied(&workspace),
         Cmd::Tab(command) => run_tab(command),
         Cmd::Window(WindowCmd::Send { space, silent }) => commands::send_window(space, silent),

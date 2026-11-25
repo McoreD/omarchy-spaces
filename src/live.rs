@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 
 use crate::browser;
-use crate::core;
 use crate::folder::Folder;
 use crate::hypr::{self, Hypr};
 use crate::layout::Rect;
@@ -329,13 +328,10 @@ pub(crate) fn live_from(
 pub(crate) type Seen = (Snapshot, Live);
 
 fn live(hypr: &Hypr) -> Result<Seen> {
-    let core = core::list().ok().map(core::Terminals::new);
     let snapshot = snapshot(hypr)?;
-    let mut live = live_from(&snapshot, |window| {
-        terminal::shell_of(window.place, core.as_ref(), None)
-    });
-    // What you've seen, as `watch` notes it on core's terminals.
-    live.set_statuses(terminal::Agent::seen);
+    let mut live = live_from(&snapshot, |window| terminal::shell(window.place, None));
+    // Only `watch` follows agents, to know which are done, and seen.
+    live.set_statuses(|_| true);
     Ok((snapshot, live))
 }
 
@@ -599,34 +595,32 @@ pub(crate) fn resolve(rows: &[Row], target: &str) -> Result<String> {
 }
 
 /// The folder you are in: the focused terminal's, else the active space's,
-/// else home. One on another machine is passed over.
+/// else home.
 pub(crate) fn here_folder(hypr: &Hypr) -> Result<PathBuf> {
     if let Some(address) = hypr.active_window_address()?
         && let Some(place) = terminal::places(&hypr.clients()?).get(&address)
         && let Some(folder) = terminal::shell_folder(*place)
-        && let Some(dir) = folder.local()
     {
-        return Ok(dir.to_path_buf());
+        return Ok(folder.path().to_path_buf());
     }
     let (store, rows, _) = lock_rows(Some(hypr))?;
     Ok(rows
         .iter()
         .find(|r| r.active)
         .and_then(|r| store.get(&r.id))
-        .and_then(|entry| entry.folder.as_ref()?.local())
+        .and_then(|entry| Some(entry.folder.as_ref()?.path()))
         .filter(|dir| dir.is_dir())
         .map_or_else(paths::home, Path::to_path_buf))
 }
 
 /// The folder a space's new tab opens in: the space's own, its checkout's
-/// when it's in one, else the folder you are in. One on another machine is
-/// passed over.
+/// when it's in one, else the folder you are in.
 pub(crate) fn space_folder(hypr: &Hypr, space: &str) -> Result<PathBuf> {
     let (rows, _) = load_rows(Some(hypr))?;
     match rows
         .iter()
         .find(|r| r.id == space)
-        .and_then(|r| r.folder.as_ref()?.local())
+        .and_then(|r| Some(r.folder.as_ref()?.path()))
         .filter(|dir| dir.is_dir())
     {
         Some(dir) => Ok(dir.to_path_buf()),
@@ -644,7 +638,7 @@ mod tests {
             tab,
             pid,
             shell: terminal::Shell {
-                pid: None,
+                pid: 1,
                 folder: Folder::here(cwd),
                 program: None,
                 agent: None,

@@ -1,7 +1,7 @@
-//! Sounds when an agent needs you, as Herdr plays them: one when an agent
-//! starts waiting for you (blocked, or stopped by an error), one when it
-//! finishes while you aren't looking at its window. `space watch --sounds`,
-//! which the plugin runs, plays them.
+//! Sounds when an agent needs you, as Herdr plays them, if the config turns
+//! them on: one when an agent starts waiting for you, one when it finishes
+//! while you aren't looking at its window. `space watch --sounds`, which the
+//! plugin runs, plays them.
 //!
 //! The sounds are Herdr's (`assets/sounds/`, Apache-2.0), built into the
 //! binary and written out the first time they play, so players can open
@@ -10,7 +10,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::config::{self, Config};
+use crate::config::Config;
+use crate::launch;
 use crate::paths;
 use crate::status::Status;
 
@@ -30,9 +31,8 @@ const PLAYERS: &[(&str, &[&str])] = &[
 /// decides: starting to need you always does; finishing does only when
 /// you're not `looking` at it.
 pub fn alert(before: &str, now: &str, looking: bool) -> Option<Status> {
-    let needs_you = |word: &str| matches!(word, "waiting" | "blocked" | "error");
-    let busy = |word: &str| matches!(word, "working" | "waiting" | "blocked" | "error");
-    if needs_you(now) && !needs_you(before) {
+    let busy = |word: &str| matches!(word, "working" | "waiting");
+    if now == "waiting" && before != "waiting" {
         Some(Status::Waiting)
     } else if busy(before) && !now.is_empty() && !busy(now) && !looking {
         Some(Status::Done)
@@ -41,7 +41,7 @@ pub fn alert(before: &str, now: &str, looking: bool) -> Option<Status> {
     }
 }
 
-/// Plays the sound for `alert`, unless the config turns sounds off. It
+/// Plays the sound for `alert`, if the config turns sounds on. It
 /// plays on its own, so this returns at once.
 pub fn play(config: &Config, alert: Status) {
     let sounds = &config.sounds;
@@ -54,7 +54,7 @@ pub fn play(config: &Config, alert: Status) {
         Status::Working => return,
     };
     let file = match chosen {
-        Some(file) => crate::paths::expand(file),
+        Some(file) => chosen_file(&paths::config_file(), file),
         None => match write_bundled(&paths::runtime_dir(), name, bundled) {
             Ok(file) => file,
             Err(e) => {
@@ -63,7 +63,7 @@ pub fn play(config: &Config, alert: Status) {
             }
         },
     };
-    let Some((player, args)) = PLAYERS.iter().find(|(p, _)| config::on_path(p)) else {
+    let Some((player, args)) = PLAYERS.iter().find(|(p, _)| launch::on_path(p)) else {
         eprintln!("space: warning: no sound player (pw-play, paplay, ffplay or mpv)");
         return;
     };
@@ -81,6 +81,12 @@ pub fn play(config: &Config, alert: Status) {
         }
         Err(e) => eprintln!("space: warning: can't play {}: {e}", file.display()),
     }
+}
+
+/// A sound named in the config, from the config's folder unless it says.
+fn chosen_file(config: &Path, file: &str) -> PathBuf {
+    let dir = config.parent().unwrap_or(Path::new("/"));
+    dir.join(paths::expand(file))
 }
 
 /// A built-in sound as a file in `dir`, written unless it's there already
@@ -116,23 +122,28 @@ mod tests {
     }
 
     #[test]
+    fn looks_for_your_sounds_beside_the_config() {
+        let config = Path::new("/h/.config/omarchy-spaces/config.toml");
+        let file = |file| chosen_file(config, file);
+        assert_eq!(
+            file("ding.oga"),
+            Path::new("/h/.config/omarchy-spaces/ding.oga")
+        );
+        assert_eq!(file("/s/ding.oga"), Path::new("/s/ding.oga"));
+        assert_eq!(file("~/ding.oga"), paths::home().join("ding.oga"));
+    }
+
+    #[test]
     fn rings_as_herdr_does() {
         assert_eq!(
             alert("working", "waiting", true),
             Some(Status::Waiting),
             "even looking"
         );
-        assert_eq!(
-            alert("working", "blocked", true),
-            Some(Status::Waiting),
-            "even looking"
-        );
-        assert_eq!(alert("", "error", false), Some(Status::Waiting));
-        assert_eq!(alert("blocked", "error", false), None, "still needs you");
-        assert_eq!(alert("waiting", "blocked", false), None, "still needs you");
         assert_eq!(alert("working", "done", false), Some(Status::Done));
         assert_eq!(alert("waiting", "done", false), Some(Status::Done));
-        assert_eq!(alert("blocked", "idle", false), Some(Status::Done));
+        assert_eq!(alert("", "waiting", false), Some(Status::Waiting));
+        assert_eq!(alert("waiting", "waiting", false), None, "still needs you");
         assert_eq!(alert("working", "done", true), None, "you saw it");
         assert_eq!(alert("idle", "done", false), None, "it wasn't working");
         assert_eq!(

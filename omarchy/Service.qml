@@ -4,7 +4,7 @@ import "Spaces.mjs" as Spaces
 
 // The spaces sidebar, loaded with the shell and drawn under the windows
 // (Base.qml). The overlay entry (Toggle.qml) starts and ends its search, so
-// `super+p` goes through the shell like any other plugin. The tabs are a bar widget
+// a key for it goes through the shell like any other plugin's. The tabs are a bar widget
 // (TabsWidget.qml), which the bar loads itself.
 Item {
   id: root
@@ -78,7 +78,7 @@ Item {
   }
 
   // The spaces from before the last restart open again by themselves, unless
-  // `[restore]` sets `enabled = false`. It does nothing when they already
+  // `[restore]` sets `auto = false`. It does nothing when they already
   // have, as when only the shell restarts; detached, so restarting the shell
   // doesn't stop it halfway.
   Component.onCompleted: Quickshell.execDetached(["space", "restore", "--auto"])

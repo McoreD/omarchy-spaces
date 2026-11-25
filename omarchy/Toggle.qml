@@ -1,7 +1,7 @@
 import QtQuick
 
-// The overlay entry the shell summons and hides: the sidebar's search
-// (`super+p`). The sidebar itself lives in the service, mapped for good, so
+// The overlay entry the shell summons and hides: the sidebar's search.
+// The sidebar itself lives in the service, mapped for good, so
 // this only forwards. The shell counts it open while you are searching.
 Item {
   property string omarchyPath: ""
@@ -19,21 +19,21 @@ Item {
     if (service) service.endSearch()
   }
 
-  // Show or hide the sidebar without taking the keyboard: `super+b`, and the
-  // space's name on the bar. Called through `omarchy-shell shell call
+  // Show or hide the sidebar without taking the keyboard, as the
+  // logo on the bar does. Called through `omarchy-shell shell call
   // com.t4t5.spaces toggleSidebar`.
   function toggleSidebar(arg) {
     if (service) service.toggleSidebar()
   }
 
-  // Rename the space you are in, typing over its name in the sidebar:
-  // `super+shift+r`. Called through `omarchy-shell shell call
+  // Rename the space you are in, typing over its name in the sidebar.
+  // Called through `omarchy-shell shell call
   // com.t4t5.spaces renameSpace`.
   function renameSpace(arg) {
     if (service) service.renameSpace()
   }
 
-  // Name the tab you are on, typing on the bar: `super+,`. Called
+  // Name the tab you are on, typing on the bar. Called
   // through `omarchy-shell shell call com.t4t5.spaces renameTab`.
   function renameTab(arg) {
     if (service) service.renameTab()

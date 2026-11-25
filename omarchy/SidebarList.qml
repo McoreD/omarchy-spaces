@@ -490,7 +490,7 @@ Item {
       }
     }
 
-    // Click it, or press super+p, to search. Its magnifier alone until you
+    // Click it, or press the key for it, to search. Its magnifier alone until you
     // point at it or search; then it is one input, a control's box that
     // starts where the other controls' do and stretches to as far short of
     // the cut, with the magnifier in it: a square on the rail, the whole row

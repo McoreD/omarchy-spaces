@@ -96,7 +96,7 @@ const VISITS: usize = 100;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Visit {
     pub key: u8,
-    /// Unix milliseconds, for ordering the picker by most recent.
+    /// Unix milliseconds, for ordering spaces by most recent.
     pub at: u64,
 }
 

@@ -44,8 +44,8 @@ struct Hyprland {
     dispatched: Vec<String>,
     /// Every script received.
     evaluated: Vec<String>,
-    /// Where a rule has the browser's windows open.
-    browser_on: Option<String>,
+    /// The class of windows a rule has open somewhere, and where.
+    browser_on: Option<(String, String)>,
     /// Windows run by another window's process, by that one's address.
     shared: std::collections::HashMap<u32, u32>,
     /// The classes of windows that aren't terminals.
@@ -59,17 +59,30 @@ struct Hyprland {
     next_named_id: i64,
 }
 
-/// What runs on the desktop the tests run on, if a test's own "terminal" isn't
-/// used: none of it may, as it would open real windows there.
-const LAUNCHERS: &[&str] = &[
-    "uwsm-app",
-    "xdg-terminal-exec",
-    "setsid",
-    "kitty",
-    "chromium",
+/// What runs on the desktop the tests run on: none of it may, as it would open
+/// real windows there. Omarchy's launchers run what they're given, and its
+/// terminal notes the folder it was opened in, what it was to run and what to
+/// pick up; what isn't expected to run at all notes that it did.
+const STUBS: &[(&str, &str)] = &[
+    ("setsid", "exec \"$@\""),
+    ("uwsm-app", "shift; exec \"$@\""),
+    (
+        "xdg-terminal-exec",
+        "pwd >> \"$HOME/launched\"\n\
+         shift; echo \"$*\" >> \"$HOME/ran\"\n\
+         echo \"$SPACES_RESUME\" >> \"$HOME/resumed\"",
+    ),
+    ("ghostty", "pwd >> \"$HOME/launched-for-real\""),
+    ("kitty", "pwd >> \"$HOME/launched-for-real\""),
+    ("chromium", "pwd >> \"$HOME/launched-for-real\""),
+    ("chrome-stub", "pwd >> \"$HOME/launched-for-real\""),
 ];
 
-/// A PATH on which each of those notes that it was run, and does nothing.
+/// Browsers: their desktop entry, which is their windows' class too, and the
+/// program it runs.
+const BROWSERS: &[(&str, &str)] = &[("chromium", "chromium"), ("google-chrome", "chrome-stub")];
+
+/// A PATH on which those come first.
 fn safe_path(home: &Path) -> String {
     let stubs = home.join("stubs");
     format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap())
@@ -79,9 +92,15 @@ fn write_stubs(home: &Path) {
     use std::os::unix::fs::PermissionsExt;
     let stubs = home.join("stubs");
     fs::create_dir_all(&stubs).unwrap();
-    for name in LAUNCHERS {
+    let entries = home.join(".local/share/applications");
+    fs::create_dir_all(&entries).unwrap();
+    for (name, program) in BROWSERS {
+        let entry = format!("[Desktop Entry]\nExec={program} %U\n");
+        fs::write(entries.join(format!("{name}.desktop")), entry).unwrap();
+    }
+    for (name, script) in STUBS {
         let stub = stubs.join(name);
-        fs::write(&stub, "#!/bin/sh\npwd >> \"$HOME/launched-for-real\"\n").unwrap();
+        fs::write(&stub, format!("#!/bin/sh\n{script}\n")).unwrap();
         fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
     }
 }
@@ -220,7 +239,10 @@ impl Hyprland {
                             let on = script.split("workspace = \"").nth(1).unwrap();
                             let on = on.split(" silent").next().unwrap();
                             let on = on.strip_prefix("name:").unwrap_or(on).to_string();
-                            self.browser_on = script.contains("enabled = true").then_some(on);
+                            let class = script.split("class = \"").nth(1).unwrap();
+                            let class = class.split('"').next().unwrap().to_string();
+                            self.browser_on =
+                                script.contains("enabled = true").then_some((class, on));
                         } else if script.contains("spaces.internal.show(") {
                             let name = script.split("spaces.internal.show(\"").nth(1).unwrap();
                             let name = name.split('"').next().unwrap();
@@ -274,18 +296,26 @@ impl Hyprland {
             Some(e[start..end].to_string())
         };
 
-        if expression.starts_with("hl.dsp.exec_cmd(") && expression.contains(" chromium ") {
+        let browser = BROWSERS
+            .iter()
+            .find(|(_, program)| expression.contains(&format!("'{program}' '--profile")));
+        if expression.starts_with("hl.dsp.exec_cmd(")
+            && let Some((class, _)) = browser
+        {
             self.next_address += 1;
             let address = self.next_address;
-            self.classes.insert(address, "chromium".into());
-            let on = self.browser_on.clone().unwrap_or(self.active.clone());
+            self.classes.insert(address, class.to_string());
+            let rule = self.browser_on.clone();
+            let on = rule
+                .filter(|(of, _)| *of == format!("^{class}$"))
+                .map_or(self.active.clone(), |(_, on)| on);
             self.starting.push((Instant::now(), on.clone(), address));
             self.show_started();
             let listeners = Arc::clone(&self.listeners);
             thread::spawn(move || {
                 thread::sleep(Duration::from_millis(50));
                 for stream in listeners.lock().unwrap().iter_mut() {
-                    let _ = writeln!(stream, "openwindow>>{address:x},{on},chromium,New Tab");
+                    let _ = writeln!(stream, "openwindow>>{address:x},{on},{class},New Tab");
                 }
             });
             return "ok".into();
@@ -418,156 +448,6 @@ impl Hyprland {
     }
 }
 
-/// A fake herdr-core: Spaces' terminals, over the same JSON-RPC.
-#[derive(Default)]
-struct CoreState {
-    terminals: Vec<Value>,
-    subscribers: Vec<UnixStream>,
-    requests: Vec<Value>,
-    next: u32,
-}
-
-impl CoreState {
-    fn broadcast(&mut self, terminal: &str, kind: &str, data: Value) {
-        let line = json!({ "jsonrpc": "2.0", "method": "event", "params": { "seq": 1, "type": kind, "terminal": terminal, "data": data } });
-        self.subscribers
-            .retain_mut(|s| writeln!(s, "{line}").and_then(|()| s.flush()).is_ok());
-    }
-
-    fn handle(&mut self, request: &Value, stream: &UnixStream) -> Value {
-        self.requests.push(request.clone());
-        let params = &request["params"];
-        let result = match request["method"].as_str().unwrap_or("") {
-            "events.subscribe" => {
-                self.subscribers.push(stream.try_clone().unwrap());
-                json!({ "seq": 0, "terminals": self.terminals })
-            }
-            "terminal.run" => {
-                self.next += 1;
-                let record = json!({ "address": format!("t{}", self.next), "labels": params["labels"], "cwd": params["cwd"], "turn": 0, "state": "live" });
-                self.terminals.push(record.clone());
-                record
-            }
-            "terminal.kill" => {
-                let address = params["terminal"].as_str().unwrap_or("").to_string();
-                self.terminals.retain(|t| t["address"] != address.as_str());
-                self.broadcast(&address, "finished", json!({ "reason": "killed" }));
-                json!({})
-            }
-            _ => {
-                return json!({ "jsonrpc": "2.0", "id": request["id"], "error": { "code": -32601, "message": "no such method" } });
-            }
-        };
-        json!({ "jsonrpc": "2.0", "id": request["id"], "result": result })
-    }
-}
-
-struct Core {
-    state: Arc<Mutex<CoreState>>,
-    socket: PathBuf,
-}
-
-/// How a terminal says which window shows it: the boot, then its process.
-fn window_label(pid: u32) -> String {
-    let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap();
-    format!("{}/{pid}", boot.trim())
-}
-
-impl Core {
-    fn start(env: &Env) -> Self {
-        let socket = env.root.path().join("core.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
-        let state = Arc::new(Mutex::new(CoreState::default()));
-        let served = Arc::clone(&state);
-        thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(stream) = stream else { break };
-                let served = Arc::clone(&served);
-                thread::spawn(move || {
-                    use std::io::BufRead;
-                    let reader = std::io::BufReader::new(stream.try_clone().unwrap());
-                    let mut writer = stream.try_clone().unwrap();
-                    for line in reader.lines() {
-                        let Ok(line) = line else { break };
-                        let Ok(request) = serde_json::from_str::<Value>(&line) else {
-                            break;
-                        };
-                        let reply = served.lock().unwrap().handle(&request, &stream);
-                        if writeln!(writer, "{reply}").is_err() {
-                            break;
-                        }
-                    }
-                });
-            }
-        });
-        Self { state, socket }
-    }
-
-    /// A terminal showing in the window at `address`, whose process is
-    /// `1000 + address` as the fake Hyprland has it, at its prompt in `dir`.
-    fn add(&self, window: &str, dir: &Path) -> String {
-        self.add_on(None, window, dir)
-    }
-
-    /// One running on `machine`.
-    fn add_on(&self, machine: Option<&str>, window: &str, dir: &Path) -> String {
-        let pid = 1000 + u32::from_str_radix(window.trim_start_matches("0x"), 16).unwrap();
-        let mut state = self.state.lock().unwrap();
-        state.next += 1;
-        let address = match machine {
-            Some(machine) => format!("{machine}/t{}", state.next),
-            None => format!("t{}", state.next),
-        };
-        let record = json!({
-            "address": address,
-            "labels": { "omarchy-spaces": "1", "omarchy-spaces-window": window_label(pid) },
-            "cwd": dir.display().to_string(),
-            "foreground": { "pid": 1, "name": "bash", "argv": ["-bash"], "cwd": dir.display().to_string() },
-            "turn": 0,
-            "state": "live",
-        });
-        state.terminals.push(record.clone());
-        state.broadcast(&address, "created", record);
-        address
-    }
-
-    /// Something changes in a terminal, as core's events say.
-    fn event(&self, terminal: &str, kind: &str, data: Value) {
-        let mut state = self.state.lock().unwrap();
-        if let Some(record) = state
-            .terminals
-            .iter_mut()
-            .find(|t| t["address"] == terminal)
-        {
-            match kind {
-                "status" => record["status"] = data["status"].clone(),
-                "foreground" => record["foreground"] = data.clone(),
-                "turn" => record["turn"] = data["turn"].clone(),
-                _ => {}
-            }
-        }
-        state.broadcast(terminal, kind, data);
-    }
-
-    fn requests(&self, method: &str) -> Vec<Value> {
-        let state = self.state.lock().unwrap();
-        state
-            .requests
-            .iter()
-            .filter(|r| r["method"] == method)
-            .cloned()
-            .collect()
-    }
-
-    /// Core goes away.
-    fn stop(&self) {
-        let _ = fs::remove_file(&self.socket);
-        for stream in self.state.lock().unwrap().subscribers.drain(..) {
-            let _ = stream.shutdown(std::net::Shutdown::Both);
-        }
-    }
-}
-
 struct Env {
     root: tempfile::TempDir,
     hypr: Arc<Mutex<Hyprland>>,
@@ -619,7 +499,6 @@ impl Env {
             hypr,
             listeners,
         };
-        env.write_config("");
         write_stubs(&env.home());
         env
     }
@@ -642,8 +521,7 @@ impl Env {
             .env("HOME", self.home())
             .env("XDG_RUNTIME_DIR", self.root.path().join("run"))
             .env("HYPRLAND_INSTANCE_SIGNATURE", "test")
-            .env("SPACES_FAKE_CWDS", self.cwds())
-            .env("HC_SOCKET", self.root.path().join("core.sock"));
+            .env("SPACES_FAKE_CWDS", self.cwds());
         command
     }
 
@@ -694,22 +572,22 @@ impl Env {
         }
     }
 
-    /// Claude in the terminal at `address` notes what it's doing.
-    fn claude_is(&self, address: &str, word: &str) {
-        let file = self.claude_file(address);
+    /// The agent in the terminal at `address` notes what it's doing.
+    fn agent_is(&self, address: &str, word: &str) {
+        let file = self.agent_file(address);
         // In one step, as a reader would see half of it otherwise.
         let tmp = file.with_extension("tmp");
         fs::write(&tmp, word).unwrap();
         fs::rename(tmp, file).unwrap();
     }
 
-    fn claude_exits(&self, address: &str) {
-        fs::remove_file(self.claude_file(address)).unwrap();
+    fn agent_exits(&self, address: &str) {
+        fs::remove_file(self.agent_file(address)).unwrap();
     }
 
-    fn claude_file(&self, address: &str) -> PathBuf {
+    fn agent_file(&self, address: &str) -> PathBuf {
         let pid = 1000 + u32::from_str_radix(address.trim_start_matches("0x"), 16).unwrap();
-        self.cwds().join(format!("{pid}.claude"))
+        self.cwds().join(format!("{pid}.agent"))
     }
 
     /// The address of the newest window, such as the terminal `space new`
@@ -862,13 +740,10 @@ impl Env {
         std::mem::take(&mut self.hypr.lock().unwrap().dispatched)
     }
 
-    /// Writes the config, with a "terminal" that notes the folder it was
-    /// opened in.
     fn write_config(&self, text: &str) {
         let dir = self.home().join(".config/omarchy-spaces");
         fs::create_dir_all(&dir).unwrap();
-        let terminal = "terminal.command = 'pwd >> \"$HOME/launched\"'\n";
-        fs::write(dir.join("config.toml"), format!("{terminal}{text}")).unwrap();
+        fs::write(dir.join("config.toml"), text).unwrap();
     }
 }
 
@@ -1417,15 +1292,7 @@ fn restore_picks_up_conversations_where_they_were() {
     for resume in [true, false] {
         let env = Env::new();
         let notes = env.dir("notes");
-        let log = env.home().join("resumed");
         env.write_config(&format!("[restore]\nagents = {resume}\n"));
-        let config = env.home().join(".config/omarchy-spaces/config.toml");
-        let text = fs::read_to_string(&config).unwrap();
-        let noting = text.replace(
-            "pwd >> \"$HOME/launched\"",
-            "echo \"$SPACES_RESUME\" >> \"$HOME/resumed\"",
-        );
-        fs::write(&config, noting).unwrap();
         fs::create_dir_all(env.state()).unwrap();
         let talk =
             |id: &str, folder: &Path| json!({ "agent": "claude", "id": id, "folder": folder });
@@ -1437,12 +1304,15 @@ fn restore_picks_up_conversations_where_they_were() {
         ] }] });
         fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
         env.ok(&["restore"]);
-        let first = if resume {
-            format!("claude {id}")
+        let noted = |file: &str| fs::read_to_string(env.home().join(file)).unwrap();
+        let (first, runs) = if resume {
+            let space = env!("CARGO_BIN_EXE_space");
+            (format!("claude {id}"), format!("{space} shell"))
         } else {
-            String::new()
+            Default::default()
         };
-        assert_eq!(fs::read_to_string(log).unwrap(), format!("{first}\n\n\n"));
+        assert_eq!(noted("resumed"), format!("{first}\n\n\n"));
+        assert_eq!(noted("ran"), format!("{runs}\n\n\n"));
     }
 }
 
@@ -1452,7 +1322,9 @@ fn restore_opens_the_browsers_windows_among_the_terminals() {
         let env = Env::new();
         let notes = env.dir("notes");
         env.hypr.lock().unwrap().layouts = true;
-        env.write_config(&format!("[restore]\nbrowser = {wanted}\n"));
+        env.write_config(&format!("[restore]\nbrowsers = {wanted}\n"));
+        let entry = env.home().join(".local/share/applications/sh.desktop");
+        fs::write(entry, "[Desktop Entry]\nExec=sh\n").unwrap();
         fs::create_dir_all(env.state()).unwrap();
         let saved = json!({ "instance": "before", "spaces": [
             {
@@ -1466,21 +1338,33 @@ fn restore_opens_the_browsers_windows_among_the_terminals() {
             },
             { "name": "Reading", "windows": [{ "tab": 2, "browser":
                 { "window": 8, "profile": "Default", "urls": ["https://c/"] } }] },
+            { "windows": [
+                { "tab": 1, "browser": { "name": "google-chrome", "class": "google-chrome",
+                    "window": 9, "profile": "Profile 1", "urls": ["https://d/"] } },
+                // An app that's installed, but no browser.
+                { "tab": 2, "browser": { "name": "sh", "window": 1, "profile": "Default",
+                    "urls": ["https://e/"] } },
+            ] },
         ] });
         fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
         env.ok(&["restore"]);
         let hypr = env.hypr.lock().unwrap();
         assert_eq!(hypr.browser_on, None, "the rule is gone");
+        // What they held is only kept if it's to be opened again.
+        let kept = fs::read_to_string(env.state().join("session-restored.json")).unwrap();
+        assert_eq!(kept.contains("https://"), wanted, "{kept}");
         if !wanted {
             assert_eq!(hypr.windows, ["s1:1"]);
             continue;
         }
-        assert_eq!(hypr.windows, ["s1:1", "s1:1", "s2:2"]);
+        assert_eq!(hypr.windows, ["s1:1", "s1:1", "s2:2", "s3:1"]);
         let (terminal, browser) = (hypr.addresses[0], hypr.addresses[1]);
         let split =
             format!(r#"split("address:0x{browser:x}", "address:0x{terminal:x}", "r", 0.8000)"#);
         assert!(hypr.evaluated[0].contains(&split), "{}", hypr.evaluated[0]);
         let opened = "'--new-window' 'https://b/' 'https://a/'";
+        assert!(hypr.dispatched.iter().any(|d| d.contains(opened)));
+        let opened = "'chrome-stub' '--profile-directory=Profile 1' '--new-window' 'https://d/'";
         assert!(hypr.dispatched.iter().any(|d| d.contains(opened)));
     }
 }
@@ -1489,23 +1373,21 @@ fn restore_opens_the_browsers_windows_among_the_terminals() {
 fn restore_gets_by_without_a_config_it_can_read() {
     let env = Env::new();
     let notes = env.dir("notes");
-    env.write_config("terminal.command = 'twice'");
+    env.write_config("[restore]\nauto = 'perhaps'\n");
     fs::create_dir_all(env.state()).unwrap();
     let saved = json!({ "instance": "before", "spaces": [
         { "windows": [{ "tab": 1, "folder": notes }] },
     ] });
     fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
     env.ok(&["restore"]);
-    // Omarchy's own terminal, which here is a stub.
-    let launched = fs::read_to_string(env.home().join("launched-for-real")).unwrap();
-    assert_eq!(launched.trim(), notes.display().to_string());
+    assert_eq!(env.launched(1), [notes.display().to_string()]);
 }
 
 #[test]
 fn restore_auto_skips_when_disabled_but_manual_still_works() {
     let env = Env::new();
     let notes = env.dir("notes");
-    env.write_config("[restore]\nenabled = false\n");
+    env.write_config("[restore]\nauto = false\n");
     fs::create_dir_all(env.state()).unwrap();
     let saved = json!({ "instance": "before", "spaces": [
         { "name": "Work", "windows": [{ "tab": 1, "folder": notes }] },
@@ -2097,23 +1979,20 @@ fn terminal_opens_in_the_focused_terminals_folder_or_the_spaces() {
     env.set_active("s1:1");
     env.ok(&["ls"]);
 
+    // Each opens on its own, so is waited for.
+    let terminal = |count: usize| {
+        env.ok(&["terminal"]);
+        env.launched(count).pop().unwrap()
+    };
     // An empty tab of the space: its folder.
     env.set_active("s1:2");
-    env.ok(&["terminal"]);
+    assert_eq!(terminal(1), ren.display().to_string());
     // A tab whose terminal is elsewhere: that terminal's folder.
     env.add_terminal("s1:2", &docs);
-    env.ok(&["terminal"]);
+    assert_eq!(terminal(2), docs.display().to_string());
     // Home with nothing focused: home.
     env.ok(&["go", "home"]);
-    env.ok(&["terminal"]);
-    assert_eq!(
-        env.launched(3),
-        [
-            ren.display().to_string(),
-            docs.display().to_string(),
-            env.dir("").display().to_string()
-        ]
-    );
+    assert_eq!(terminal(3), env.dir("").display().to_string());
 }
 
 #[test]
@@ -2220,419 +2099,34 @@ fn ls_lists_each_spaces_terminals_by_what_they_run() {
 }
 
 #[test]
-fn a_terminal_in_core_is_named_and_followed_through_core() {
+fn shell_is_your_own_after_the_conversation() {
     let env = Env::new();
-    let core = Core::start(&env);
-    let ren = env.dir("ren");
-    fs::create_dir_all(ren.join(".git")).unwrap();
-    // A window showing a core terminal, whose own shell Spaces can't see,
-    // and a plain one.
-    let window = env.add_window("s1:1");
-    let t = core.add(&window, &ren);
-    let plain = env.add_terminal("s1:2", &env.dir("notes"));
-    env.set_active("1");
-
-    let rows = env.ls_json();
-    assert_eq!(rows[1]["label"], "ren");
-    assert_eq!(rows[1]["terminals"][0]["address"], window);
-    assert_eq!(rows[1]["terminals"][0]["label"], "ren");
-    assert_eq!(rows[1]["terminals"][1]["address"], plain);
-    assert_eq!(rows[1]["status"], Value::Null);
-
-    // Its shell starts an agent in a folder further in.
-    core.event(&t, "foreground", json!({ "pid": 9, "name": "claude", "argv": ["claude"], "cwd": ren.join("src").display().to_string() }));
-    core.event(&t, "status", json!({ "status": { "state": "working", "app": "claude-code" }, "records": {}, "reported": true }));
-    let rows = env.ls_json();
-    assert_eq!(rows[1]["terminals"][0]["label"], "claude");
-    assert_eq!(
-        rows[1]["terminals"][0]["folder"],
-        ren.join("src").display().to_string()
-    );
-    assert_eq!(rows[1]["label"], "ren", "still its checkout");
-    assert_eq!(rows[1]["terminals"][0]["status"], "working");
-    assert_eq!(rows[1]["status"], "working");
-
-    for (word, shown) in [
-        ("blocked", json!("waiting")),
-        ("error", json!("waiting")),
-        ("done", json!("done")),
-        ("idle", Value::Null),
-    ] {
-        core.event(
-            &t,
-            "status",
-            json!({ "status": { "state": word }, "records": {}, "reported": true }),
-        );
-        assert_eq!(env.ls_json()[1]["status"], shown, "{word}");
-    }
-
-    // A shell at its prompt is named after its folder.
-    core.event(
-        &t,
-        "foreground",
-        json!({ "pid": 8, "name": "bash", "argv": ["-bash"], "cwd": ren.display().to_string() }),
-    );
-    assert_eq!(env.ls_json()[1]["terminals"][0]["label"], "ren");
-}
-
-#[test]
-fn a_terminal_on_another_machine_is_in_a_folder_there() {
-    let env = Env::new();
-    let core = Core::start(&env);
-    // A folder by the same path here, in a checkout, is another one.
-    let app = env.dir("ren/app");
-    fs::create_dir_all(env.dir("ren").join(".git")).unwrap();
-    let window = env.add_window("s1:1");
-    core.add_on(Some("box"), &window, &app);
-    env.set_active("s1:1");
-
-    let row = &env.ls_json()[1];
-    assert_eq!(row["label"], "app");
-    assert_eq!(row["folder"], app.display().to_string());
-    assert_eq!(row["machine"], "box");
-    assert_eq!(row["terminals"][0]["folder"], app.display().to_string());
-    assert_eq!(row["terminals"][0]["machine"], "box");
-    let listed = env.ok(&["ls"]);
-    assert!(
-        listed.contains(&format!("box:{}", app.display())),
-        "{listed}"
-    );
-
-    // A terminal opens here, so not there.
-    env.ok(&["terminal"]);
-    env.ok(&["tab", "new"]);
-    let home = env.dir("").display().to_string();
-    assert_eq!(env.launched(2), [home.clone(), home]);
-}
-
-#[test]
-fn watch_shows_what_core_reports_and_clears_done_once_seen() {
-    use std::time::Duration;
-    let env = Env::new();
-    let core = Core::start(&env);
-    let ren = env.dir("ren");
-    let agent = env.add_window("s1:1");
-    let t = core.add(&agent, &ren);
-    let other = env.add_window("s1:2");
-    let u = core.add(&other, &ren);
-    env.add_window("1");
-    env.set_active("s1:1");
-
-    let watch = Watch::start(&env);
-    let status = |rows: &[Value]| rows[1]["status"].clone();
-    assert_eq!(
-        status(&watch.next_rows(Duration::from_secs(3))),
-        Value::Null
-    );
-    watch.joined(&env);
-    // Its tabs show, and you are in neither window.
-    env.event("activewindowv2>>");
-
-    // Core says so as it happens.
-    core.event(
-        &t,
-        "status",
-        json!({ "status": { "state": "working" }, "records": {}, "reported": true }),
-    );
-    assert_eq!(status(&watch.next_rows(Duration::from_secs(1))), "working");
-    core.event(&t, "turn", json!({ "turn": 1, "state": "done" }));
-    core.event(
-        &t,
-        "status",
-        json!({ "status": { "state": "done" }, "records": {}, "reported": true }),
-    );
-    core.event(&u, "turn", json!({ "turn": 1, "state": "done" }));
-    core.event(
-        &u,
-        "status",
-        json!({ "status": { "state": "done" }, "records": {}, "reported": true }),
-    );
-    assert_eq!(status(&watch.next_rows(Duration::from_secs(1))), "done");
-
-    // You look at the agent's window: its turn is seen, the other's isn't.
-    env.event(&format!(
-        "activewindowv2>>{}",
-        agent.trim_start_matches("0x")
-    ));
-    let tabs = watch.next_tabs(Duration::from_secs(1));
-    assert_eq!(tabs, [Value::Null, json!("done")]);
-
-    // Its next turn ends while you're elsewhere: done again.
-    env.event("activewindowv2>>");
-    core.event(
-        &t,
-        "status",
-        json!({ "status": { "state": "working" }, "records": {}, "reported": true }),
-    );
-    core.event(&t, "turn", json!({ "turn": 2, "state": "done" }));
-    core.event(
-        &t,
-        "status",
-        json!({ "status": { "state": "done" }, "records": {}, "reported": true }),
-    );
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while watch.next_tabs(Duration::from_secs(2))[0] != "done" {
-        assert!(std::time::Instant::now() < deadline, "never done again");
-    }
-
-    // Core goes: so do the statuses.
-    core.stop();
-    let rows = watch.next_rows(Duration::from_secs(2));
-    assert_eq!(status(&rows), Value::Null);
-}
-
-#[test]
-fn watch_rings_when_an_agent_needs_you_or_finishes_unseen() {
-    use std::time::Duration;
-    let env = Env::new();
-    let core = Core::start(&env);
-    // A player that notes what it was asked to play.
-    let bin = env.root.path().join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let played = env.root.path().join("played");
-    fs::write(
-        bin.join("pw-play"),
-        format!("#!/bin/sh\necho \"$1\" >> '{}'\n", played.display()),
-    )
-    .unwrap();
-    fs::set_permissions(
-        bin.join("pw-play"),
-        std::os::unix::fs::PermissionsExt::from_mode(0o755),
-    )
-    .unwrap();
-    // Its own sound for done; Herdr's, built in, for waiting.
-    env.write_config("[sounds]\ndone = \"/s/done.oga\"\n");
-    let heard = || {
-        thread::sleep(Duration::from_millis(300));
-        fs::read_to_string(&played)
-            .unwrap_or_default()
-            .lines()
-            .map(String::from)
-            .collect::<Vec<_>>()
-    };
-
-    let ren = env.dir("ren");
-    let agent = env.add_window("s1:1");
-    let t = core.add(&agent, &ren);
-    // Waiting for you since before the watch started: no sound for that.
-    core.event(
-        &t,
-        "status",
-        json!({ "status": { "state": "blocked" }, "records": {}, "reported": true }),
-    );
-    env.add_window("1");
-    env.set_active("1");
-
-    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let mut command = env.command(&["watch", "--sounds"]);
-    command.env("PATH", path);
-    let watch = Watch::run(command);
-    // Once it has core's terminals, it shows the agent waiting.
-    while watch.next_rows(Duration::from_secs(3))[1]["status"] != "waiting" {}
-    watch.joined(&env);
-    assert!(heard().is_empty());
-
-    let status = |state: &str| {
-        core.event(
-            &t,
-            "status",
-            json!({ "status": { "state": state }, "records": {}, "reported": true }),
-        );
-        let _ = watch.next_rows(Duration::from_secs(1));
-    };
-    status("working");
-    status("blocked");
-    let request = env.root.path().join("run/omarchy-spaces/request.mp3");
-    assert_eq!(heard(), [request.display().to_string()]);
-    assert_eq!(
-        fs::read(&request).unwrap(),
-        fs::read("assets/sounds/request.mp3").unwrap()
-    );
-    status("working");
-    status("done");
-    assert_eq!(heard().len(), 2);
-    assert_eq!(heard()[1], "/s/done.oga");
-
-    // Finishing in the window you're looking at: nothing to tell you.
-    env.event(&format!(
-        "activewindowv2>>{}",
-        agent.trim_start_matches("0x")
-    ));
-    status("working");
-    status("done");
-    assert_eq!(heard().len(), 2);
-}
-
-#[test]
-fn shell_runs_in_core_and_ends_with_its_window() {
-    // It attaches with the real `hc`.
-    let on_path = std::env::split_paths(&std::env::var_os("PATH").unwrap())
-        .any(|dir| dir.join("hc").is_file());
-    if !on_path {
-        eprintln!("skipped: hc isn't installed");
-        return;
-    }
-    let env = Env::new();
-    let core = Core::start(&env);
-    let ren = env.dir("ren");
-    let out = env
-        .command(&["shell"])
-        .current_dir(&ren)
-        .env("TERM", "xterm-kitty")
-        .env("SSH_AUTH_SOCK", "/run/ssh")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
-    let runs = core.requests("terminal.run");
-    assert_eq!(runs.len(), 1, "{stderr}");
-    let run = &runs[0]["params"];
-    assert_eq!(run["cwd"], ren.display().to_string());
-    assert_eq!(run["labels"]["omarchy-spaces"], "1");
-    assert_eq!(
-        run["labels"]["omarchy-spaces-window"],
-        window_label(std::process::id()),
-        "the window's process: its parent"
-    );
-    assert_eq!(run["rm"], true);
-    assert_eq!(run["env"]["SSH_AUTH_SOCK"], "/run/ssh");
-    assert_eq!(
-        run["env"]["TERM"],
-        Value::Null,
-        "core's emulator names itself"
-    );
-    // Attaching here fails, as if the window closed at once: the shell ends.
-    let kills = core.requests("terminal.kill");
-    assert_eq!(kills.len(), 1, "{stderr}");
-    assert_eq!(kills[0]["params"]["terminal"], "t1");
-}
-
-#[test]
-fn shell_that_cant_attach_to_core_runs_your_own() {
-    let env = Env::new();
-    let core = Core::start(&env);
-    let bin = env.root.path().join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let executable = |name: &str, script: &str| {
-        let file = bin.join(name);
-        fs::write(&file, script).unwrap();
-        fs::set_permissions(&file, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-        file
-    };
-    let killed = env.root.path().join("killed");
-    let hc = |attach: u8| {
-        let killed = killed.display();
-        executable(
-            "hc",
-            &format!(
-                "#!/bin/sh\ncase $1 in --help) echo herdr-core ;; \
-                 attach) exit {attach} ;; kill) echo \"$2\" >> '{killed}' ;; esac\n"
-            ),
-        );
-    };
-    let shell = executable("myshell", "#!/bin/sh\necho my own shell\n");
-    let run = || {
+    let shell = env.root.path().join("myshell");
+    fs::write(&shell, "#!/bin/sh\necho \"$0 $*\"; env | grep SPACES_R\n").unwrap();
+    fs::set_permissions(&shell, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let run = |resume: &str| {
         let out = env
             .command(&["shell"])
-            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
             .env("SHELL", &shell)
+            .env("SPACES_RESUME", resume)
+            .env("SPACES_RESTORE", "1")
             .stdin(std::process::Stdio::null())
             .output()
             .unwrap();
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
-    let kills = || {
-        let text = fs::read_to_string(&killed).unwrap_or_default();
-        text.lines().count()
-    };
-
-    // It attached, and the shell exited or you detached: the window closes.
-    hc(0);
-    assert_eq!(run(), "");
-    assert_eq!(kills(), 1);
-
-    // It couldn't: core's shell ends, and the window is still a terminal.
-    hc(2);
-    assert_eq!(run(), "my own shell");
-    assert_eq!(kills(), 2);
+    let path = shell.display();
+    let id = "be6fb713-2beb-4233-86c2-266ee407ec56";
     assert_eq!(
-        core.requests("terminal.run").len(),
-        2,
-        "core isn't asked again"
+        run(&format!("claude {id}")),
+        format!("{path} -i -c claude --resume {id}; exec '{path}'")
     );
+    // Nothing that can be picked up: just the shell.
+    assert_eq!(run("claude x; rm -rf ~"), path.to_string());
 }
 
 #[test]
-fn shell_without_core_runs_your_own() {
-    let env = Env::new();
-    // Without `hc` on PATH: runs your shell quietly, no stderr noise.
-    let out = env
-        .command(&["shell"])
-        .env("PATH", "/usr/bin:/bin")
-        .env("SHELL", "/usr/bin/true")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let has_hc_in_usr = Path::new("/usr/bin/hc").is_file() || Path::new("/bin/hc").is_file();
-    if !has_hc_in_usr {
-        assert!(
-            out.stderr.is_empty(),
-            "unexpected stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-
-    // With an unrelated `hc` on PATH (e.g. herbstclient): runs your shell quietly.
-    let other_bin = env.root.path().join("other-bin");
-    fs::create_dir_all(&other_bin).unwrap();
-    fs::write(other_bin.join("hc"), "#!/bin/sh\necho herbstclient\n").unwrap();
-    fs::set_permissions(
-        other_bin.join("hc"),
-        std::os::unix::fs::PermissionsExt::from_mode(0o755),
-    )
-    .unwrap();
-    let out = env
-        .command(&["shell"])
-        .env("PATH", &other_bin)
-        .env("SHELL", "/usr/bin/true")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    assert!(
-        out.stderr.is_empty(),
-        "unexpected stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-
-    // With herdr-core's `hc` on PATH but core unreachable: warns and falls back to own shell.
-    let bin = env.root.path().join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    fs::write(
-        bin.join("hc"),
-        "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo 'herdr-core'; exit 0; fi\nexit 1\n",
-    )
-    .unwrap();
-    fs::set_permissions(
-        bin.join("hc"),
-        std::os::unix::fs::PermissionsExt::from_mode(0o755),
-    )
-    .unwrap();
-    let out = env
-        .command(&["shell"])
-        .env("PATH", bin)
-        .env("SHELL", "/usr/bin/true")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("plain shell"));
-}
-
-#[test]
-fn ls_shows_what_claude_is_doing_without_herdr_core() {
+fn ls_shows_what_an_agent_is_doing() {
     let env = Env::new();
     let window = env.add_terminal("s1:1", &env.dir("app"));
     env.set_active("1");
@@ -2642,7 +2136,7 @@ fn ls_shows_what_claude_is_doing_without_herdr_core() {
         ("waiting", json!("waiting")),
         ("", Value::Null),
     ] {
-        env.claude_is(&window, word);
+        env.agent_is(&window, word);
         let rows = env.ls_json();
         assert_eq!(rows[1]["status"], shown, "{word}");
         assert_eq!(rows[1]["terminals"][0]["status"], shown, "{word}");
@@ -2650,7 +2144,7 @@ fn ls_shows_what_claude_is_doing_without_herdr_core() {
 }
 
 #[test]
-fn watch_shows_what_claude_is_doing_and_clears_done_once_seen() {
+fn watch_shows_what_an_agent_is_doing_and_clears_done_once_seen() {
     use std::time::Duration;
     let env = Env::new();
     let app = env.dir("app");
@@ -2658,8 +2152,8 @@ fn watch_shows_what_claude_is_doing_and_clears_done_once_seen() {
     let other = env.add_terminal("s1:2", &app);
     env.add_window("1");
     env.set_active("s1:1");
-    env.claude_is(&agent, "idle");
-    env.claude_is(&other, "working");
+    env.agent_is(&agent, "idle");
+    env.agent_is(&other, "working");
 
     let watch = Watch::start(&env);
     let tabs = |wanted: [Value; 2]| {
@@ -2674,14 +2168,14 @@ fn watch_shows_what_claude_is_doing_and_clears_done_once_seen() {
     // Its tabs show, and you are in neither window.
     env.event("activewindowv2>>");
 
-    env.claude_is(&agent, "waiting");
+    env.agent_is(&agent, "waiting");
     tabs([json!("waiting"), json!("working")]);
     // You answered.
-    env.claude_is(&agent, "working");
+    env.agent_is(&agent, "working");
     tabs([json!("working"), json!("working")]);
-    env.claude_is(&agent, "idle");
+    env.agent_is(&agent, "idle");
     tabs([json!("done"), json!("working")]);
-    env.claude_is(&other, "idle");
+    env.agent_is(&other, "idle");
     tabs([json!("done"), json!("done")]);
 
     // Focusing the first clears its `done`, and leaves the other's alone.
@@ -2693,18 +2187,18 @@ fn watch_shows_what_claude_is_doing_and_clears_done_once_seen() {
 
     // Its next turn ends while you're elsewhere: `done` again.
     env.event("activewindowv2>>");
-    env.claude_is(&agent, "working");
+    env.agent_is(&agent, "working");
     tabs([json!("working"), json!("done")]);
-    env.claude_is(&agent, "idle");
+    env.agent_is(&agent, "idle");
     tabs([json!("done"), json!("done")]);
 
-    // Claude exits, or is killed.
-    env.claude_exits(&agent);
+    // It exits, or is killed.
+    env.agent_exits(&agent);
     tabs([Value::Null, json!("done")]);
 }
 
 #[test]
-fn watch_rings_for_claude_without_herdr_core() {
+fn watch_rings_when_an_agent_needs_you_or_finishes_unseen() {
     use std::time::Duration;
     let env = Env::new();
     let bin = env.root.path().join("bin");
@@ -2720,7 +2214,8 @@ fn watch_rings_for_claude_without_herdr_core() {
         std::os::unix::fs::PermissionsExt::from_mode(0o755),
     )
     .unwrap();
-    env.write_config("[sounds]\ndone = \"/s/done.oga\"\n");
+    // Its own sound for done; Herdr's, built in, for waiting.
+    env.write_config("[sounds]\nenabled = true\ndone = \"/s/done.oga\"\n");
     let heard = || {
         thread::sleep(Duration::from_millis(300));
         fs::read_to_string(&played)
@@ -2732,7 +2227,7 @@ fn watch_rings_for_claude_without_herdr_core() {
 
     let agent = env.add_terminal("s1:1", &env.dir("app"));
     // Waiting since before `watch` started: no sound for that.
-    env.claude_is(&agent, "waiting");
+    env.agent_is(&agent, "waiting");
     env.add_window("1");
     env.set_active("s1:1");
 
@@ -2749,13 +2244,17 @@ fn watch_rings_for_claude_without_herdr_core() {
     assert!(heard().is_empty());
 
     let set = |word: &str| {
-        env.claude_is(&agent, word);
+        env.agent_is(&agent, word);
         let _ = watch.next_rows(Duration::from_secs(1));
     };
     set("working");
     set("waiting");
     let request = env.root.path().join("run/omarchy-spaces/request.mp3");
     assert_eq!(heard(), [request.display().to_string()]);
+    assert_eq!(
+        fs::read(&request).unwrap(),
+        fs::read("assets/sounds/request.mp3").unwrap()
+    );
 
     // Asking again in the same turn rings again.
     set("working");
@@ -2775,6 +2274,13 @@ fn watch_rings_for_claude_without_herdr_core() {
     let _ = watch.next_rows(Duration::from_secs(1));
     set("working");
     set("idle");
+    assert_eq!(heard().len(), 3);
+
+    // Unless you turn them on, there are none.
+    env.write_config("[sounds]\ndone = \"/s/done.oga\"\n");
+    thread::sleep(Duration::from_millis(300));
+    set("working");
+    set("waiting");
     assert_eq!(heard().len(), 3);
 }
 
@@ -2796,28 +2302,42 @@ fn ls_without_hyprland_lists_what_it_remembers() {
 }
 
 #[test]
-fn go_without_a_space_opens_the_picker() {
-    let env = Env::new();
-    env.add_terminal("s1:1", &env.dir("ren"));
-    env.add_terminal("s2:1", &env.dir("trip"));
+fn watch_saves_what_browsers_hold_only_if_its_to_be_opened_again() {
+    for (config, kept) in [
+        ("", true),
+        ("[restore]\nbrowsers = false\n", false),
+        // It may be about to say not to: what was known stands.
+        ("[restore]\nbrowsers = ", true),
+    ] {
+        let env = Env::new();
+        env.write_config(config);
+        env.add_terminal("s1:1", &env.dir("app"));
+        let window = env.add_window("s1:1");
+        let address = u32::from_str_radix(window.trim_start_matches("0x"), 16).unwrap();
+        let mut hypr = env.hypr.lock().unwrap();
+        hypr.classes.insert(address, "chromium".into());
+        drop(hypr);
+        env.set_active("s1:1");
+        // What a watch before this one saved.
+        fs::create_dir_all(env.state()).unwrap();
+        let session = env.state().join("session-restored.json");
+        let saved = json!({ "instance": "test", "spaces": [{ "windows": [
+            { "tab": 1, "address": window, "browser":
+                { "window": 7, "profile": "Default", "urls": ["https://a/"] } },
+        ] }] });
+        fs::write(&session, saved.to_string()).unwrap();
 
-    // The picker sees the most recently left space first.
-    env.write_config("picker = \"cat > $HOME/picked; head -1 $HOME/picked\"\n");
-    env.ok(&["go", "trip"]);
-    env.ok(&["go", "ren"]);
-    env.ok(&["go"]);
-    let shown = fs::read_to_string(env.home().join("picked")).unwrap();
-    let order: Vec<_> = shown
-        .lines()
-        .map(|l| l.split_whitespace().next().unwrap())
-        .collect();
-    assert_eq!(order, ["trip", "home", "ren"], "{shown}");
-    assert_eq!(env.active(), "s2:1");
-
-    // Dismissing the picker does nothing.
-    env.write_config("picker = \"exit 130\"\n");
-    env.ok(&["go"]);
-    assert_eq!(env.active(), "s2:1");
+        let watch = Watch::start(&env);
+        watch.next_rows(Duration::from_secs(3));
+        let file = env.state().join("session.json");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !file.exists() {
+            assert!(Instant::now() < deadline, "never saved");
+            thread::sleep(Duration::from_millis(20));
+        }
+        let text = fs::read_to_string(&file).unwrap();
+        assert_eq!(text.contains("https://a/"), kept, "{config}: {text}");
+    }
 }
 
 /// A running `space watch`, its lines read on a thread.
@@ -3125,7 +2645,7 @@ fn watch_shows_each_monitors_tabs() {
         "another monitor's are its own"
     );
 
-    env.claude_is(&agent, "waiting");
+    env.agent_is(&agent, "waiting");
     let state = watch.settled(Duration::from_millis(600));
     let shown: Vec<_> = state["monitors"][0]["tabs"]
         .as_array()

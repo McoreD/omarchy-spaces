@@ -10,7 +10,6 @@ use super::{
     SpaceTarget, focus, forget, moved, open_terminal_then, remember, session_selector,
     session_workspace, take_turn,
 };
-use crate::config::Config;
 use crate::hypr::{self, Hypr};
 use crate::layout;
 use crate::live::{self, Row, Snapshot, SpaceWindow};
@@ -96,7 +95,6 @@ pub fn go_to_named_tab(tab: String) -> Result<()> {
 /// you are on, if nothing is open there, as on a monitor the space hasn't been
 /// used on.
 fn new_tab(hypr: &Hypr, active: &hypr::Workspace, here: &Location) -> Result<()> {
-    let config = Config::load()?;
     let space = here.space();
     let dir = live::space_folder(hypr, space)?;
     let blocks = Blocks::load();
@@ -121,7 +119,7 @@ fn new_tab(hypr: &Hypr, active: &hypr::Workspace, here: &Location) -> Result<()>
         Ok((space.to_string(), new_tab_in(&strip, taken)?))
     })?;
     let workspace = name::workspace_name(space, key);
-    open_terminal_then(hypr, &config, &dir, &workspace, || focus(hypr, space, key))?;
+    open_terminal_then(hypr, &dir, &workspace, || focus(hypr, space, key))?;
     remember(space, key);
     Ok(())
 }
