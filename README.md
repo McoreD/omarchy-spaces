@@ -9,6 +9,10 @@
   Built for Hyprland on Omarchy.
 </p>
 
+<p align="center">
+  <img src="assets/screenshot.png" width="627" alt="The Spaces sidebar, listing each space with a status dot on one of them, beside the tabs of the open space">
+</p>
+
 ---
 
 A **space** holds one piece of work. Each space has its own **tabs**, and each tab is a workspace for whatever windows you like. Switch spaces, and all of it changes at once.
