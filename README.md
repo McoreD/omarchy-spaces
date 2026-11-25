@@ -18,35 +18,26 @@ omarchy plugin add https://github.com/t4t5/omarchy-spaces.git --enable
 
 This also downloads the `space` command and links a file into your Hyprland config. A notification then asks whether Spaces should replace Omarchy's menu and workspaces on the bar. Nothing is lost if you say yes: the menu still opens with its key, or a right-click on the logo.
 
-**2. Choose your keys.** Add this at the end of `~/.config/hypr/bindings.lua`. Keep the first two lines and the last, and change or drop any of the others. They replace whatever Omarchy has on those keys, until you remove Spaces.
+**2. Add the keys.** Put this at the end of `~/.config/hypr/bindings.lua`:
 
 ```lua
 if package.searchpath("hypr.omarchy-spaces", package.path) then
   local spaces = require("hypr.omarchy-spaces")
 
+  spaces.bind_tab_keys()
   o.rebind("SUPER + B", "Show or hide spaces", spaces.toggle_sidebar())
-  o.rebind("SUPER + P", "Find a space", spaces.find_space())
-  o.rebind("SUPER + N", "New space", spaces.new_space())
-  o.rebind("SUPER + SHIFT + J", "Next space", spaces.next_space())
-  o.rebind("SUPER + SHIFT + K", "Previous space", spaces.prev_space())
-  o.rebind("SUPER + T", "New tab", spaces.new_tab())
-  for n = 1, 10 do
-    local key = "code:" .. tostring(n + 9)
-    o.rebind("SUPER + " .. key, "Go to tab " .. n, spaces.go_to_tab(n))
-    o.rebind("SUPER + SHIFT + " .. key, "Move window to tab " .. n, spaces.move_window_to_tab(n))
-  end
 end
 ```
+
+Omarchy's workspace keys now go to a space's tabs, and <kbd>Super</kbd> <kbd>B</kbd> expands the sidebar. There are [more actions you can bind](docs/guide/keys.md), such as opening and finding spaces.
 
 To update or build from source, see [Installation](docs/guide/install.md). To remove it, see [Uninstall](#uninstall).
 
 ## Getting started
 
-With the keys above:
-
-1. Press <kbd>Super</kbd> <kbd>N</kbd> to open a space. It starts with a terminal in the folder you're in, and takes that folder's name.
-2. Press <kbd>Super</kbd> <kbd>T</kbd> to open another tab in it, and <kbd>Super</kbd> <kbd>1</kbd>–<kbd>0</kbd> to go between tabs.
-3. Press <kbd>Super</kbd> <kbd>P</kbd> to find another space, or click one in the sidebar. Your plain workspaces are the `home` space, at the top.
+1. Press <kbd>Super</kbd> <kbd>B</kbd> to expand the sidebar, and click **New space**. It starts with a terminal in the folder you're in, and takes that folder's name.
+2. Click the **+** on the bar to open another tab in it, and press <kbd>Super</kbd> <kbd>1</kbd>–<kbd>0</kbd> to go between tabs.
+3. Click a space in the sidebar to go to it. Your plain workspaces are the `home` space, at the top.
 4. Right-click a space or a tab to rename or close it, and drag to reorder.
 5. Close a space's last window, and the space is gone.
 

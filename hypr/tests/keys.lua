@@ -115,6 +115,24 @@ equal(dispatched[2][2].workspace, "name:s1:4")
 equal(dispatched[2][2].follow, true)
 equal(dispatched[3][2].follow, false)
 
+-- Omarchy's workspace keys, all of them.
+local bound, count = {}, 0
+o.rebind = function(keys, _, action)
+  bound[keys] = action
+  count = count + 1
+end
+spaces.bind_tab_keys()
+equal(count, 30)
+bound["SUPER + code:10"]()
+bound["SUPER + SHIFT + code:19"]()
+bound["SUPER + SHIFT + ALT + code:11"]()
+local silent, follow, go = table.remove(dispatched), table.remove(dispatched), table.remove(dispatched)
+equal(go[2].workspace, "name:s1:1")
+equal(follow[2].workspace, "name:s1:10")
+equal(follow[2].follow, true)
+equal(silent[2].workspace, "name:s1:2")
+equal(silent[2].follow, false)
+
 -- A workspace something else named is `home`'s, as Omarchy has it.
 for _, name in ipairs({ "web:1", "s0:1", "s1:0", "s1:251", "S1:1", "home:1" }) do
   active = { name = name }

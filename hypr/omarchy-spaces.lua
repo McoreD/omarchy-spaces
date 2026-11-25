@@ -1,4 +1,4 @@
--- Spaces for Hyprland. It binds no keys: bind the ones you want in
+-- Spaces for Hyprland. It binds no keys until asked: bind the ones you want in
 -- ~/.config/hypr/bindings.lua, after the require (see docs/guide/keys.md).
 --
 -- The plugin links this file to ~/.config/hypr/omarchy-spaces.lua (install.sh).
@@ -312,6 +312,16 @@ local function move_window(slot, follow_it)
   end
 end
 
+-- Omarchy's workspace keys (default/hypr/bindings/tiling.lua), for tabs.
+local function bind_tab_keys()
+  for n = 1, SLOTS do
+    local key = "code:" .. (n + 9)
+    o.rebind("SUPER + " .. key, "Go to tab " .. n, focus(n))
+    o.rebind("SUPER + SHIFT + " .. key, "Move window to tab " .. n, move_window(n))
+    o.rebind("SUPER + SHIFT + ALT + " .. key, "Move window silently to tab " .. n, move_window(n, false))
+  end
+end
+
 local PLUGIN = "com.t4t5.spaces"
 
 -- Runs a `space` command.
@@ -378,6 +388,7 @@ local M = {
   new_tab = run("tab new"),
   next_tab = run("tab next"),
   prev_tab = run("tab prev"),
+  bind_tab_keys = bind_tab_keys,
   go_to_tab = focus,
   rename_tab = shell_call("renameTab"),
   send_tab = send_tab,

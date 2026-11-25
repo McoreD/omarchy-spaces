@@ -1,21 +1,25 @@
 # Keys
 
-Spaces binds no keys, so it never takes one of Omarchy's or yours. Bind the ones you want in `~/.config/hypr/bindings.lua`, after the `require` line. For example:
+Spaces binds no keys by itself. Bind the ones you want in `~/.config/hypr/bindings.lua`. The [README](../../README.md#install) has the two to start from:
 
 ```lua
 if package.searchpath("hypr.omarchy-spaces", package.path) then
   local spaces = require("hypr.omarchy-spaces")
 
+  spaces.bind_tab_keys()
   o.rebind("SUPER + B", "Show or hide spaces", spaces.toggle_sidebar())
-  o.rebind("SUPER + N", "New space", spaces.new_space())
 end
 ```
 
-The `if` skips them when Spaces isn't there, so that removing it gives you Omarchy's keys back.
+The `if` skips them when Spaces isn't there, so that removing it gives you Omarchy's keys back. Put any others you want inside it too. These keys are free in Omarchy:
 
-The [README](../../README.md#install) has a set to start from.
+```lua
+  o.rebind("SUPER + N", "New space", spaces.new_space())
+  o.rebind("SUPER + SHIFT + J", "Next space", spaces.next_space())
+  o.rebind("SUPER + SHIFT + K", "Previous space", spaces.prev_space())
+```
 
-`o.rebind` replaces whatever Omarchy binds to that key. In the README's set that includes `super+p` (pseudo window) and `super+t` (floating), so pick others if you use those. To see what's taken:
+`o.rebind` replaces whatever is on that key. To see what's taken:
 
 ```sh
 omarchy menu keybindings --print
@@ -38,6 +42,7 @@ Bind these actions rather than `space` commands: they stay the same if the comma
 | Action | Does |
 |---|---|
 | `spaces.new_tab()` | New tab, with a terminal in the space's folder |
+| `spaces.bind_tab_keys()` | Binds Omarchy's workspace keys to tabs, by itself: `super+1`–`0` to go to one, with `shift` to move the window there, and with `shift+alt` to move it and stay where you are. For other keys, bind `go_to_tab` and `move_window_to_tab` |
 | `spaces.go_to_tab(n)` | Go to tab N |
 | `spaces.next_tab()` / `spaces.prev_tab()` | Next / previous tab |
 | `spaces.rename_tab()` | Name the tab you are on: type over its name on the bar, Enter to keep it, Escape to stop. An empty name has it called after its window again |
