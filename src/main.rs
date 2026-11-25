@@ -79,18 +79,6 @@ enum Cmd {
     },
     /// Open a terminal in the folder you are in, or the active space's.
     Terminal,
-    /// Report what an agent in this terminal is doing: working, waiting, done
-    /// or idle (clear).
-    Status {
-        /// working, waiting (or blocked/error), done, or idle (clear).
-        state: String,
-        /// Report for this Hyprland window address instead of the current terminal.
-        #[arg(long)]
-        window: Option<String>,
-        /// Report for the Hyprland window owning this process instead of this one.
-        #[arg(long)]
-        pid: Option<u32>,
-    },
     /// Print what the plugin shows, as a line of JSON each time it changes. For
     /// the plugin alone, it changes with it: scripts read `space ls --json`.
     Watch {
@@ -101,7 +89,11 @@ enum Cmd {
     /// Run as a terminal window's program: a shell in herdr-core, attached
     /// here and ended with the window, else your own shell.
     #[command(hide = true)]
-    Shell,
+    Shell {
+        /// Your own shell, without herdr-core.
+        #[arg(long)]
+        plain: bool,
+    },
     /// Run by Hyprland when closing a window empties the workspace you are
     /// on: go to another tab, or end the space.
     #[command(hide = true)]
@@ -229,7 +221,7 @@ fn main() -> ExitCode {
     // worth a notification.
     let unseen = !matches!(
         cli.command,
-        Cmd::Ls { .. } | Cmd::Watch { .. } | Cmd::Shell | Cmd::Status { .. }
+        Cmd::Ls { .. } | Cmd::Watch { .. } | Cmd::Shell { .. }
     ) && !std::io::stderr().is_terminal();
 
     let result = match cli.command {
@@ -250,9 +242,8 @@ fn main() -> ExitCode {
         Cmd::Close { space } => commands::close(space),
         Cmd::Restore { file, auto } => commands::restore(file, auto),
         Cmd::Terminal => commands::open_terminal(),
-        Cmd::Status { state, window, pid } => commands::status(&state, window, pid),
         Cmd::Watch { sounds } => watch::watch(sounds),
-        Cmd::Shell => shell::shell(),
+        Cmd::Shell { plain } => shell::shell(plain),
         Cmd::Emptied { workspace } => commands::emptied(&workspace),
         Cmd::Tab(command) => run_tab(command),
         Cmd::Window(WindowCmd::Send { space, silent }) => commands::send_window(space, silent),

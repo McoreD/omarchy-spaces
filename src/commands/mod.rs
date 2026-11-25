@@ -15,7 +15,7 @@ pub use window::{send_window, window_to_tab};
 
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 use crate::config::Config;
 use crate::hypr::{self, Hypr};
@@ -25,7 +25,6 @@ use crate::paths;
 use crate::reserve;
 use crate::spaces::Store;
 use crate::state::{self, Last};
-use crate::status;
 use crate::terminal;
 
 /// How long a new space or tab waits for its terminal before going there
@@ -60,73 +59,6 @@ pub fn open_terminal() -> Result<()> {
         Err(_) => paths::home(),
     };
     terminal::launch(&config.terminal(), &dir)
-}
-
-/// `space status <state>`: reports what an agent in a terminal window is doing
-/// (`working`, `waiting`, `done`, or `idle`/`clear`), without needing
-/// herdr-core. Finds the owning Hyprland window by walking the process tree
-/// upward unless `--window`, `--pid`, or `SPACES_WINDOW` specifies one.
-///
-/// Outside Hyprland (or outside any Hyprland window when auto-detecting),
-/// exits silently so agent hooks don't fail in headless or SSH sessions.
-pub fn status(raw_word: &str, window: Option<String>, pid: Option<u32>) -> Result<()> {
-    let word = status::parse_word(raw_word)?;
-    let (address, owner_pid) = if let Some(window) = window {
-        (status::normalize_address(&window)?, None)
-    } else if pid.is_none()
-        && let Some(env_window) = std::env::var_os("SPACES_WINDOW").filter(|s| !s.is_empty())
-    {
-        (
-            status::normalize_address(&env_window.to_string_lossy())?,
-            None,
-        )
-    } else {
-        if pid.is_none()
-            && std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")
-                .filter(|s| !s.is_empty())
-                .is_none()
-        {
-            return Ok(());
-        }
-        let hypr = Hypr::from_env()?;
-        let clients = hypr.clients()?;
-        let start = pid.unwrap_or_else(std::process::id);
-        let chain = terminal::ancestors(start);
-        let matched = chain.iter().find_map(|&anc| {
-            let mut hits: Vec<&hypr::Client> = clients
-                .iter()
-                .filter(|c| u32::try_from(c.pid).ok() == Some(anc))
-                .collect();
-            hits.sort_by_key(|c| c.opened());
-            (!hits.is_empty()).then_some((anc, hits))
-        });
-        let Some((window_pid, hits)) = matched else {
-            if let Some(pid) = pid {
-                bail!("no Hyprland window for pid {pid}");
-            }
-            return Ok(());
-        };
-        let address = if hits.len() == 1 {
-            hits[0].address.clone()
-        } else if let Some(nth) = terminal::window_with(window_pid, hits.len(), &chain) {
-            hits[nth].address.clone()
-        } else {
-            let active = hypr.active_window_address().ok().flatten();
-            active
-                .as_deref()
-                .and_then(|active| hits.iter().find(|c| c.address == active))
-                .unwrap_or(&hits[0])
-                .address
-                .clone()
-        };
-        let owner = if pid.is_none() {
-            terminal::owner_pid(&chain, window_pid)
-        } else {
-            None
-        };
-        (status::normalize_address(&address)?, owner)
-    };
-    status::write_report(&paths::status_dir(), &address, word, owner_pid)
 }
 
 /// An id for a new space whose first terminal opens on tab `key`, reserved

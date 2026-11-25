@@ -1,8 +1,10 @@
-//! Agents' conversations, to pick up again after a restart. Claude Code says
-//! which one each of its processes is in, in `~/.claude/sessions/<pid>.json`,
-//! so this needs no hooks.
+//! What agents note about themselves: the conversation they're in, to pick up
+//! again after a restart, and what they're doing. Claude Code notes both for
+//! each of its processes, in `~/.claude/sessions/<pid>.json`, so this needs no
+//! hooks.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +46,16 @@ fn is_uuid(id: &str) -> bool {
         })
 }
 
+/// What an agent's process notes about itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Noted {
+    /// Which process, to tell it from another that gets its pid.
+    pub process: String,
+    pub conversation: Option<Conversation>,
+    /// What it's doing: working, waiting or idle; empty when it doesn't say.
+    pub word: &'static str,
+}
+
 /// What Claude Code notes about one of its processes.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,10 +68,30 @@ struct ClaudeProcess {
     proc_start: Option<String>,
     #[serde(default)]
     kind: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    /// What it's waiting for, when it is.
+    #[serde(default)]
+    waiting_for: Option<String>,
 }
 
-/// The conversation the process `pid` is in, if it's an agent we can tell.
-pub fn conversation(pid: u32) -> Option<Conversation> {
+impl ClaudeProcess {
+    /// Its status, in our words.
+    fn word(&self) -> &'static str {
+        match (self.status.as_deref(), self.waiting_for.as_deref()) {
+            // You opened it yourself, as with `/config`.
+            (Some("waiting"), Some("dialog open")) => "",
+            (Some("waiting"), _) => "waiting",
+            (Some("busy"), _) => "working",
+            // `shell` is a turn that has ended with a command left running.
+            (Some("idle" | "shell"), _) => "idle",
+            _ => "",
+        }
+    }
+}
+
+/// What the process `pid` notes about itself, if it's an agent we can tell.
+pub fn noted(pid: u32) -> Option<Noted> {
     let dir = std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|d| !d.is_empty())
         .map(PathBuf::from)
@@ -67,21 +99,47 @@ pub fn conversation(pid: u32) -> Option<Conversation> {
     claude(&dir, pid, started(pid)?.as_str())
 }
 
-fn claude(dir: &Path, pid: u32, started: &str) -> Option<Conversation> {
-    let text = std::fs::read_to_string(dir.join(format!("sessions/{pid}.json"))).ok()?;
-    let process: ClaudeProcess = serde_json::from_str(&text).ok()?;
+fn claude(dir: &Path, pid: u32, started: &str) -> Option<Noted> {
+    let process = read_claude(&dir.join(format!("sessions/{pid}.json")))?;
     // Left behind by another process that had the same pid.
-    if process.pid != pid || process.proc_start.is_some_and(|start| start != started) {
+    if process.pid != pid
+        || process
+            .proc_start
+            .as_deref()
+            .is_some_and(|start| start != started)
+    {
         return None;
     }
-    if process.kind.is_some_and(|kind| kind != "interactive") || !is_uuid(&process.session_id) {
+    if process
+        .kind
+        .as_deref()
+        .is_some_and(|kind| kind != "interactive")
+    {
         return None;
     }
-    Some(Conversation {
-        agent: "claude".into(),
-        id: process.session_id,
-        folder: process.cwd,
+    let word = process.word();
+    Some(Noted {
+        process: format!("{pid}/{started}"),
+        conversation: is_uuid(&process.session_id).then(|| Conversation {
+            agent: "claude".into(),
+            id: process.session_id,
+            folder: process.cwd,
+        }),
+        word,
     })
+}
+
+/// Claude writes it in place, so it can be caught half written: then again, a
+/// moment later.
+fn read_claude(path: &Path) -> Option<ClaudeProcess> {
+    for _ in 0..3 {
+        let text = std::fs::read_to_string(path).ok()?;
+        if let Ok(process) = serde_json::from_str(&text) {
+            return Some(process);
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    None
 }
 
 /// When a process started, as `/proc/<pid>/stat` counts it.
@@ -123,10 +181,14 @@ mod tests {
         write(note("interactive"));
         assert_eq!(
             claude(dir.path(), 7, "42"),
-            Some(Conversation {
-                agent: "claude".into(),
-                id: ID.into(),
-                folder: "/p".into(),
+            Some(Noted {
+                process: "7/42".into(),
+                conversation: Some(Conversation {
+                    agent: "claude".into(),
+                    id: ID.into(),
+                    folder: "/p".into(),
+                }),
+                word: "",
             })
         );
         assert_eq!(claude(dir.path(), 7, "43"), None, "another process's");
@@ -135,6 +197,23 @@ mod tests {
         assert_eq!(claude(dir.path(), 7, "42"), None);
         write("{".into());
         assert_eq!(claude(dir.path(), 7, "42"), None);
+    }
+
+    #[test]
+    fn reads_what_claude_is_doing() {
+        let word = |status: &str, waiting_for: &str| {
+            let note = format!(
+                r#"{{"pid":7,"sessionId":"{ID}","cwd":"/p","status":"{status}","waitingFor":"{waiting_for}"}}"#
+            );
+            serde_json::from_str::<ClaudeProcess>(&note).unwrap().word()
+        };
+        assert_eq!(word("busy", ""), "working");
+        assert_eq!(word("waiting", "permission prompt"), "waiting");
+        assert_eq!(word("waiting", "input needed"), "waiting");
+        assert_eq!(word("waiting", "dialog open"), "", "you opened it");
+        assert_eq!(word("idle", ""), "idle");
+        assert_eq!(word("shell", ""), "idle");
+        assert_eq!(word("dreaming", ""), "");
     }
 
     #[test]

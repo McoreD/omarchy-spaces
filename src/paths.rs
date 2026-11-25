@@ -38,19 +38,13 @@ pub fn omarchy_monitors() -> PathBuf {
 }
 
 /// `$XDG_RUNTIME_DIR/omarchy-spaces/`: per-session files (built-in sounds,
-/// live agent statuses), gone with the session.
+/// reserved workspaces), gone with the session.
 pub fn runtime_dir() -> PathBuf {
     env::var_os("XDG_RUNTIME_DIR")
         .filter(|d| !d.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(env::temp_dir)
         .join("omarchy-spaces")
-}
-
-/// `$XDG_RUNTIME_DIR/omarchy-spaces/status/`: one file per window that
-/// reported an agent status through `space status`.
-pub fn status_dir() -> PathBuf {
-    runtime_dir().join("status")
 }
 
 /// `$XDG_RUNTIME_DIR/omarchy-spaces/reserved/`: one file per workspace whose

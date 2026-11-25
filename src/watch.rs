@@ -18,7 +18,8 @@
 //!
 //! An agent's `done` shows until you focus its window: then its turn is
 //! seen, which it notes on core's terminal as Herdr's clients do, so it
-//! stays seen when the watch restarts. With `--sounds`, as the plugin runs
+//! stays seen when the watch restarts. What Claude notes itself has no turns:
+//! those are told apart here (`status::Turns`), and a new watch starts over. With `--sounds`, as the plugin runs
 //! it, it plays a sound when an agent starts needing you or finishes while
 //! you aren't looking (`sound.rs`). Without core it subscribes again every `SLOW`, so starting core
 //! later is noticed.
@@ -77,7 +78,6 @@ pub fn watch(sounds: bool) -> Result<()> {
         let _ = to_main.send(Message::HyprlandGone);
     });
     let state_dir = paths::state_dir();
-    let status_dir = paths::status_dir();
 
     // What spaces.json held before the snapshot was taken.
     let mut known = Store::load(&state_dir)?.spaces;
@@ -100,12 +100,12 @@ pub fn watch(sounds: bool) -> Result<()> {
     // Core's terminals, while subscribed to it.
     let mut core: Option<core::Terminals> = None;
     let mut subscribed = false;
-    // The turn each agent was on when you last looked at it, until its
-    // backing store (core label or status file) says so too.
+    // The turn each agent was on when you last looked at it; core's
+    // terminals then say so too.
     let mut seen: HashMap<String, u64> = HashMap::new();
-    // What each agent last reported `(word, turn)`, to ring on a change.
-    let mut words: HashMap<String, (String, u64)> = HashMap::new();
-    let mut initial = true;
+    // What each agent last reported, to ring on a change.
+    let mut words: HashMap<String, String> = HashMap::new();
+    let mut turns = status::Turns::default();
     let mut config = Config::load_or_default();
     let mut config_seen = stamp(&paths::config_file());
     let mut focused = hypr.active_window_address()?;
@@ -169,29 +169,17 @@ pub fn watch(sounds: bool) -> Result<()> {
             config_seen = configured;
         }
 
-        status::prune_reports(&status_dir, &live_addresses);
-        let reports = status::load_reports(&status_dir);
-
-        let mut live = live::live_from(
-            &snapshot,
-            |window| shells.get(&window.address)?.1.clone(),
-            &reports,
-        );
+        let mut live = live::live_from(&snapshot, |window| shells.get(&window.address)?.1.clone());
+        turns.follow(live.agents_mut());
         // The agent in the window you're looking at is seen, once a turn.
         if let Some(focused) = &focused {
             for (window, agent) in live.agents() {
                 let key = agent.key();
                 if window == focused && !agent.seen() && seen.get(&key) != Some(&agent.turn) {
                     seen.insert(key, agent.turn);
-                    let result = match &agent.source {
-                        terminal::AgentSource::Core(address) => {
-                            core::mark_seen(address, agent.turn)
-                        }
-                        terminal::AgentSource::Native(address) => {
-                            status::mark_seen(&status_dir, address, agent.turn)
-                        }
-                    };
-                    if let Err(e) = result {
+                    if let terminal::AgentSource::Core(address) = &agent.source
+                        && let Err(e) = core::mark_seen(address, agent.turn)
+                    {
                         eprintln!("space: warning: {e:#}");
                     }
                 }
@@ -199,35 +187,20 @@ pub fn watch(sounds: bool) -> Result<()> {
         }
         // A change in what an agent reports may call for a sound. Statuses
         // already present when `watch` starts (or when core first connects)
-        // don't ring; fresh native `space status` reports while running do.
+        // don't ring.
         for (window, agent) in live.agents() {
             let key = agent.key();
-            let before = words.insert(key, (agent.word.clone(), agent.turn));
+            let before = words.insert(key, agent.word.clone());
             if !sounds {
                 continue;
             }
             let looking = focused.as_deref() == Some(window);
-            let alert = match before {
-                Some((prev_word, prev_turn)) => sound::alert(&prev_word, &agent.word, looking)
-                    .or_else(|| {
-                        (agent.is_native()
-                            && agent.word == "done"
-                            && agent.turn > prev_turn
-                            && !looking)
-                            .then_some(status::Status::Done)
-                    }),
-                None if !initial && agent.is_native() => sound::alert("", &agent.word, looking)
-                    .or_else(|| {
-                        (agent.word == "done" && !looking && !agent.seen())
-                            .then_some(status::Status::Done)
-                    }),
-                None => None,
-            };
-            if let Some(alert) = alert {
+            if let Some(before) = before
+                && let Some(alert) = sound::alert(&before, &agent.word, looking)
+            {
                 sound::play(&config, alert);
             }
         }
-        initial = false;
         let live_keys: HashSet<String> = live.agents().map(|(_, a)| a.key()).collect();
         seen.retain(|key, _| live_keys.contains(key));
         words.retain(|key, _| live_keys.contains(key));

@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 
 use crate::agent::{self, Conversation};
 use crate::folder::Folder;
-use crate::{core, hypr, status};
+use crate::{core, hypr};
 
 /// What the shell of a terminal window is doing: the folder it's in, and
 /// the program it's running, unless it's at its prompt.
@@ -25,8 +25,8 @@ pub struct Shell {
     /// The command running in the terminal's foreground (`claude`, `nvim`),
     /// or `None` at the prompt.
     pub program: Option<String>,
-    /// What an agent in this terminal last reported, from herdr-core or
-    /// `space status`. `None` when nothing has reported.
+    /// What an agent in this terminal is doing, from herdr-core or Claude's own
+    /// notes. `None` when neither says.
     pub agent: Option<Agent>,
     /// The conversation the agent it's running is in, to pick up again.
     pub conversation: Option<Conversation>,
@@ -37,12 +37,11 @@ pub struct Shell {
 pub enum AgentSource {
     /// A herdr-core terminal, by its core address (`t7`).
     Core(String),
-    /// A native terminal reporting through `space status`, by its Hyprland
-    /// window address (`0x55a4`).
-    Native(String),
+    /// What Claude notes itself, by its process (`agent::Noted`).
+    Claude(String),
 }
 
-/// What a terminal's agent last reported (OSC 7501 in core, or `space status`).
+/// What a terminal's agent last said it's doing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Agent {
     pub source: AgentSource,
@@ -57,12 +56,14 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn from_native(window: &str, report: &status::Report) -> Self {
+    /// Claude's, as it notes it. Whether it has finished a turn is for
+    /// `status::Turns` to tell.
+    pub fn from_claude(process: &str, word: &str) -> Self {
         Self {
-            source: AgentSource::Native(window.to_string()),
-            word: report.word.clone(),
-            turn: report.turn,
-            seen_turn: report.seen_turn,
+            source: AgentSource::Claude(process.to_string()),
+            word: word.to_string(),
+            turn: 0,
+            seen_turn: None,
         }
     }
 
@@ -70,12 +71,12 @@ impl Agent {
     pub fn key(&self) -> String {
         match &self.source {
             AgentSource::Core(address) => format!("core:{address}"),
-            AgentSource::Native(window) => format!("native:{window}"),
+            AgentSource::Claude(process) => format!("claude:{process}"),
         }
     }
 
-    pub fn is_native(&self) -> bool {
-        matches!(self.source, AgentSource::Native(_))
+    pub fn is_claude(&self) -> bool {
+        matches!(self.source, AgentSource::Claude(_))
     }
 
     /// Whether someone has looked at it since its turn ended.
@@ -165,15 +166,6 @@ fn in_place(shells: &[u32], place: Place, before: Option<u32>) -> Option<u32> {
     shells.last().copied()
 }
 
-/// Which of the windows run by `pid`, oldest first, has the process whose
-/// `ancestors` these are, when its windows have a shell each.
-pub fn window_with(pid: u32, windows: usize, ancestors: &[u32]) -> Option<usize> {
-    let shells = shells(pid);
-    (shells.len() == windows)
-        .then(|| shells.iter().position(|shell| ancestors.contains(shell)))
-        .flatten()
-}
-
 /// A core terminal's shell: its foreground program's folder and name, a
 /// shell counting as its prompt.
 fn from_core(terminal: &core::Terminal) -> Shell {
@@ -190,26 +182,28 @@ fn from_core(terminal: &core::Terminal) -> Shell {
         None => (terminal.cwd.clone(), None),
     };
     let machine = terminal.machine();
+    let noted = terminal
+        .foreground
+        .as_ref()
+        // Another machine's pid would be some other process here.
+        .filter(|_| machine.is_none())
+        .and_then(|fg| agent::noted(fg.pid?));
+    let reported = terminal.status.as_ref().filter(|s| !s.state.is_empty());
+    let agent = match (reported, &noted) {
+        (None, Some(noted)) => Agent::from_claude(&noted.process, noted.word),
+        _ => Agent {
+            source: AgentSource::Core(terminal.address.clone()),
+            word: reported.map(|s| s.state.clone()).unwrap_or_default(),
+            turn: terminal.turn,
+            seen_turn: terminal.seen_turn(),
+        },
+    };
     Shell {
         pid: None,
         folder: Folder::on(machine, cwd),
         program,
-        agent: Some(Agent {
-            source: AgentSource::Core(terminal.address.clone()),
-            word: terminal
-                .status
-                .as_ref()
-                .map(|s| s.state.clone())
-                .unwrap_or_default(),
-            turn: terminal.turn,
-            seen_turn: terminal.seen_turn(),
-        }),
-        conversation: terminal
-            .foreground
-            .as_ref()
-            // Another machine's pid would be some other process here.
-            .filter(|_| machine.is_none())
-            .and_then(|fg| agent::conversation(fg.pid?)),
+        agent: Some(agent),
+        conversation: noted.and_then(|noted| noted.conversation),
     }
 }
 
@@ -226,7 +220,9 @@ pub fn shell(place: Place, before: Option<u32>) -> Option<Shell> {
             pid: Some(shell),
             folder: Folder::here(cwd),
             program,
-            agent: None,
+            agent: std::fs::read_to_string(fake.join(format!("{shell}.claude")))
+                .ok()
+                .map(|word| Agent::from_claude(&shell.to_string(), word.trim())),
             conversation: std::fs::read_to_string(fake.join(format!("{shell}.conversation")))
                 .ok()
                 .and_then(|text| serde_json::from_str(&text).ok()),
@@ -235,18 +231,23 @@ pub fn shell(place: Place, before: Option<u32>) -> Option<Shell> {
     let stat = Stat::read(shell)?;
     let known = std::fs::read_to_string("/etc/shells").unwrap_or_default();
     let cwd = std::fs::canonicalize(format!("/proc/{shell}/cwd")).ok()?;
+    let program = foreground(&stat, &known);
+    let noted = program.and_then(agent::noted);
     Some(Shell {
         pid: Some(shell),
         folder: Folder::here(cwd),
-        program: foreground(&stat, &known).and_then(program_name),
-        agent: None,
-        conversation: foreground(&stat, &known).and_then(agent::conversation),
+        program: program.and_then(program_name),
+        agent: noted
+            .as_ref()
+            .map(|noted| Agent::from_claude(&noted.process, noted.word)),
+        conversation: noted.and_then(|noted| noted.conversation),
     })
 }
 
 /// For tests, `SPACES_FAKE_CWDS` names a folder that stands in for `/proc`: a
-/// symlink per shell, pointing at the folder it's in, and `<shell>.program`
-/// and `<shell>.conversation` files holding what it runs. A terminal's shell
+/// symlink per shell, pointing at the folder it's in, and `<shell>.program`,
+/// `<shell>.conversation` and `<shell>.claude` (what Claude is doing, as
+/// `agent::Noted` has it) files holding what it runs. A terminal's shell
 /// is called as its window's process, or, when it has several,
 /// `<pid>.shells` holds what they are, oldest first.
 fn fakes() -> Option<std::path::PathBuf> {
@@ -291,7 +292,6 @@ fn shells(pid: u32) -> Vec<u32> {
 
 /// The fields of `/proc/<pid>/stat` that say how a process sits on its tty.
 struct Stat {
-    ppid: i64,
     pgrp: i64,
     session: i64,
     tty: i64,
@@ -314,11 +314,10 @@ impl Stat {
             .take(5)
             .map(|f| f.parse().ok())
             .collect::<Option<_>>()?;
-        let &[ppid, pgrp, session, tty, tpgid] = fields.as_slice() else {
+        let &[_, pgrp, session, tty, tpgid] = fields.as_slice() else {
             return None;
         };
         Some(Self {
-            ppid,
             pgrp,
             session,
             tty,
@@ -326,44 +325,6 @@ impl Stat {
             started,
         })
     }
-}
-
-/// `pid` and its ancestors up the process tree, stopping at init.
-pub fn ancestors(start: u32) -> Vec<u32> {
-    let mut chain = Vec::new();
-    let mut current = start;
-    for _ in 0..64 {
-        if current <= 1 || chain.contains(&current) {
-            break;
-        }
-        chain.push(current);
-        let Some(stat) = Stat::read(current) else {
-            break;
-        };
-        let Ok(parent) = u32::try_from(stat.ppid) else {
-            break;
-        };
-        current = parent;
-    }
-    chain
-}
-
-/// The agent process that spawned `space status`, sitting directly under the
-/// terminal's login shell in `ancestors` (e.g. `terminal -> zsh -> claude ->
-/// sh -> space` yields `claude`). Returns `None` when `space status` was run
-/// directly from the shell prompt itself.
-pub fn owner_pid(ancestors: &[u32], window_pid: u32) -> Option<u32> {
-    let end = ancestors.iter().position(|&pid| pid == window_pid)?;
-    let inside = &ancestors[..end];
-    let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
-    let shell_index = inside.iter().enumerate().rev().find_map(|(i, &pid)| {
-        let stat = Stat::read(pid)?;
-        is_shell(pid, &stat, &shells).then_some(i)
-    })?;
-    // Index 0 is `space` itself; index 1 would mean `space` is the shell's
-    // direct child (run from the prompt). Anything above that has an agent
-    // process sitting at `shell_index - 1`.
-    (shell_index >= 2).then(|| inside[shell_index - 1])
 }
 
 fn is_shell(pid: u32, stat: &Stat, shells: &str) -> bool {

@@ -5,8 +5,8 @@
 //! window's tab and its space. The window is the terminal: closing it ends
 //! the shell, as closing any terminal window would.
 //!
-//! Without core (`hc` not installed, or core not starting), it runs your own
-//! shell, as the terminal would have.
+//! Without core (`hc` not installed, core not starting, or no attaching to
+//! it), it runs your own shell, as the terminal would have.
 
 use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
@@ -21,24 +21,27 @@ use crate::terminal::shell_quote;
 
 /// Attaches to the shell, then ends it however the window goes: the shell
 /// exiting, `hc attach` detaching, or the window closing, which hangs up
-/// both, and the trap ends the shell once `hc attach` has gone.
+/// both, and the trap ends the shell once `hc attach` has gone. It fails only
+/// when it can't attach, or no longer: then this program (`$2`) runs your own
+/// shell, so the window is still a terminal.
 const ATTACH: &str = r#"end() { hc kill "$1" >/dev/null 2>&1; }
 trap 'end "$1"; exit' HUP TERM
-hc attach "$1"
-end "$1""#;
+hc attach "$1" && attached=1
+end "$1"
+[ -n "$attached" ] || exec "$2" shell --plain"#;
 
 /// The conversation to pick up before the shell, as `claude <id>`.
 pub const RESUME: &str = "SPACES_RESUME";
 /// Names the window to the `space restore` that opened it.
 pub const RESTORE: &str = "SPACES_RESTORE";
 
-pub fn shell() -> Result<()> {
+pub fn shell(plain: bool) -> Result<()> {
     let argv = std::env::var(RESUME)
         .ok()
         .and_then(|resume| agent::parse_resume(&resume))
         .map(|command| agent_shell(&command))
         .unwrap_or_default();
-    let wanted = Config::load_or_default().use_herdr_core();
+    let wanted = !plain && Config::load_or_default().use_herdr_core();
     let error = if !wanted || !config::on_path("hc") {
         own_shell(&argv)
     } else {
@@ -48,6 +51,7 @@ pub fn shell() -> Result<()> {
                 .arg(ATTACH)
                 .arg("omarchy-spaces-shell")
                 .arg(address)
+                .arg(std::env::current_exe().unwrap_or_else(|_| "space".into()))
                 .exec(),
             Err(e) => {
                 eprintln!("space: no herdr-core, so a plain shell: {e:#}");

@@ -694,6 +694,24 @@ impl Env {
         }
     }
 
+    /// Claude in the terminal at `address` notes what it's doing.
+    fn claude_is(&self, address: &str, word: &str) {
+        let file = self.claude_file(address);
+        // In one step, as a reader would see half of it otherwise.
+        let tmp = file.with_extension("tmp");
+        fs::write(&tmp, word).unwrap();
+        fs::rename(tmp, file).unwrap();
+    }
+
+    fn claude_exits(&self, address: &str) {
+        fs::remove_file(self.claude_file(address)).unwrap();
+    }
+
+    fn claude_file(&self, address: &str) -> PathBuf {
+        let pid = 1000 + u32::from_str_radix(address.trim_start_matches("0x"), 16).unwrap();
+        self.cwds().join(format!("{pid}.claude"))
+    }
+
     /// The address of the newest window, such as the terminal `space new`
     /// opened.
     fn newest_window(&self) -> String {
@@ -2427,6 +2445,61 @@ fn shell_runs_in_core_and_ends_with_its_window() {
 }
 
 #[test]
+fn shell_that_cant_attach_to_core_runs_your_own() {
+    let env = Env::new();
+    let core = Core::start(&env);
+    let bin = env.root.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let executable = |name: &str, script: &str| {
+        let file = bin.join(name);
+        fs::write(&file, script).unwrap();
+        fs::set_permissions(&file, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        file
+    };
+    let killed = env.root.path().join("killed");
+    let hc = |attach: u8| {
+        let killed = killed.display();
+        executable(
+            "hc",
+            &format!(
+                "#!/bin/sh\ncase $1 in --help) echo herdr-core ;; \
+                 attach) exit {attach} ;; kill) echo \"$2\" >> '{killed}' ;; esac\n"
+            ),
+        );
+    };
+    let shell = executable("myshell", "#!/bin/sh\necho my own shell\n");
+    let run = || {
+        let out = env
+            .command(&["shell"])
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("SHELL", &shell)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    let kills = || {
+        let text = fs::read_to_string(&killed).unwrap_or_default();
+        text.lines().count()
+    };
+
+    // It attached, and the shell exited or you detached: the window closes.
+    hc(0);
+    assert_eq!(run(), "");
+    assert_eq!(kills(), 1);
+
+    // It couldn't: core's shell ends, and the window is still a terminal.
+    hc(2);
+    assert_eq!(run(), "my own shell");
+    assert_eq!(kills(), 2);
+    assert_eq!(
+        core.requests("terminal.run").len(),
+        2,
+        "core isn't asked again"
+    );
+}
+
+#[test]
 fn shell_without_core_runs_your_own() {
     let env = Env::new();
     // Without `hc` on PATH: runs your shell quietly, no stderr noise.
@@ -2495,60 +2568,25 @@ fn shell_without_core_runs_your_own() {
 }
 
 #[test]
-fn status_reports_agent_state_without_herdr_core() {
+fn ls_shows_what_claude_is_doing_without_herdr_core() {
     let env = Env::new();
-    let app = env.dir("app");
-    let window = env.add_terminal("s1:1", &app);
+    let window = env.add_terminal("s1:1", &env.dir("app"));
     env.set_active("1");
-
-    assert_eq!(env.ls_json()[1]["status"], Value::Null);
-
-    for (arg, shown) in [
+    for (word, shown) in [
+        ("idle", Value::Null),
         ("working", json!("working")),
         ("waiting", json!("waiting")),
-        ("blocked", json!("waiting")),
-        ("error", json!("waiting")),
-        ("done", json!("done")),
-        ("idle", Value::Null),
+        ("", Value::Null),
     ] {
-        env.ok(&["status", arg, "--window", &window]);
+        env.claude_is(&window, word);
         let rows = env.ls_json();
-        assert_eq!(rows[1]["status"], shown, "{arg}");
-        assert_eq!(rows[1]["terminals"][0]["status"], shown, "{arg}");
+        assert_eq!(rows[1]["status"], shown, "{word}");
+        assert_eq!(rows[1]["terminals"][0]["status"], shown, "{word}");
     }
-
-    // `SPACES_WINDOW` works without passing `--window`, and `clear` clears it.
-    let out = env
-        .command(&["status", "working"])
-        .env("SPACES_WINDOW", &window)
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    assert_eq!(env.ls_json()[1]["status"], "working");
-
-    let out = env
-        .command(&["status", "clear"])
-        .env("SPACES_WINDOW", &window)
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    assert_eq!(env.ls_json()[1]["status"], Value::Null);
-
-    // Outside Hyprland, auto-detecting hooks exit cleanly without failing.
-    let out = env
-        .command(&["status", "working"])
-        .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-
-    // Unknown status words still fail clearly.
-    let err = env.fails(&["status", "bogus", "--window", &window]);
-    assert!(err.contains("unknown status"), "{err}");
 }
 
 #[test]
-fn watch_shows_native_status_clears_done_on_focus_and_prunes() {
+fn watch_shows_what_claude_is_doing_and_clears_done_once_seen() {
     use std::time::Duration;
     let env = Env::new();
     let app = env.dir("app");
@@ -2556,58 +2594,53 @@ fn watch_shows_native_status_clears_done_on_focus_and_prunes() {
     let other = env.add_terminal("s1:2", &app);
     env.add_window("1");
     env.set_active("s1:1");
+    env.claude_is(&agent, "idle");
+    env.claude_is(&other, "working");
 
     let watch = Watch::start(&env);
-    let status = |rows: &[Value]| rows[1]["status"].clone();
-    assert_eq!(
-        status(&watch.next_rows(Duration::from_secs(3))),
-        Value::Null
-    );
+    let tabs = |wanted: [Value; 2]| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while watch.next_tabs(Duration::from_secs(3)) != wanted {
+            assert!(std::time::Instant::now() < deadline, "never {wanted:?}");
+        }
+    };
+    // It hasn't started: that's not done.
+    tabs([Value::Null, json!("working")]);
     watch.joined(&env);
     // Its tabs show, and you are in neither window.
     env.event("activewindowv2>>");
 
-    env.ok(&["status", "working", "--window", &agent]);
-    assert_eq!(status(&watch.next_rows(Duration::from_secs(1))), "working");
+    env.claude_is(&agent, "waiting");
+    tabs([json!("waiting"), json!("working")]);
+    // You answered.
+    env.claude_is(&agent, "working");
+    tabs([json!("working"), json!("working")]);
+    env.claude_is(&agent, "idle");
+    tabs([json!("done"), json!("working")]);
+    env.claude_is(&other, "idle");
+    tabs([json!("done"), json!("done")]);
 
-    env.ok(&["status", "done", "--window", &agent]);
-    env.ok(&["status", "done", "--window", &other]);
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while watch.next_tabs(Duration::from_secs(2)) != ["done", "done"] {
-        assert!(std::time::Instant::now() < deadline, "never both done");
-    }
-
-    // Focusing the first agent clears its `done`, persists it for `ls`, and
-    // leaves the second agent's `done` alone.
+    // Focusing the first clears its `done`, and leaves the other's alone.
     env.event(&format!(
         "activewindowv2>>{}",
         agent.trim_start_matches("0x")
     ));
-    let tabs = watch.next_tabs(Duration::from_secs(1));
-    assert_eq!(tabs, [Value::Null, json!("done")]);
-    assert_eq!(env.ls_json()[1]["terminals"][0]["status"], Value::Null);
+    tabs([Value::Null, json!("done")]);
 
     // Its next turn ends while you're elsewhere: `done` again.
     env.event("activewindowv2>>");
-    env.ok(&["status", "working", "--window", &agent]);
-    assert_eq!(watch.next_tabs(Duration::from_secs(1))[0], "working");
-    env.ok(&["status", "done", "--window", &agent]);
-    assert_eq!(watch.next_tabs(Duration::from_secs(1))[0], "done");
+    env.claude_is(&agent, "working");
+    tabs([json!("working"), json!("done")]);
+    env.claude_is(&agent, "idle");
+    tabs([json!("done"), json!("done")]);
 
-    // Closing a window prunes its status file.
-    let status_file = env
-        .root
-        .path()
-        .join(format!("run/omarchy-spaces/status/{other}.json"));
-    assert!(status_file.exists());
-    env.close_window(&other);
-    env.event(&format!("closewindow>>{}", other.trim_start_matches("0x")));
-    let _ = watch.next_rows(Duration::from_secs(1));
-    assert!(!status_file.exists());
+    // Claude exits, or is killed.
+    env.claude_exits(&agent);
+    tabs([Value::Null, json!("done")]);
 }
 
 #[test]
-fn watch_rings_for_native_status_without_herdr_core() {
+fn watch_rings_for_claude_without_herdr_core() {
     use std::time::Duration;
     let env = Env::new();
     let bin = env.root.path().join("bin");
@@ -2633,12 +2666,11 @@ fn watch_rings_for_native_status_without_herdr_core() {
             .collect::<Vec<_>>()
     };
 
-    let app = env.dir("app");
-    let agent = env.add_terminal("s1:1", &app);
+    let agent = env.add_terminal("s1:1", &env.dir("app"));
     // Waiting since before `watch` started: no sound for that.
-    env.ok(&["status", "waiting", "--window", &agent]);
+    env.claude_is(&agent, "waiting");
     env.add_window("1");
-    env.set_active("1");
+    env.set_active("s1:1");
 
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let mut command = env.command(&["watch", "--sounds"]);
@@ -2649,10 +2681,11 @@ fn watch_rings_for_native_status_without_herdr_core() {
         "waiting"
     );
     watch.joined(&env);
+    env.event("activewindowv2>>");
     assert!(heard().is_empty());
 
-    let set = |state: &str| {
-        env.ok(&["status", state, "--window", &agent]);
+    let set = |word: &str| {
+        env.claude_is(&agent, word);
         let _ = watch.next_rows(Duration::from_secs(1));
     };
     set("working");
@@ -2660,10 +2693,15 @@ fn watch_rings_for_native_status_without_herdr_core() {
     let request = env.root.path().join("run/omarchy-spaces/request.mp3");
     assert_eq!(heard(), [request.display().to_string()]);
 
+    // Asking again in the same turn rings again.
     set("working");
-    set("done");
+    set("waiting");
     assert_eq!(heard().len(), 2);
-    assert_eq!(heard()[1], "/s/done.oga");
+
+    set("working");
+    set("idle");
+    assert_eq!(heard().len(), 3);
+    assert_eq!(heard()[2], "/s/done.oga");
 
     // Finishing while you're looking at the window: silent.
     env.event(&format!(
@@ -2672,19 +2710,7 @@ fn watch_rings_for_native_status_without_herdr_core() {
     ));
     let _ = watch.next_rows(Duration::from_secs(1));
     set("working");
-    set("done");
-    assert_eq!(heard().len(), 2);
-
-    // One-shot `done` while unfocused (e.g. Codex notify or `cmd && space status done`): rings.
-    env.event("activewindowv2>>");
-    env.ok(&["status", "done", "--window", &agent]);
-    let _ = watch.next_rows(Duration::from_secs(1));
-    assert_eq!(heard().len(), 3);
-    assert_eq!(heard()[2], "/s/done.oga");
-
-    // Clearing a working agent goes quiet without ringing `done`.
-    set("working");
-    set("clear");
+    set("idle");
     assert_eq!(heard().len(), 3);
 }
 
@@ -3035,7 +3061,7 @@ fn watch_shows_each_monitors_tabs() {
         "another monitor's are its own"
     );
 
-    env.ok(&["status", "waiting", "--window", &agent]);
+    env.claude_is(&agent, "waiting");
     let state = watch.settled(Duration::from_millis(600));
     let shown: Vec<_> = state["monitors"][0]["tabs"]
         .as_array()

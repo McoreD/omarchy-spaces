@@ -1,5 +1,4 @@
-//! Live state assembled from Hyprland, terminals, native agent reports, and
-//! `spaces.json`. Nothing is kept between commands: each call reads Hyprland
+//! Live state assembled from Hyprland, terminals and `spaces.json`. Nothing is kept between commands: each call reads Hyprland
 //! anew (`snapshot`), resolves terminals (`live_from`), and folds in the store
 //! (`rows`).
 
@@ -102,9 +101,6 @@ pub(crate) struct Live {
     windows: BTreeMap<String, u32>,
     workspaces: BTreeMap<String, BTreeSet<u8>>,
     pub terminals: BTreeMap<String, Vec<Terminal>>,
-    /// Windows that reported a native status via `space status` without being
-    /// recognized as a terminal in `/proc`.
-    extra_agents: Vec<(String, terminal::Agent)>,
     /// Every window's address, by space.
     addresses: BTreeMap<String, Vec<String>>,
     /// Agents' statuses, by window address.
@@ -120,11 +116,6 @@ impl Live {
             .values()
             .flatten()
             .filter_map(|t| Some((t.address.as_str(), t.shell.agent.as_ref()?)))
-            .chain(
-                self.extra_agents
-                    .iter()
-                    .map(|(address, agent)| (address.as_str(), agent)),
-            )
             .filter_map(|(address, agent)| {
                 let status = status::from_report(&agent.word, seen(agent))?;
                 Some((address.to_string(), status))
@@ -138,11 +129,14 @@ impl Live {
             .values()
             .flatten()
             .filter_map(|t| Some((t.address.as_str(), t.shell.agent.as_ref()?)))
-            .chain(
-                self.extra_agents
-                    .iter()
-                    .map(|(address, agent)| (address.as_str(), agent)),
-            )
+    }
+
+    /// The same, to bring up to date.
+    pub fn agents_mut(&mut self) -> impl Iterator<Item = &mut terminal::Agent> {
+        self.terminals
+            .values_mut()
+            .flatten()
+            .filter_map(|t| t.shell.agent.as_mut())
     }
 
     /// The spaces Hyprland has, `home` aside.
@@ -293,28 +287,19 @@ fn group_bar(hypr: &Hypr) -> i32 {
 }
 
 /// Makes the live view from a snapshot, with `shell` saying which windows
-/// are terminals, which folder each one's shell is in and what it runs, and
-/// `reports` holding native agent statuses reported through `space status`.
+/// are terminals, which folder each one's shell is in and what it runs.
 pub(crate) fn live_from(
     snapshot: &Snapshot,
     mut shell: impl FnMut(&SpaceWindow) -> Option<terminal::Shell>,
-    reports: &HashMap<String, status::Report>,
 ) -> Live {
     let mut terminals: BTreeMap<String, Vec<Terminal>> = BTreeMap::new();
-    let mut extra_agents: Vec<(String, terminal::Agent)> = Vec::new();
     let mut addresses: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for window in &snapshot.space_windows {
         addresses
             .entry(window.space.clone())
             .or_default()
             .push(window.address.clone());
-        let report = reports.get(&window.address);
-        if let Some(mut shell) = shell(window) {
-            if let Some(report) = report
-                && shell.agent.as_ref().is_none_or(|a| a.word.is_empty())
-            {
-                shell.agent = Some(terminal::Agent::from_native(&window.address, report));
-            }
+        if let Some(shell) = shell(window) {
             terminals
                 .entry(window.space.clone())
                 .or_default()
@@ -324,11 +309,6 @@ pub(crate) fn live_from(
                     pid: window.place.pid,
                     shell,
                 });
-        } else if let Some(report) = report {
-            extra_agents.push((
-                window.address.clone(),
-                terminal::Agent::from_native(&window.address, report),
-            ));
         }
     }
     // Oldest first, as far as Hyprland lets us tell: by tab, then process.
@@ -340,7 +320,6 @@ pub(crate) fn live_from(
         windows: snapshot.windows.clone(),
         workspaces: snapshot.workspaces.clone(),
         terminals,
-        extra_agents,
         addresses,
         statuses: HashMap::new(),
     }
@@ -351,14 +330,11 @@ pub(crate) type Seen = (Snapshot, Live);
 
 fn live(hypr: &Hypr) -> Result<Seen> {
     let core = core::list().ok().map(core::Terminals::new);
-    let reports = status::load_reports(&paths::status_dir());
     let snapshot = snapshot(hypr)?;
-    let mut live = live_from(
-        &snapshot,
-        |window| terminal::shell_of(window.place, core.as_ref(), None),
-        &reports,
-    );
-    // What you've seen, as `watch` notes it on core's terminals and native reports.
+    let mut live = live_from(&snapshot, |window| {
+        terminal::shell_of(window.place, core.as_ref(), None)
+    });
+    // What you've seen, as `watch` notes it on core's terminals.
     live.set_statuses(terminal::Agent::seen);
     Ok((snapshot, live))
 }
