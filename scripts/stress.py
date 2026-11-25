@@ -4,6 +4,7 @@ sidebar and the bars show where Hyprland says you are each time it settles.
 You end up where you were. `just stress [rounds]`."""
 
 import json
+import re
 import subprocess
 import sys
 import time
@@ -18,9 +19,9 @@ def run(*command):
 
 def locate(workspace):
     """The space and tab a workspace is, as `space` reads its name."""
-    space, _, key = workspace["name"].rpartition(":")
-    if space:
-        return space, int(key)
+    match = re.fullmatch(r"(s[1-9][0-9]*):([0-9]+)", workspace["name"])
+    if match:
+        return match[1], int(match[2])
     return "home", max(workspace["id"], 0)
 
 

@@ -22,16 +22,16 @@
 local SLOTS = 10
 local LAST_KEY = 250
 
--- The space and tab a workspace is, as `space` reads its name: `name:n`, with
--- a lowercase name. `home` and no tab for any other, nil for special ones.
+-- The space and tab a workspace is, as `space` reads its name (src/name.rs):
+-- `s1:n`. `home` and no tab for any other, nil for special ones.
 local function locate(workspace)
   local name = workspace and workspace.name
   if not name or name == "" or name:match("^special:") then
     return nil
   end
-  local space, key = name:match("^([a-z0-9][a-z0-9-]*):([1-9]%d*)$")
+  local space, key = name:match("^(s[1-9]%d*):([1-9]%d*)$")
   key = tonumber(key)
-  if not space or space == "home" or key > LAST_KEY then
+  if not space or key > LAST_KEY then
     return "home"
   end
   return space, key

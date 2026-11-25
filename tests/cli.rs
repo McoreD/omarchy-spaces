@@ -865,18 +865,18 @@ fn tab_go_in_home_without_omarchy_is_the_plain_workspace() {
 #[test]
 fn tab_go_stays_inside_the_space() {
     let env = Env::new();
-    env.set_active("ren:1");
+    env.set_active("s1:1");
     env.ok(&["tab", "go", "2"]);
     assert_eq!(
         env.dispatched(),
-        [r#"hl.dsp.focus({ workspace = "name:ren:2" })"#]
+        [r#"hl.dsp.focus({ workspace = "name:s1:2" })"#]
     );
-    assert_eq!(env.active(), "ren:2");
+    assert_eq!(env.active(), "s1:2");
     env.ok(&["tab", "go", "10"]);
-    assert_eq!(env.active(), "ren:10");
+    assert_eq!(env.active(), "s1:10");
 
     let last = fs::read_to_string(env.state().join("last")).unwrap();
-    assert!(last.starts_with("ren\t10\t"), "{last}");
+    assert!(last.starts_with("s1\t10\t"), "{last}");
 }
 
 #[test]
@@ -891,25 +891,25 @@ fn tab_go_rejects_bad_numbers() {
 #[test]
 fn window_tab_takes_the_window_within_the_space() {
     let env = Env::new();
-    env.set_active("ren:1");
-    env.add_window("ren:1");
-    env.add_window("ren:1");
+    env.set_active("s1:1");
+    env.add_window("s1:1");
+    env.add_window("s1:1");
 
     env.ok(&["window", "tab", "2"]);
     assert_eq!(
         env.dispatched(),
-        [r#"hl.dsp.window.move({ workspace = "name:ren:2", follow = true })"#]
+        [r#"hl.dsp.window.move({ workspace = "name:s1:2", follow = true })"#]
     );
-    assert_eq!(env.active(), "ren:2");
+    assert_eq!(env.active(), "s1:2");
 
-    env.set_active("ren:1");
+    env.set_active("s1:1");
     env.ok(&["window", "tab", "3", "--silent"]);
     assert_eq!(
         env.dispatched(),
-        [r#"hl.dsp.window.move({ workspace = "name:ren:3", follow = false })"#]
+        [r#"hl.dsp.window.move({ workspace = "name:s1:3", follow = false })"#]
     );
-    assert_eq!(env.active(), "ren:1");
-    assert_eq!(env.windows(), ["ren:2", "ren:3"]);
+    assert_eq!(env.active(), "s1:1");
+    assert_eq!(env.windows(), ["s1:2", "s1:3"]);
 }
 
 #[test]
@@ -1009,22 +1009,22 @@ fn sending_a_spaces_last_window_away_ends_it() {
 #[test]
 fn ws_new_next_and_prev_move_between_a_spaces_tabs() {
     let env = Env::new();
-    env.add_window("ren:1");
-    env.add_window("ren:3");
-    env.add_window("other:2");
-    env.set_active("ren:1");
+    env.add_window("s1:1");
+    env.add_window("s1:3");
+    env.add_window("s2:2");
+    env.set_active("s1:1");
 
     env.ok(&["tab", "next"]);
-    assert_eq!(env.active(), "ren:3");
+    assert_eq!(env.active(), "s1:3");
     env.ok(&["tab", "next"]);
-    assert_eq!(env.active(), "ren:1", "wraps, skipping other spaces");
+    assert_eq!(env.active(), "s1:1", "wraps, skipping other spaces");
     env.ok(&["tab", "prev"]);
-    assert_eq!(env.active(), "ren:3");
+    assert_eq!(env.active(), "s1:3");
     env.ok(&["tab", "new"]);
-    assert_eq!(env.active(), "ren:4", "after the last tab");
+    assert_eq!(env.active(), "s1:4", "after the last tab");
     env.ok(&["tab", "go", "1"]);
     env.ok(&["tab", "new"]);
-    assert_eq!(env.active(), "ren:5", "the new tab kept its terminal");
+    assert_eq!(env.active(), "s1:5", "the new tab kept its terminal");
 }
 
 #[test]
@@ -2027,19 +2027,19 @@ fn ls_lists_spaces_with_counts() {
     env.add_window("s1:2");
     env.add_window("special:scratchpad");
     env.set_active("s1:2");
-    // A workspace an older version named after its space is a space too.
+    // One named by something else isn't a space.
     env.add_window("tax:1");
 
     assert_eq!(
         env.ok(&["ls"]),
-        "  home  home  1 window\n\
-         * s1    ren   2 windows    ~/Projects/ren\n  \
-         tax   tax   1 window\n"
+        "  home  home  2 windows\n\
+         * s1    ren   2 windows    ~/Projects/ren\n"
     );
     let rows = env.ls_json();
     assert_eq!(rows[1]["workspaces"], json!([1, 2]));
     assert_eq!(rows[0]["folder"], Value::Null);
-    assert_eq!(rows[2]["left_at"], 0, "never left");
+    assert_eq!(rows[1]["left_at"], 0, "never left");
+    assert_eq!(rows.len(), 2);
 }
 
 #[test]

@@ -115,6 +115,17 @@ equal(dispatched[2][2].workspace, "name:s1:4")
 equal(dispatched[2][2].follow, true)
 equal(dispatched[3][2].follow, false)
 
+-- A workspace something else named is `home`'s, as Omarchy has it.
+for _, name in ipairs({ "web:1", "s0:1", "s1:0", "s1:251", "S1:1", "home:1" }) do
+  active = { name = name }
+  spaces.go_to_tab(6)()
+  equal(table.remove(omarchy), "focus 6")
+end
+equal(#dispatched, 3)
+active = { name = "s12:13" }
+spaces.go_to_tab(6)()
+equal(dispatched[4][2].workspace, "name:s12:6")
+
 -- What `space` itself calls (src/hypr.rs).
 equal(type(spaces.internal.sync), "function")
 equal(type(spaces.internal.show), "function")

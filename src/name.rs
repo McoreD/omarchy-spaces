@@ -16,22 +16,18 @@ pub const SLOTS: u8 = 10;
 /// The highest a workspace is numbered: the last of the 25th monitor's.
 const LAST_KEY: u8 = 250;
 
-/// Whether `id` can be a space's id: lowercase letters, digits and `-`,
-/// starting with a letter or digit, so no `:`, which separates it from the
-/// workspace number. Spaces makes `s1`, `s2`, ...; workspaces named by
-/// hand, or by an older version (`ren:1`), count too.
+/// Whether `id` can be a space's id: `s1`, `s2`, ... Only what Spaces makes
+/// itself, so that a workspace you or another program named `web:1` is left
+/// alone.
 pub fn is_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 64
-        && !id.starts_with('-')
-        && id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    id.strip_prefix('s').is_some_and(|number| {
+        !number.starts_with('0') && !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit())
+    })
 }
 
 /// A tab's slot, the number it shows, 1-10.
 pub fn parse_slot(raw: &str) -> Option<u8> {
-    if raw.starts_with('0') {
+    if raw.starts_with(['0', '+']) {
         return None;
     }
     raw.parse::<u8>().ok().filter(|n| (1..=SLOTS).contains(n))
@@ -41,7 +37,7 @@ pub fn parse_slot(raw: &str) -> Option<u8> {
 /// numbered. Each monitor has a block of ten, as Omarchy gives it for its
 /// workspaces, so the second one's tab 3 has key 13.
 pub fn parse_key(raw: &str) -> Option<u8> {
-    if raw.starts_with('0') {
+    if raw.starts_with(['0', '+']) {
         return None;
     }
     raw.parse::<u8>()
@@ -72,10 +68,10 @@ pub fn workspace_name(space: &str, key: u8) -> String {
 /// Where a workspace sits in Spaces' terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Location {
-    /// A plain numbered workspace, its number the key, or anything not in
-    /// `name:n` form, without one.
+    /// A plain numbered workspace, its number the key, or anything else
+    /// that's not a space's, without one.
     Home { key: Option<u8> },
-    /// A space's workspace, `name:n`.
+    /// A space's workspace, `s1:n`.
     Space { name: String, key: u8 },
 }
 
@@ -103,7 +99,6 @@ impl Location {
 pub fn locate(id: i64, name: &str) -> Location {
     if let Some((space, key)) = name.rsplit_once(':')
         && is_id(space)
-        && space != HOME
         && let Some(key) = parse_key(key)
     {
         return Location::Space {
@@ -157,17 +152,11 @@ mod tests {
 
     #[test]
     fn recognizes_ids() {
-        for good in ["s1", "ren", "tax-2026", "a", "2026"] {
+        for good in ["s1", "s9", "s10", "s123"] {
             assert!(is_id(good), "{good}");
         }
         for bad in [
-            "",
-            "Ren",
-            "ren:1",
-            "my project",
-            "-ren",
-            "ré",
-            &"x".repeat(65),
+            "", "s", "s0", "s01", "S1", "1", "s1a", "s-1", "ss1", "ren", "home", "s1:1", "s١",
         ] {
             assert!(!is_id(bad), "{bad}");
         }
@@ -177,7 +166,7 @@ mod tests {
     fn parses_slots() {
         assert_eq!(parse_slot("1"), Some(1));
         assert_eq!(parse_slot("10"), Some(10));
-        for bad in ["0", "11", "01", "-1", "x", ""] {
+        for bad in ["0", "11", "01", "-1", "+1", "x", ""] {
             assert_eq!(parse_slot(bad), None, "{bad}");
         }
     }
@@ -185,7 +174,7 @@ mod tests {
     #[test]
     fn keys_are_slots_in_a_monitors_block() {
         assert_eq!(parse_key("13"), Some(13));
-        for bad in ["0", "251", "013", "x", ""] {
+        for bad in ["0", "251", "013", "+13", "x", ""] {
             assert_eq!(parse_key(bad), None, "{bad}");
         }
         for (key, block, slot) in [
@@ -203,27 +192,29 @@ mod tests {
     #[test]
     fn locates_workspaces() {
         assert_eq!(
-            locate(-1337, "ren:3"),
+            locate(-1337, "s1:3"),
             Location::Space {
-                name: "ren".into(),
+                name: "s1".into(),
                 key: 3
             }
         );
         assert_eq!(
-            locate(-1338, "tax-2026:10"),
+            locate(-1338, "s12:10"),
             Location::Space {
-                name: "tax-2026".into(),
+                name: "s12".into(),
                 key: 10
             }
         );
         // The second monitor's are 11-20, as Omarchy has it.
-        let second = locate(-1339, "ren:13");
+        let second = locate(-1339, "s1:13");
         assert_eq!((second.key(), second.slot()), (Some(13), Some(3)));
         assert_eq!(locate(3, "3"), Location::Home { key: Some(3) });
         assert_eq!(locate(13, "13").slot(), Some(3));
         assert_eq!(locate(20, "20").slot(), Some(10));
-        // Anything not strictly `name:n` is home.
-        for name in ["chat", "Ren:1", "ren:0", "ren:251", "home:1", "ren:", ":1"] {
+        // Anything not strictly `s1:n` is home.
+        for name in [
+            "chat", "ren:1", "S1:1", "s1:0", "s1:251", "home:1", "s1:", ":1",
+        ] {
             assert_eq!(locate(-5, name), Location::Home { key: None }, "{name}");
         }
     }
