@@ -71,7 +71,7 @@ PanelWindow {
 
   function pick(index) {
     var row = root.shown[index]
-    if (row && root.note === "") root.sidebar.moveTabTo(row.id)
+    if (row && root.note === "") root.sidebar.sendTabTo(row.id)
   }
 
   // Anywhere outside the card closes it.

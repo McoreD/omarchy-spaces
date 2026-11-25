@@ -725,22 +725,22 @@ impl Env {
 }
 
 #[test]
-fn ws_in_home_is_omarchys_workspace() {
+fn tab_go_in_home_is_omarchys_workspace() {
     let env = Env::new();
-    env.ok(&["ws", "3"]);
+    env.ok(&["tab", "go", "3"]);
     assert_eq!(env.dispatched(), ["o.workspaces.focus(3)"]);
     assert_eq!(env.active(), "3");
 
     // Already there: nothing to do.
-    env.ok(&["ws", "3"]);
+    env.ok(&["tab", "go", "3"]);
     assert!(env.dispatched().is_empty());
 }
 
 #[test]
-fn ws_in_home_without_omarchy_is_the_plain_workspace() {
+fn tab_go_in_home_without_omarchy_is_the_plain_workspace() {
     let env = Env::new();
     env.hypr.lock().unwrap().omarchy = false;
-    env.ok(&["ws", "4"]);
+    env.ok(&["tab", "go", "4"]);
     assert_eq!(
         env.dispatched(),
         [
@@ -752,16 +752,16 @@ fn ws_in_home_without_omarchy_is_the_plain_workspace() {
 }
 
 #[test]
-fn ws_stays_inside_the_space() {
+fn tab_go_stays_inside_the_space() {
     let env = Env::new();
     env.set_active("ren:1");
-    env.ok(&["ws", "2"]);
+    env.ok(&["tab", "go", "2"]);
     assert_eq!(
         env.dispatched(),
         [r#"hl.dsp.focus({ workspace = "name:ren:2" })"#]
     );
     assert_eq!(env.active(), "ren:2");
-    env.ok(&["ws", "10"]);
+    env.ok(&["tab", "go", "10"]);
     assert_eq!(env.active(), "ren:10");
 
     let last = fs::read_to_string(env.state().join("last")).unwrap();
@@ -769,22 +769,22 @@ fn ws_stays_inside_the_space() {
 }
 
 #[test]
-fn ws_rejects_bad_numbers() {
+fn tab_go_rejects_bad_numbers() {
     let env = Env::new();
     for bad in ["0", "11", "x"] {
-        let err = env.fails(&["ws", bad]);
-        assert!(err.contains("isn't a workspace"), "{err}");
+        let err = env.fails(&["tab", "go", bad]);
+        assert!(err.contains("isn't a tab"), "{err}");
     }
 }
 
 #[test]
-fn move_takes_the_window_within_the_space() {
+fn window_tab_takes_the_window_within_the_space() {
     let env = Env::new();
     env.set_active("ren:1");
     env.add_window("ren:1");
     env.add_window("ren:1");
 
-    env.ok(&["move", "2"]);
+    env.ok(&["window", "tab", "2"]);
     assert_eq!(
         env.dispatched(),
         [r#"hl.dsp.window.move({ workspace = "name:ren:2", follow = true })"#]
@@ -792,7 +792,7 @@ fn move_takes_the_window_within_the_space() {
     assert_eq!(env.active(), "ren:2");
 
     env.set_active("ren:1");
-    env.ok(&["move", "3", "--silent"]);
+    env.ok(&["window", "tab", "3", "--silent"]);
     assert_eq!(
         env.dispatched(),
         [r#"hl.dsp.window.move({ workspace = "name:ren:3", follow = false })"#]
@@ -802,13 +802,13 @@ fn move_takes_the_window_within_the_space() {
 }
 
 #[test]
-fn move_in_home_uses_omarchy_and_ignores_empty_workspaces() {
+fn window_tab_in_home_uses_omarchy_and_ignores_empty_workspaces() {
     let env = Env::new();
-    env.ok(&["move", "2"]);
+    env.ok(&["window", "tab", "2"]);
     assert!(env.dispatched().is_empty(), "no window to move");
 
     env.add_window("1");
-    env.ok(&["move", "2", "--silent"]);
+    env.ok(&["window", "tab", "2", "--silent"]);
     assert_eq!(env.dispatched(), ["o.workspaces.move_window(2, false)"]);
     assert_eq!(env.windows(), ["2"]);
     assert_eq!(env.active(), "1");
@@ -821,12 +821,12 @@ fn send_takes_the_window_to_another_space_where_you_left_it() {
     env.add_terminal("s2:1", &env.dir("mail"));
     env.add_window("s2:3");
     env.ok(&["go", "mail"]);
-    env.ok(&["ws", "3"]);
+    env.ok(&["tab", "go", "3"]);
     env.ok(&["go", "ren"]);
     env.add_window("s1:1");
     env.dispatched();
 
-    env.ok(&["send", "mail"]);
+    env.ok(&["window", "send", "mail"]);
     assert_eq!(
         env.dispatched(),
         [r#"hl.dsp.window.move({ workspace = "name:s2:3", follow = true })"#]
@@ -839,9 +839,9 @@ fn send_takes_the_window_to_another_space_where_you_left_it() {
     assert_eq!(env.active(), "s1:1", "ren remembers where you left it");
 
     // Already there, or no window: nothing to do.
-    env.ok(&["send", "s1"]);
+    env.ok(&["window", "send", "s1"]);
     env.set_active("s1:5");
-    env.ok(&["send", "mail"]);
+    env.ok(&["window", "send", "mail"]);
     assert!(env.dispatched().iter().all(|d| !d.contains("window.move")));
 }
 
@@ -853,15 +853,15 @@ fn send_next_and_prev_and_home() {
     env.add_window("1");
     env.set_active("1");
 
-    env.ok(&["send", "next"]);
+    env.ok(&["window", "send", "next"]);
     assert_eq!(env.active(), "s1:1");
-    env.ok(&["send", "prev"]);
+    env.ok(&["window", "send", "prev"]);
     assert_eq!(
         env.dispatched().last().unwrap(),
         "o.workspaces.move_window(1)"
     );
     assert_eq!(env.active(), "1");
-    env.ok(&["send", "prev", "--silent"]);
+    env.ok(&["window", "send", "prev", "--silent"]);
     assert_eq!(env.active(), "1");
     let mut windows = env.windows();
     windows.sort();
@@ -876,14 +876,14 @@ fn sending_a_spaces_last_window_away_ends_it() {
     env.add_window("s2:2");
     env.ok(&["go", "ren"]);
     env.ok(&["go", "mail"]);
-    env.ok(&["ws", "2"]);
+    env.ok(&["tab", "go", "2"]);
 
     // Silently: the emptied tab gives way to the next one with windows.
-    env.ok(&["send", "ren", "--silent"]);
+    env.ok(&["window", "send", "ren", "--silent"]);
     assert_eq!(env.active(), "s2:1");
 
     // Following: mail is gone, and so is where you left it.
-    env.ok(&["send", "ren"]);
+    env.ok(&["window", "send", "ren"]);
     assert_eq!(env.active(), "s1:1");
     let labels: Vec<String> = env
         .ls_json()
@@ -903,16 +903,16 @@ fn ws_new_next_and_prev_move_between_a_spaces_tabs() {
     env.add_window("other:2");
     env.set_active("ren:1");
 
-    env.ok(&["ws", "next"]);
+    env.ok(&["tab", "next"]);
     assert_eq!(env.active(), "ren:3");
-    env.ok(&["ws", "next"]);
+    env.ok(&["tab", "next"]);
     assert_eq!(env.active(), "ren:1", "wraps, skipping other spaces");
-    env.ok(&["ws", "prev"]);
+    env.ok(&["tab", "prev"]);
     assert_eq!(env.active(), "ren:3");
-    env.ok(&["ws", "new"]);
+    env.ok(&["tab", "new"]);
     assert_eq!(env.active(), "ren:4", "after the last tab");
-    env.ok(&["ws", "1"]);
-    env.ok(&["ws", "new"]);
+    env.ok(&["tab", "go", "1"]);
+    env.ok(&["tab", "new"]);
     assert_eq!(env.active(), "ren:5", "the new tab kept its terminal");
 }
 
@@ -927,7 +927,7 @@ fn ws_new_opens_a_tab_with_a_terminal_in_the_spaces_folder() {
     env.ok(&["ls"]);
     env.dispatched();
 
-    env.ok(&["ws", "new"]);
+    env.ok(&["tab", "new"]);
     assert_eq!(env.active(), "s1:2");
     assert_eq!(env.windows().last().unwrap(), "s1:2");
     // The space's checkout, not the subfolder its terminal is in.
@@ -956,12 +956,12 @@ fn ws_new_in_home_uses_omarchys_next_free_workspace() {
     let env = Env::new();
     env.add_window("1");
     env.add_window("2");
-    env.ok(&["ws", "new"]);
+    env.ok(&["tab", "new"]);
     assert_eq!(env.dispatched(), ["o.workspaces.focus(3)"]);
 
     // A single tab has no next.
     let env = Env::new();
-    env.ok(&["ws", "next"]);
+    env.ok(&["tab", "next"]);
     assert!(env.dispatched().is_empty());
 }
 
@@ -1041,7 +1041,7 @@ fn tabs_opened_at_once_each_get_their_own() {
     env.set_active("s1:1");
     env.hypr.lock().unwrap().terminal_start = Duration::from_millis(400);
     let mut presses: Vec<_> = (0..3)
-        .map(|_| env.command(&["ws", "new"]).spawn().unwrap())
+        .map(|_| env.command(&["tab", "new"]).spawn().unwrap())
         .collect();
     for press in &mut presses {
         assert!(press.wait().unwrap().success());
@@ -1406,7 +1406,7 @@ fn icon_shows_on_the_badge_until_cleared() {
 }
 
 #[test]
-fn rename_names_a_tab_until_cleared_or_closed() {
+fn tab_rename_names_a_tab_until_cleared_or_closed() {
     let env = Env::new();
     env.add_terminal("s1:1", &env.dir("ren"));
     let second = env.add_window("s1:2");
@@ -1414,18 +1414,18 @@ fn rename_names_a_tab_until_cleared_or_closed() {
     let tabs = |env: &Env| env.ls_json()[1]["tabs"].clone();
 
     assert_eq!(
-        env.ok(&["rename", "s1:2", "server"]),
+        env.ok(&["tab", "rename", "s1:2", "server"]),
         "Named tab 2 'server'\n"
     );
     assert_eq!(tabs(&env), serde_json::json!({ "2": "server" }));
-    env.ok(&["rename", "ren:1", "editor"]);
+    env.ok(&["tab", "rename", "ren:1", "editor"]);
     assert_eq!(
         tabs(&env),
         serde_json::json!({ "1": "editor", "2": "server" }),
         "by what the space is called"
     );
     assert_eq!(
-        env.ok(&["rename", "s1:1", ""]),
+        env.ok(&["tab", "rename", "s1:1", ""]),
         "Tab 1 is called after its window again\n"
     );
     assert_eq!(tabs(&env), serde_json::json!({ "2": "server" }));
@@ -1434,12 +1434,12 @@ fn rename_names_a_tab_until_cleared_or_closed() {
     env.close_window(&second);
     assert_eq!(tabs(&env), serde_json::json!({}));
 
-    let err = env.fails(&["rename", "s1:4", "x"]);
+    let err = env.fails(&["tab", "rename", "s1:4", "x"]);
     assert!(err.contains("'ren' has no tab 4"), "{err}");
 }
 
 #[test]
-fn rename_names_home_tabs_by_workspace() {
+fn tab_rename_names_home_tabs_by_workspace() {
     let env = Env::new();
     let mail = env.add_window("3");
     let other = env.add_window("13");
@@ -1448,7 +1448,7 @@ fn rename_names_home_tabs_by_workspace() {
 
     // From home, tab 3 is the focused monitor's: workspace 3, not 13.
     assert_eq!(
-        env.ok(&["rename", "home:3", "mail"]),
+        env.ok(&["tab", "rename", "home:3", "mail"]),
         "Named tab 3 'mail'\n"
     );
     assert_eq!(tabs(&env), serde_json::json!({ "3": "mail" }));
@@ -1456,22 +1456,22 @@ fn rename_names_home_tabs_by_workspace() {
     // From a space, the tab 3 meant is ambiguous with two monitors.
     env.add_window("s1:1");
     env.set_active("s1:1");
-    let err = env.fails(&["rename", "home:3", "x"]);
+    let err = env.fails(&["tab", "rename", "home:3", "x"]);
     assert!(err.contains("more than one monitor"), "{err}");
     env.close_window(&other);
-    env.ok(&["rename", "home:3", "inbox"]);
+    env.ok(&["tab", "rename", "home:3", "inbox"]);
     assert_eq!(tabs(&env), serde_json::json!({ "3": "inbox" }));
 
     assert_eq!(
-        env.ok(&["rename", "home:3", ""]),
+        env.ok(&["tab", "rename", "home:3", ""]),
         "Tab 3 shows just its number again\n"
     );
     assert_eq!(tabs(&env), serde_json::json!({}));
-    let err = env.fails(&["rename", "home:5", "x"]);
+    let err = env.fails(&["tab", "rename", "home:5", "x"]);
     assert!(err.contains("'home' has no tab 5"), "{err}");
 
     // The name goes with its workspace, once Hyprland drops it.
-    env.ok(&["rename", "home:3", "mail"]);
+    env.ok(&["tab", "rename", "home:3", "mail"]);
     env.close_window(&mail);
     assert_eq!(tabs(&env), serde_json::json!({}));
 }
@@ -1569,7 +1569,7 @@ fn close_closes_the_spaces_windows_and_leaves_it() {
     env.add_window("s2:2");
     env.ok(&["go", "tax"]);
     env.ok(&["go", "ren"]);
-    env.ok(&["ws", "2"]);
+    env.ok(&["tab", "go", "2"]);
 
     assert_eq!(env.ok(&["close"]), "Closed 2 windows in 'ren'\n");
     assert_eq!(env.windows(), ["1", "s1:1"]);
@@ -1586,17 +1586,17 @@ fn close_closes_the_spaces_windows_and_leaves_it() {
 }
 
 #[test]
-fn send_tab_renames_a_tab_into_another_space_and_goes_there() {
+fn tab_send_renames_a_tab_into_another_space_and_goes_there() {
     let env = Env::new();
     env.add_terminal("s1:1", &env.dir("ren"));
     env.add_window("s1:2");
     env.add_window("s1:2");
     env.add_terminal("s2:1", &env.dir("mail"));
     env.set_active("s1:2");
-    env.ok(&["rename", "s1:2", "server"]);
+    env.ok(&["tab", "rename", "s1:2", "server"]);
     env.dispatched();
 
-    assert_eq!(env.ok(&["send-tab", "mail"]), "Moved tab 2 to 'mail'\n");
+    assert_eq!(env.ok(&["tab", "send", "mail"]), "Moved tab 2 to 'mail'\n");
     assert_eq!(
         env.dispatched()[0],
         r#"hl.dsp.workspace.rename({ workspace = "name:s1:2", name = "s2:2" })"#
@@ -1613,7 +1613,7 @@ fn send_tab_renames_a_tab_into_another_space_and_goes_there() {
 
     // Another tab than the one you're on, and ren's only one: it ends.
     env.ok(&["go", "mail"]);
-    env.ok(&["send-tab", "ren:1", "s2"]);
+    env.ok(&["tab", "send", "ren:1", "s2"]);
     assert_eq!(env.active(), "s2:3");
     assert_eq!(env.ls_json().len(), 2);
     let visits = fs::read_to_string(env.state().join("last")).unwrap();
@@ -1621,26 +1621,26 @@ fn send_tab_renames_a_tab_into_another_space_and_goes_there() {
 
     // Already there, empty, or not a tab.
     env.dispatched();
-    env.ok(&["send-tab", "mail"]);
+    env.ok(&["tab", "send", "mail"]);
     assert!(env.dispatched().is_empty());
     env.set_active("s2:5");
-    let err = env.fails(&["send-tab", "home"]);
+    let err = env.fails(&["tab", "send", "home"]);
     assert!(err.contains("nothing is open on tab 5"), "{err}");
-    let err = env.fails(&["send-tab", "mail", "home"]);
+    let err = env.fails(&["tab", "send", "mail", "home"]);
     assert!(err.contains("isn't a tab"), "{err}");
 }
 
 #[test]
-fn send_tab_moves_the_windows_of_homes_tabs() {
+fn tab_send_moves_the_windows_of_homes_tabs() {
     let env = Env::new();
     env.add_window("1");
     env.add_window("3");
     env.add_window("3");
     env.add_terminal("s1:1", &env.dir("ren"));
     env.set_active("3");
-    env.ok(&["rename", "home:3", "mail"]);
+    env.ok(&["tab", "rename", "home:3", "mail"]);
 
-    env.ok(&["send-tab", "next"]);
+    env.ok(&["tab", "send", "next"]);
     assert_eq!(env.windows(), ["1", "s1:2", "s1:2", "s1:1"]);
     assert_eq!(env.active(), "s1:2");
     assert_eq!(
@@ -1649,7 +1649,7 @@ fn send_tab_moves_the_windows_of_homes_tabs() {
         "it keeps its name"
     );
 
-    env.ok(&["send-tab", "home"]);
+    env.ok(&["tab", "send", "home"]);
     assert_eq!(env.windows(), ["1", "2", "2", "s1:1"]);
     assert_eq!(env.active(), "2");
     assert_eq!(env.ls_json()[0]["tabs"], serde_json::json!({ "2": "mail" }));
@@ -1658,47 +1658,50 @@ fn send_tab_moves_the_windows_of_homes_tabs() {
 }
 
 #[test]
-fn reorder_moves_a_tab_among_its_spaces() {
+fn tab_reorder_moves_a_tab_among_its_spaces() {
     let env = Env::new();
     env.add_terminal("s1:1", &env.dir("ren"));
     env.add_window("s1:2");
     env.add_window("s1:4");
     env.add_window("s2:1");
     env.set_active("s1:2");
-    env.ok(&["rename", "s1:4", "server"]);
+    env.ok(&["tab", "rename", "s1:4", "server"]);
     let tabs = |env: &Env| env.ls_json()[1]["tabs"].clone();
 
     // Last to first: the others make room, on the numbers the space has.
-    assert_eq!(env.ok(&["reorder", "s1:4", "1"]), "Moved tab 4 to 1\n");
+    assert_eq!(
+        env.ok(&["tab", "reorder", "s1:4", "1"]),
+        "Moved tab 4 to 1\n"
+    );
     assert_eq!(env.windows(), ["s1:2", "s1:4", "s1:1", "s2:1"]);
     assert_eq!(env.active(), "s1:4", "still on the same tab");
     assert_eq!(tabs(&env), serde_json::json!({ "1": "server" }));
 
     // And back, past the end being last.
-    env.ok(&["reorder", "ren:1", "9"]);
+    env.ok(&["tab", "reorder", "ren:1", "9"]);
     assert_eq!(env.windows(), ["s1:1", "s1:2", "s1:4", "s2:1"]);
     assert_eq!(env.active(), "s1:2");
     assert_eq!(tabs(&env), serde_json::json!({ "4": "server" }));
 
     // Going back to the space lands on the tab you left, wherever it is now.
     env.ok(&["go", "s2"]);
-    env.ok(&["reorder", "s1:2", "1"]);
+    env.ok(&["tab", "reorder", "s1:2", "1"]);
     assert_eq!(env.windows(), ["s1:2", "s1:1", "s1:4", "s2:1"]);
     assert_eq!(env.active(), "s2:1");
     env.ok(&["go", "s1"]);
     assert_eq!(env.active(), "s1:1");
 
     // Where it is already, nowhere, or no tab.
-    env.ok(&["reorder", "s1:1", "1"]);
+    env.ok(&["tab", "reorder", "s1:1", "1"]);
     assert_eq!(env.windows(), ["s1:2", "s1:1", "s1:4", "s2:1"]);
-    let err = env.fails(&["reorder", "s1:1", "0"]);
+    let err = env.fails(&["tab", "reorder", "s1:1", "0"]);
     assert!(err.contains("positions start at 1"), "{err}");
-    let err = env.fails(&["reorder", "s1:3", "1"]);
+    let err = env.fails(&["tab", "reorder", "s1:3", "1"]);
     assert!(err.contains("has no tab 3"), "{err}");
 }
 
 #[test]
-fn reorder_moves_the_windows_of_homes_tabs() {
+fn tab_reorder_moves_the_windows_of_homes_tabs() {
     let env = Env::new();
     env.add_window("1");
     env.add_window("2");
@@ -1706,34 +1709,34 @@ fn reorder_moves_the_windows_of_homes_tabs() {
     env.add_window("13");
     // Tab 3 is empty, but it's the one you're on.
     env.set_active("3");
-    env.ok(&["rename", "home:2", "mail"]);
+    env.ok(&["tab", "rename", "home:2", "mail"]);
 
-    env.ok(&["reorder", "home:3", "1"]);
+    env.ok(&["tab", "reorder", "home:3", "1"]);
     assert_eq!(env.windows(), ["2", "3", "3", "13"]);
     assert_eq!(env.active(), "1");
     assert_eq!(env.ls_json()[0]["tabs"], serde_json::json!({ "3": "mail" }));
 
-    env.ok(&["reorder", "home:3", "2"]);
+    env.ok(&["tab", "reorder", "home:3", "2"]);
     assert_eq!(env.windows(), ["3", "2", "2", "13"]);
     assert_eq!(env.active(), "1");
     assert_eq!(env.ls_json()[0]["tabs"], serde_json::json!({ "2": "mail" }));
 }
 
 #[test]
-fn send_tab_needs_a_free_slot() {
+fn tab_send_needs_a_free_slot() {
     let env = Env::new();
     env.add_window("1");
     for n in 1..=10 {
         env.add_window(&format!("s1:{n}"));
     }
     env.set_active("1");
-    let err = env.fails(&["send-tab", "s1"]);
+    let err = env.fails(&["tab", "send", "s1"]);
     assert!(err.contains("all 10 tabs of 's1' are open"), "{err}");
     assert_eq!(env.active(), "1");
 }
 
 #[test]
-fn close_closes_a_tabs_windows_and_moves_on_to_another() {
+fn tab_close_closes_a_tabs_windows_and_moves_on_to_another() {
     let env = Env::new();
     env.add_window("1");
     env.add_terminal("s1:1", &env.dir("ren"));
@@ -1742,42 +1745,115 @@ fn close_closes_a_tabs_windows_and_moves_on_to_another() {
     env.add_window("s1:4");
     env.set_active("s1:1");
 
-    assert_eq!(env.ok(&["close", "s1:2"]), "Closed 2 windows on tab 2\n");
+    assert_eq!(
+        env.ok(&["tab", "close", "s1:2"]),
+        "Closed 2 windows on tab 2\n"
+    );
     assert_eq!(env.windows(), ["1", "s1:1", "s1:4"]);
     assert_eq!(env.active(), "s1:1", "you stay where you are");
 
     // The one you're on: the next tab, or with none after it, the one before.
-    assert_eq!(env.ok(&["close", "ren:1"]), "Closed 1 window on tab 1\n");
+    assert_eq!(
+        env.ok(&["tab", "close", "ren:1"]),
+        "Closed 1 window on tab 1\n"
+    );
     assert_eq!(env.active(), "s1:4");
-    let err = env.fails(&["close", "s1:9"]);
+    let err = env.fails(&["tab", "close", "s1:9"]);
     assert!(err.contains("has no tab 9"), "{err}");
 
     // Empty, it's only left.
     env.set_active("s1:6");
-    assert_eq!(env.ok(&["close", "s1:6"]), "No windows open on tab 6\n");
+    assert_eq!(
+        env.ok(&["tab", "close", "s1:6"]),
+        "No windows open on tab 6\n"
+    );
     assert_eq!(env.active(), "s1:4");
 
     // Its only tab: the space ends.
-    env.ok(&["close", "s1:4"]);
+    env.ok(&["tab", "close", "s1:4"]);
     assert_eq!(env.windows(), ["1"]);
     assert_eq!(env.active(), "1");
     assert_eq!(env.ls_json().len(), 1);
 }
 
 #[test]
-fn close_closes_a_home_tab_on_this_monitor() {
+fn tab_rename_and_close_take_the_tab_you_are_on() {
+    let env = Env::new();
+    env.add_window("1");
+    env.add_terminal("s1:1", &env.dir("ren"));
+    env.add_window("s1:2");
+    env.set_active("s1:2");
+
+    assert_eq!(
+        env.ok(&["tab", "rename", "server"]),
+        "Named tab 2 'server'\n"
+    );
+    assert_eq!(
+        env.ls_json()[1]["tabs"],
+        serde_json::json!({ "2": "server" })
+    );
+    assert_eq!(env.ok(&["tab", "close"]), "Closed 1 window on tab 2\n");
+    assert_eq!(env.windows(), ["1", "s1:1"]);
+    assert_eq!(env.active(), "s1:1");
+}
+
+#[test]
+fn spaces_and_tabs_have_their_own_commands() {
+    let env = Env::new();
+    env.add_terminal("s1:1", &env.dir("ren"));
+    env.add_window("s1:2");
+    env.set_active("s1:1");
+
+    // A tab isn't a space, nor a space a tab.
+    for args in [
+        &["rename", "s1:2", "x"][..],
+        &["reorder", "s1:2", "1"],
+        &["close", "s1:2"],
+    ] {
+        let err = env.fails(args);
+        assert!(err.contains("no space called 's1:2'"), "{err}");
+    }
+    for args in [
+        &["tab", "rename", "s1", "x"][..],
+        &["tab", "reorder", "s1", "1"],
+        &["tab", "close", "s1"],
+    ] {
+        let err = env.fails(args);
+        assert!(err.contains("'s1' isn't a tab"), "{err}");
+    }
+    assert_eq!(env.windows(), ["s1:1", "s1:2"]);
+
+    // Even for a space called as a tab would be given.
+    env.ok(&["rename", "s1", "work:2"]);
+    env.ok(&["tab", "rename", "work:2:2", "server"]);
+    assert_eq!(
+        env.ls_json()[1]["tabs"],
+        serde_json::json!({ "2": "server" })
+    );
+    env.ok(&["close", "work:2"]);
+    assert!(env.windows().is_empty());
+}
+
+#[test]
+fn tab_close_closes_a_home_tab_on_this_monitor() {
     let env = Env::new();
     env.add_window("1");
     env.add_window("3");
     env.add_window("13");
     env.set_active("3");
 
-    assert_eq!(env.ok(&["close", "home:3"]), "Closed 1 window on tab 3\n");
+    assert_eq!(
+        env.ok(&["tab", "close", "home:3"]),
+        "Closed 1 window on tab 3\n"
+    );
     assert_eq!(env.windows(), ["1", "13"], "not the other monitor's");
     assert_eq!(env.active(), "1");
 
     // Its last tab on this monitor: home doesn't end.
-    assert_eq!(env.ok(&["close", "home:1"]), "Closed 1 window on tab 1\n");
+    assert_eq!(
+        env.ok(&["tab", "close", "home:1"]),
+        "Closed 1 window on tab 1\n"
+    );
     assert_eq!(env.windows(), ["13"]);
     assert_eq!(env.active(), "1");
 }

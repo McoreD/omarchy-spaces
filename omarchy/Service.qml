@@ -20,10 +20,10 @@ Item {
 
   function search() { sidebarItem.search() }
   function endSearch() { sidebarItem.endSearch() }
-  function showOrHide(screen) { sidebarItem.showOrHide(screen) }
-  function rename() { sidebarItem.renameActive() }
+  function toggleSidebar(screen) { sidebarItem.toggleSidebar(screen) }
+  function renameSpace() { sidebarItem.renameSpace() }
   function renameTab() { sidebarItem.renameTab(0) }
-  function moveTab() { sidebarItem.moveTab() }
+  function sendTab() { sidebarItem.sendTab() }
 
   Base {
     sidebar: sidebarItem

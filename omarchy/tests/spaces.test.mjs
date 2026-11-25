@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, barToggle, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, statusColors, tabActions, tabsFor, terminalsByAddress, moreUrgent, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs } from "../Spaces.mjs"
+import { appName, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, barToggle, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, tabsFor, terminalsByAddress, moreUrgent, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -335,6 +335,11 @@ test("offers rename, an icon and close, saying why close doesn't apply", () => {
   assert.equal(close({ id: "s4", windows: 1 })[2], "1 window")
   assert.equal(close(rows[3])[1], false, "no count without Hyprland")
   assert.deepEqual(rowActions(rows[1]).map((a) => a.separatorBefore), [false, false, true])
+})
+
+test("renames a space or a tab with its own command", () => {
+  assert.deepEqual(renameCommand("s1", "work: 2"), ["space", "rename", "s1", "work: 2"])
+  assert.deepEqual(renameCommand("s1:2", ""), ["space", "tab", "rename", "s1:2", ""])
 })
 
 test("offers to rename, move or close a tab", () => {

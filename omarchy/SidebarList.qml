@@ -212,7 +212,7 @@ Item {
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onClicked: root.sidebar.showOrHide(root.screen)
+          onClicked: root.sidebar.toggleSidebar(root.screen)
         }
       }
     }

@@ -166,8 +166,14 @@ export function stepAction(actions, from, by) {
   return -1
 }
 
+// The command that gives a space (its id) or a tab (its workspace, `s1:2`) a
+// name. Ids never have a colon.
+export function renameCommand(target, name) {
+  return target.includes(":") ? ["space", "tab", "rename", target, name] : ["space", "rename", target, name]
+}
+
 // A name being typed, after typing `text`: anything printable, up to 64
-// characters, as `space rename` takes.
+// characters, as `space rename` and `space tab rename` take.
 export function nameInput(name, text) {
   return Array.from(String(name || "") + String(text || "")).slice(0, 64).join("")
 }
@@ -629,7 +635,7 @@ export function tabDropIndex(widths, from, dx, spacing) {
   return to
 }
 
-// The tabs (tabsFor) once `space reorder` has moved the one at `from` to
+// The tabs (tabsFor) once `space tab reorder` has moved the one at `from` to
 // `to`: the same numbers, with what's on them moved along.
 export function reorderTabs(model, from, to) {
   return {

@@ -25,7 +25,8 @@ use crate::state::{self, Last};
 use crate::status::{self, Status};
 use crate::terminal;
 
-/// Where `space ws` goes. A space's workspaces are its tabs.
+/// Where `space tab go`, `new`, `next` and `prev` go. A space's workspaces
+/// are its tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
     Slot(u8),
@@ -35,10 +36,10 @@ pub enum Target {
     Prev,
 }
 
-/// `space ws <n|new|next|prev>`: a workspace of the active space. A space's
-/// new tab opens with a terminal in the space's folder, as a new space does,
+/// `space tab go <n>` and `space tab new`, `next` and `prev`: a tab of the
+/// active space. A space's new tab opens with a terminal in the space's folder, as a new space does,
 /// so it never shows empty; `home`'s is Omarchy's next workspace, empty.
-pub fn ws(target: Target) -> Result<()> {
+pub fn go_to_tab(target: Target) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
@@ -142,9 +143,9 @@ fn pick_slot(target: Target, open: &[u8], current: Option<u8>) -> Result<Option<
     })
 }
 
-/// `space move <n>`: the focused window to workspace `n` of the active space,
+/// `space window tab <n>`: the focused window to tab `n` of the active space,
 /// following it unless `silent`.
-pub fn move_window(slot: u8, silent: bool) -> Result<()> {
+pub fn window_to_tab(slot: u8, silent: bool) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
@@ -1700,7 +1701,7 @@ fn landing_slot(hypr: &Hypr, last: &Last, target: &str) -> Result<u8> {
     })
 }
 
-/// Which space `space send` sends the window to.
+/// Which space `space window send` and `space tab send` send to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpaceTarget {
     /// What it's called, or its id; `home` for the plain workspaces.
@@ -1719,10 +1720,10 @@ impl SpaceTarget {
     }
 }
 
-/// `space send <space|next|prev>`: the focused window to another space, on
+/// `space window send <space|next|prev>`: the focused window to another space, on
 /// the tab you'd land on going there, and you with it unless `silent`. Sent
 /// silently, a tab it leaves empty gives way as closing its last window does.
-pub fn send(target: SpaceTarget, silent: bool) -> Result<()> {
+pub fn send_window(target: SpaceTarget, silent: bool) -> Result<()> {
     let hypr = Hypr::from_env()?;
     if !hypr.has_active_window()? {
         return Ok(());
@@ -1784,9 +1785,6 @@ pub fn send(target: SpaceTarget, silent: bool) -> Result<()> {
 pub fn rename(target: Option<String>, new_name: String) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (mut store, rows, _) = lock_rows(Some(&hypr))?;
-    if let Some((space, slot)) = target.as_deref().and_then(|t| tab_target(&rows, t)) {
-        return rename_tab(&hypr, store, &rows, space, slot, &new_name);
-    }
     let id = match target {
         Some(target) => resolve(&rows, &target)?,
         None => rows
@@ -1839,13 +1837,10 @@ pub fn icon(target: Option<String>, new_icon: String) -> Result<()> {
 
 /// `space reorder <space> <position>`: moves a space to `position` in the
 /// sidebar, counting from 1 below `home`, which stays first. Past the end
-/// puts it last. `<space>:<n>` moves a tab (`reorder_tab`).
+/// puts it last.
 pub fn reorder(target: String, position: usize) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (mut store, rows, _) = lock_rows(Some(&hypr))?;
-    if let Some((space, slot)) = tab_target(&rows, &target) {
-        return reorder_tab(&hypr, store, &rows, space, slot, position);
-    }
     let id = resolve(&rows, &target)?;
     if id == HOME {
         bail!("'home' is the plain workspaces; it stays first");
@@ -1872,23 +1867,18 @@ fn moved<T: PartialEq>(mut order: Vec<T>, item: T, index: usize) -> Vec<T> {
     order
 }
 
-/// `space reorder <space>:<n> <position>`: moves a tab to `position` among
+/// `space tab reorder <space>:<n> <position>`: moves a tab to `position` among
 /// its space's tabs, counting from 1, past the end being last. The space
 /// keeps the numbers it has tabs on: what's on them moves along, with the
 /// names you gave them, and you stay on the tab you're on.
-fn reorder_tab(
-    hypr: &Hypr,
-    mut store: Store,
-    rows: &[Row],
-    space: &str,
-    slot: u8,
-    position: usize,
-) -> Result<()> {
+pub fn reorder_tab(tab: String, position: usize) -> Result<()> {
+    let hypr = Hypr::from_env()?;
+    let (mut store, rows, _) = lock_rows(Some(&hypr))?;
     if position == 0 {
         bail!("positions start at 1, the space's first tab");
     }
-    let (id, key) = find_tab(hypr, rows, space, slot)?;
     let active = hypr.active_workspace()?;
+    let Tab { id, key, slot } = tab_or_active(&hypr, &rows, Some(&tab), &active)?;
     // The tabs there are, as the bar shows them: in `home`, its monitor's.
     let tabs: Vec<u8> = hypr
         .workspaces()?
@@ -1916,7 +1906,7 @@ fn reorder_tab(
     };
 
     if id == HOME {
-        reorder_home(hypr, &active, key, &moves)?;
+        reorder_home(&hypr, &active, key, &moves)?;
     } else {
         hypr.eval(&rename_tabs(&id, key, &moves))?;
     }
@@ -2049,29 +2039,42 @@ fn restamp(store: &mut Store, order: &[String]) {
     }
 }
 
-/// A tab, `<space>:<n>` (`s1:2`, `ren:2`), unless the whole of `target` is
-/// what a space is called.
-fn tab_target<'a>(rows: &[Row], target: &'a str) -> Option<(&'a str, u8)> {
-    let (space, slot) = target.rsplit_once(':')?;
-    if resolve(rows, target).is_ok() {
-        return None;
-    }
-    Some((space, name::parse_slot(slot)?))
+/// A space's tab, as `find_tab` finds it, and the number it shows.
+struct Tab {
+    id: String,
+    key: u8,
+    slot: u8,
 }
 
-/// `space rename <space>:<n> <name>`: gives a tab a name that stays, in
-/// place of its window's. An empty name has it follow its window again, or,
-/// in `home`, show just its number.
-fn rename_tab(
+/// The tab given as `<space>:<n>` (`s1:2`, `ren:2`), or with none, the one
+/// you are on.
+fn tab_or_active(
     hypr: &Hypr,
-    mut store: Store,
     rows: &[Row],
-    space: &str,
-    slot: u8,
-    new_name: &str,
-) -> Result<()> {
+    tab: Option<&str>,
+    active: &hypr::Workspace,
+) -> Result<Tab> {
+    let here = name::locate(active.id, &active.name);
+    let (space, slot) = match tab {
+        Some(tab) => tab
+            .rsplit_once(':')
+            .and_then(|(space, slot)| Some((space, name::parse_slot(slot)?)))
+            .with_context(|| format!("'{tab}' isn't a tab: give it as s1:2"))?,
+        None => (here.space(), here.slot().context("you aren't on a tab")?),
+    };
     let (id, key) = find_tab(hypr, rows, space, slot)?;
-    let new_name = spaces::clean_name(new_name)?;
+    Ok(Tab { id, key, slot })
+}
+
+/// `space tab rename [<space>:<n>] <name>`: gives a tab, the one you are on
+/// by default, a name that stays, in place of its window's. An empty name has
+/// it follow its window again, or, in `home`, show just its number.
+pub fn rename_tab(tab: Option<String>, new_name: String) -> Result<()> {
+    let hypr = Hypr::from_env()?;
+    let (mut store, rows, _) = lock_rows(Some(&hypr))?;
+    let active = hypr.active_workspace()?;
+    let Tab { id, key, slot } = tab_or_active(&hypr, &rows, tab.as_deref(), &active)?;
+    let new_name = spaces::clean_name(&new_name)?;
 
     let tabs = &mut store.entry(&id).tabs;
     match &new_name {
@@ -2138,13 +2141,10 @@ fn home_workspace(hypr: &Hypr, slot: u8) -> Result<u8> {
 /// `space close [space]`: closes every window of a space, the active one by
 /// default, which ends it. If you are in it, you go back to the space you
 /// were in before, or `home`. Each app is asked, as `super+w` asks it, so it
-/// can still stop to save. `<space>:<n>` closes a tab's (`close_tab`).
+/// can still stop to save.
 pub fn close(target: Option<String>) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (rows, live) = load_rows(Some(&hypr))?;
-    if let Some((space, slot)) = target.as_deref().and_then(|t| tab_target(&rows, t)) {
-        return close_tab(&hypr, &rows, space, slot);
-    }
     let live = live.expect("read from Hyprland");
     let id = match target {
         Some(target) => resolve(&rows, &target)?,
@@ -2189,12 +2189,15 @@ pub fn close(target: Option<String>) -> Result<()> {
     Ok(())
 }
 
-/// `space close <space>:<n>`: closes every window on a tab, which ends it. If
-/// you are on it, you go to another of the space's tabs, as when its last
-/// window closes (`emptied`), and closing its only tab ends the space. `home`
-/// doesn't end: you stay on its last tab.
-fn close_tab(hypr: &Hypr, rows: &[Row], space: &str, slot: u8) -> Result<()> {
-    let (id, key) = find_tab(hypr, rows, space, slot)?;
+/// `space tab close [<space>:<n>]`: closes every window on a tab, the one you
+/// are on by default, which ends it. If you are on it, you go to another of
+/// the space's tabs, as when its last window closes (`emptied`), and closing
+/// its only tab ends the space. `home` doesn't end: you stay on its last tab.
+pub fn close_tab(tab: Option<String>) -> Result<()> {
+    let hypr = Hypr::from_env()?;
+    let (rows, _) = load_rows(Some(&hypr))?;
+    let active = hypr.active_workspace()?;
+    let Tab { id, key, slot } = tab_or_active(&hypr, &rows, tab.as_deref(), &active)?;
     let on_tab = |ws_id, ws_name: &str| is_tab(&id, key, ws_id, ws_name);
     let windows: Vec<String> = hypr
         .clients()?
@@ -2203,9 +2206,8 @@ fn close_tab(hypr: &Hypr, rows: &[Row], space: &str, slot: u8) -> Result<()> {
         .map(|c| c.address)
         .collect();
 
-    let active = hypr.active_workspace()?;
     if on_tab(active.id, &active.name) {
-        leave_tab(hypr, &id, slot, active.id)?;
+        leave_tab(&hypr, &id, slot, active.id)?;
     }
     for address in &windows {
         hypr.dispatch(&hypr::close_window(address))?;
@@ -2250,7 +2252,7 @@ fn tab_beside(hypr: &Hypr, id: &str, slot: u8, from: i64) -> Result<Option<u8>> 
     Ok(after.or(before).copied())
 }
 
-/// `space send-tab [<space>:<n>] <space|next|prev>`: moves a tab, the one you
+/// `space tab send [<space>:<n>] <space|next|prev>`: moves a tab, the one you
 /// are on by default, to another space, after the tabs it has, and goes
 /// there with it. Its windows stay arranged as they are and it keeps the name
 /// you gave it. A space whose only tab it was ends.
@@ -2259,12 +2261,7 @@ pub fn send_tab(tab: Option<String>, to: SpaceTarget) -> Result<()> {
     let (rows, _) = load_rows(Some(&hypr))?;
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
-    let (from, slot) = match &tab {
-        Some(tab) => tab_target(&rows, tab)
-            .with_context(|| format!("'{tab}' isn't a tab: give it as s1:2"))?,
-        None => (here.space(), here.slot().context("you aren't on a tab")?),
-    };
-    let (id, key) = find_tab(&hypr, &rows, from, slot)?;
+    let Tab { id, key, slot } = tab_or_active(&hypr, &rows, tab.as_deref(), &active)?;
     let to = match to {
         SpaceTarget::Named(target) => resolve(&rows, &target)?,
         SpaceTarget::Next | SpaceTarget::Prev => match neighbour(&rows, to == SpaceTarget::Next) {

@@ -21,16 +21,16 @@ Item {
 
   // Show or hide the sidebar without taking the keyboard: `super+b`, and the
   // space's name on the bar. Called through `omarchy-shell shell call
-  // com.t4t5.spaces showOrHide`.
-  function showOrHide(arg) {
-    if (service) service.showOrHide()
+  // com.t4t5.spaces toggleSidebar`.
+  function toggleSidebar(arg) {
+    if (service) service.toggleSidebar()
   }
 
   // Rename the space you are in, typing over its name in the sidebar:
   // `super+shift+r`. Called through `omarchy-shell shell call
-  // com.t4t5.spaces rename`.
-  function rename(arg) {
-    if (service) service.rename()
+  // com.t4t5.spaces renameSpace`.
+  function renameSpace(arg) {
+    if (service) service.renameSpace()
   }
 
   // Name the tab you are on, typing on the bar: `super+,`. Called
@@ -39,9 +39,9 @@ Item {
     if (service) service.renameTab()
   }
 
-  // Pick a space to move the tab you are on to, and go there with it. Called
-  // through `omarchy-shell shell call com.t4t5.spaces moveTab`.
-  function moveTab(arg) {
-    if (service) service.moveTab()
+  // Pick a space to send the tab you are on to, and go there with it. Called
+  // through `omarchy-shell shell call com.t4t5.spaces sendTab`.
+  function sendTab(arg) {
+    if (service) service.sendTab()
   }
 }

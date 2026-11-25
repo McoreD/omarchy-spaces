@@ -38,10 +38,9 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Name a space, the active one unless you say which, or a tab, as
-    /// `<space>:<n>`. An empty name has a space called after its folder
-    /// again, and a tab after its window (in `home`, just its number).
-    #[command(override_usage = "space rename [SPACE | SPACE:N] <NAME>")]
+    /// Name a space, the active one unless you say which. An empty name has it
+    /// called after its folder again.
+    #[command(override_usage = "space rename [SPACE] <NAME>")]
     Rename {
         #[arg(value_name = "SPACE")]
         first: String,
@@ -59,17 +58,13 @@ enum Cmd {
         second: Option<String>,
     },
     /// Move a space up or down the sidebar, to a position counting from 1
-    /// below `home`, which stays first, or a tab, as `<space>:<n>`, to a
-    /// position among its space's tabs.
-    #[command(override_usage = "space reorder <SPACE | SPACE:N> <POSITION>")]
+    /// below `home`, which stays first.
     Reorder {
         /// What it's called, or its id.
         space: String,
         position: usize,
     },
-    /// Close every window of a space, the active one unless you say which, or
-    /// of a tab, as `<space>:<n>`.
-    #[command(override_usage = "space close [SPACE | SPACE:N]")]
+    /// Close every window of a space, the active one unless you say which.
     Close { space: Option<String> },
     /// Open the spaces that were up before Hyprland last restarted, with
     /// their terminals arranged as they were.
@@ -106,11 +101,62 @@ enum Cmd {
     /// on: go to another tab, or end the space.
     #[command(hide = true)]
     Emptied { workspace: String },
-    /// Go to a workspace (tab) of the active space: 1-10, new, next or prev.
-    Ws {
-        #[arg(value_parser = target)]
-        target: commands::Target,
+    /// Open, go to, name, arrange, close and move tabs. A tab is given as
+    /// `<space>:<n>`, by what its space is called or its id.
+    #[command(subcommand)]
+    Tab(TabCmd),
+    /// Move the focused window to another space or tab.
+    #[command(subcommand)]
+    Window(WindowCmd),
+}
+
+#[derive(Subcommand)]
+enum TabCmd {
+    /// Open a new tab in the active space, with a terminal in its folder; in
+    /// `home`, an empty one.
+    New,
+    /// Go to tab N of the active space.
+    Go {
+        #[arg(value_parser = slot)]
+        n: u8,
     },
+    /// Go to the active space's next tab, wrapping around.
+    Next,
+    /// Go to the active space's tab before, wrapping around.
+    Prev,
+    /// Name a tab, the one you are on unless you say which. An empty name has
+    /// it called after its window again (in `home`, just its number).
+    #[command(override_usage = "space tab rename [SPACE:N] <NAME>")]
+    Rename {
+        #[arg(value_name = "SPACE:N")]
+        first: String,
+        #[arg(value_name = "NAME")]
+        second: Option<String>,
+    },
+    /// Move a tab to a position among its space's tabs, counting from 1.
+    Reorder {
+        #[arg(value_name = "SPACE:N")]
+        tab: String,
+        position: usize,
+    },
+    /// Close every window of a tab, the one you are on unless you say which.
+    Close {
+        #[arg(value_name = "SPACE:N")]
+        tab: Option<String>,
+    },
+    /// Move a tab, the one you are on unless you say which, to another space
+    /// (or next or prev), after the tabs there, and go with it.
+    #[command(override_usage = "space tab send [SPACE:N] <SPACE>")]
+    Send {
+        #[arg(value_name = "SPACE:N")]
+        first: String,
+        #[arg(value_name = "SPACE")]
+        second: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum WindowCmd {
     /// Send the focused window to another space, on the tab you'd land on
     /// going there, and go with it.
     Send {
@@ -122,17 +168,8 @@ enum Cmd {
         #[arg(long)]
         silent: bool,
     },
-    /// Move a tab, the one you are on unless you say which, as `<space>:<n>`,
-    /// to another space, after the tabs there, and go with it.
-    #[command(override_usage = "space send-tab [SPACE:N] <SPACE>")]
-    SendTab {
-        #[arg(value_name = "SPACE")]
-        first: String,
-        #[arg(value_name = "TO")]
-        second: Option<String>,
-    },
-    /// Move the focused window to workspace N of the active space.
-    Move {
+    /// Move the focused window to tab N of the active space, and go with it.
+    Tab {
         #[arg(value_parser = slot)]
         n: u8,
         /// Stay where you are instead of following the window.
@@ -142,26 +179,29 @@ enum Cmd {
 }
 
 fn slot(raw: &str) -> Result<u8, String> {
-    name::parse_slot(raw).ok_or_else(|| format!("'{raw}' isn't a workspace: use 1-{}", name::SLOTS))
+    name::parse_slot(raw).ok_or_else(|| format!("'{raw}' isn't a tab: use 1-{}", name::SLOTS))
 }
 
 fn space_target(raw: &str) -> Result<commands::SpaceTarget, String> {
     Ok(commands::SpaceTarget::of(raw))
 }
 
-fn target(raw: &str) -> Result<commands::Target, String> {
-    match raw {
-        "new" => Ok(commands::Target::New),
-        "next" => Ok(commands::Target::Next),
-        "prev" => Ok(commands::Target::Prev),
-        _ => name::parse_slot(raw)
-            .map(commands::Target::Slot)
-            .ok_or_else(|| {
-                format!(
-                    "'{raw}' isn't a workspace: use 1-{}, new, next or prev",
-                    name::SLOTS
-                )
-            }),
+fn run_tab(command: TabCmd) -> anyhow::Result<()> {
+    match command {
+        TabCmd::New => commands::go_to_tab(commands::Target::New),
+        TabCmd::Go { n } => commands::go_to_tab(commands::Target::Slot(n)),
+        TabCmd::Next => commands::go_to_tab(commands::Target::Next),
+        TabCmd::Prev => commands::go_to_tab(commands::Target::Prev),
+        TabCmd::Rename { first, second } => match second {
+            Some(new_name) => commands::rename_tab(Some(first), new_name),
+            None => commands::rename_tab(None, first),
+        },
+        TabCmd::Reorder { tab, position } => commands::reorder_tab(tab, position),
+        TabCmd::Close { tab } => commands::close_tab(tab),
+        TabCmd::Send { first, second } => match second {
+            Some(to) => commands::send_tab(Some(first), commands::SpaceTarget::of(&to)),
+            None => commands::send_tab(None, commands::SpaceTarget::of(&first)),
+        },
     }
 }
 
@@ -198,13 +238,9 @@ fn main() -> ExitCode {
         Cmd::Watch { sounds } => watch::watch(sounds),
         Cmd::Shell => shell::shell(),
         Cmd::Emptied { workspace } => commands::emptied(&workspace),
-        Cmd::Ws { target } => commands::ws(target),
-        Cmd::Send { space, silent } => commands::send(space, silent),
-        Cmd::SendTab { first, second } => match second {
-            Some(to) => commands::send_tab(Some(first), commands::SpaceTarget::of(&to)),
-            None => commands::send_tab(None, commands::SpaceTarget::of(&first)),
-        },
-        Cmd::Move { n, silent } => commands::move_window(n, silent),
+        Cmd::Tab(command) => run_tab(command),
+        Cmd::Window(WindowCmd::Send { space, silent }) => commands::send_window(space, silent),
+        Cmd::Window(WindowCmd::Tab { n, silent }) => commands::window_to_tab(n, silent),
     };
 
     match result {

@@ -9,7 +9,7 @@ import qs.Ui
 import "Spaces.mjs" as Spaces
 
 // The active space's tabs on Omarchy's bar, in place of its workspaces: a tab
-// per workspace. Clicks on tabs run `space ws`, which stays the only thing
+// per workspace. Clicks on tabs run `space tab`, which stays the only thing
 // that changes workspaces. Double-clicking a tab names it: the sidebar holds
 // the keyboard (Sidebar.qml) and the tab shows what you type. So does Rename in the menu a right-click on a tab
 // opens (SpaceMenu.qml), which also moves the tab
@@ -189,7 +189,7 @@ BarWidget {
     root.heldTabs = Spaces.reorderTabs(held, from, to)
     settling.restart()
     // Positions count from the first tab.
-    root.run(["space", "reorder", held.space + ":" + held.tabs[from].slot, String(to + 1)])
+    root.run(["space", "tab", "reorder", held.space + ":" + held.tabs[from].slot, String(to + 1)])
   }
 
   // A drag doesn't outlive the tabs it's among: going to another space, or a
@@ -333,9 +333,9 @@ BarWidget {
       readonly property real afterLogo: header.inset + header.cell
       readonly property real titleX: header.afterLogo + header.sidebar.textGap
 
-      function showOrHide() {
+      function toggleSidebar() {
         var window = root.QsWindow.window
-        header.sidebar.showOrHide(window ? window.screen : null)
+        header.sidebar.toggleSidebar(window ? window.screen : null)
       }
 
       // The logo, as the menu draws it, for the sidebar; a right-click
@@ -349,7 +349,7 @@ BarWidget {
         restingOpacity: 1
         onClicked: function(button) {
           if (button === Qt.RightButton) root.run(["omarchy-shell", "shell", "toggle", "omarchy.menu", "{\"menu\":\"root\"}"])
-          else header.showOrHide()
+          else header.toggleSidebar()
         }
       }
 
@@ -390,7 +390,7 @@ BarWidget {
           enabled: x >= 0
           // The sidebar, docked on the left (nf-cod-layout_sidebar_left).
           text: "\u{ebf3}"
-          onClicked: header.showOrHide()
+          onClicked: header.toggleSidebar()
         }
       }
     }
@@ -481,7 +481,7 @@ BarWidget {
         status: modelData.status
         current: modelData.active
         cap: root.tabCap
-        onClicked: root.run(["space", "ws", String(modelData.slot)])
+        onClicked: root.run(["space", "tab", "go", String(modelData.slot)])
         hasMenu: true
         menuOpen: !!root.sidebar && root.sidebar.menuTabFor === root.model.space + ":" + modelData.slot
           && !!root.sidebar.menuScreen && root.sidebar.menuScreen.name === root.screenName
@@ -494,7 +494,7 @@ BarWidget {
       id: newTab
       text: "+"
       visible: root.model.tabs.length < 10
-      onClicked: root.run(["space", "ws", "new"])
+      onClicked: root.run(["space", "tab", "new"])
     }
   }
 
@@ -510,7 +510,7 @@ BarWidget {
         text: root.tabLabel(modelData)
         status: modelData.status
         current: modelData.active
-        onClicked: root.run(["space", "ws", String(modelData.slot)])
+        onClicked: root.run(["space", "tab", "go", String(modelData.slot)])
       }
     }
   }

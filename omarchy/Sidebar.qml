@@ -53,10 +53,10 @@ Item {
   property bool opened: false
   property bool searching: false
   property bool searchOnly: false
-  // What is being renamed, as `space rename` takes it: a space's id, or a
-  // tab's workspace (`s1:2`). The name typed so far, and whether all of it is
-  // selected, as it starts, for typing to replace. The name it had, and
-  // whether you had given it that name.
+  // What is being renamed: a space's id, as `space rename` takes it, or a
+  // tab's workspace (`s1:2`), as `space tab rename` does. The name typed so
+  // far, and whether all of it is selected, as it starts, for typing to
+  // replace. The name it had, and whether you had given it that name.
   property string renaming: ""
   property string nameText: ""
   property bool nameSelected: false
@@ -246,7 +246,7 @@ Item {
     if (wasSearching) root.searchEnded()
   }
 
-  function showOrHide(screen) {
+  function toggleSidebar(screen) {
     if (root.opened) root.hide()
     else root.show(screen)
   }
@@ -434,9 +434,9 @@ Item {
     else root.act(id, root.menuTabFor ? root.menuTab : root.menuRow)
   }
 
-  // Picks a space to move the tab you are on to, from the keyboard; again,
+  // Picks a space to send the tab you are on to, from the keyboard; again,
   // it stops.
-  function moveTab() {
+  function sendTab() {
     if (root.movingTab) {
       root.closeMenu()
       return
@@ -451,18 +451,18 @@ Item {
     root.menuTabFor = here.space + ":" + here.slot
   }
 
-  // Moves the tab to a space, and you with it.
-  function moveTabTo(id) {
+  // Sends the tab to a space, and you with it.
+  function sendTabTo(id) {
     var target = root.menuTabFor
     root.closeMenu()
-    if (target) root.run(["space", "send-tab", target, id])
+    if (target) root.run(["space", "tab", "send", target, id])
   }
 
   // Closes the tab whose menu is open, and its windows.
   function closeTab() {
     var target = root.menuTabFor
     root.closeMenu()
-    if (target) root.run(["space", "close", target])
+    if (target) root.run(["space", "tab", "close", target])
   }
 
   // An action from a space's menu (Spaces.rowActions), or a tab's
@@ -538,7 +538,7 @@ Item {
   // Renames the space you are in, from the keyboard. `home` has no name to
   // change. A sidebar collapsed, or expanded just for a search, is expanded
   // just for the rename.
-  function renameActive() {
+  function renameSpace() {
     var workspace = Hyprland.focusedWorkspace
     var id = workspace ? Spaces.locate(workspace.id, workspace.name).space : ""
     if (!id || id === "home" || root.renaming === id) return
@@ -567,7 +567,7 @@ Item {
     root.renaming = ""
     root.nameText = ""
     root.nameSelected = false
-    if (commit && !unchanged) root.run(["space", "rename", target, to])
+    if (commit && !unchanged) root.run(Spaces.renameCommand(target, to))
     if (root.renameOnly) {
       root.renameOnly = false
       root.hide()
