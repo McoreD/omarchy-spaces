@@ -36,11 +36,12 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::{Result, bail};
 
 use crate::browser::Browsers;
-use crate::commands;
 use crate::config::Config;
 use crate::core;
 use crate::hypr::Hypr;
+use crate::live;
 use crate::paths;
+use crate::restore;
 use crate::session;
 use crate::spaces::Store;
 use crate::state::Last;
@@ -80,7 +81,7 @@ pub fn watch(sounds: bool) -> Result<()> {
 
     // What spaces.json held before the snapshot was taken.
     let mut known = Store::load(&state_dir)?.spaces;
-    let mut snapshot = commands::snapshot(&hypr)?;
+    let mut snapshot = live::snapshot(&hypr)?;
     // What each window's shell was doing when last read, by address.
     let mut shells: HashMap<String, (terminal::Place, Option<terminal::Shell>)> = HashMap::new();
     let mut last = Last::load(&state_dir)?;
@@ -92,7 +93,7 @@ pub fn watch(sounds: bool) -> Result<()> {
     let mut browsers = Browsers::new(
         saver
             .as_mut()
-            .map(|saver| commands::known_browsers(&saver.before()))
+            .map(|saver| restore::known_browsers(&saver.before()))
             .unwrap_or_default(),
     );
     let mut last_seen = stamp(&state_dir.join("last"));
@@ -171,7 +172,7 @@ pub fn watch(sounds: bool) -> Result<()> {
         status::prune_reports(&status_dir, &live_addresses);
         let reports = status::load_reports(&status_dir);
 
-        let mut live = commands::live_from(
+        let mut live = live::live_from(
             &snapshot,
             |window| shells.get(&window.address)?.1.clone(),
             &reports,
@@ -238,16 +239,16 @@ pub fn watch(sounds: bool) -> Result<()> {
         if store.spaces != known {
             known = std::mem::take(&mut store.spaces);
             drop(store);
-            snapshot = commands::snapshot(&hypr)?;
+            snapshot = live::snapshot(&hypr)?;
             read_all = true;
             continue;
         }
-        let rows = commands::rows(&mut store, Some(&live), &last);
+        let rows = live::rows(&mut store, Some(&live), &last);
         if let Err(e) = store.save() {
             eprintln!("space: warning: {e:#}");
         }
         known = store.saved().clone();
-        let session = commands::session_of(
+        let session = restore::session_of(
             &hypr.instance,
             &rows,
             &live,
@@ -344,8 +345,8 @@ pub fn watch(sounds: bool) -> Result<()> {
 /// Reads Hyprland again. When it can't be, what it last said stands, rather
 /// than half of it: the next event or slow round reads it anew, and if it has
 /// gone, its events end.
-fn refresh(hypr: &Hypr, snapshot: &mut commands::Snapshot) {
-    match commands::snapshot(hypr) {
+fn refresh(hypr: &Hypr, snapshot: &mut live::Snapshot) {
+    match live::snapshot(hypr) {
         Ok(read) => *snapshot = read,
         Err(e) => eprintln!("space: warning: {e:#}"),
     }

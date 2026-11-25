@@ -17,6 +17,8 @@ Item {
   readonly property var watch: watchItem
   // The sidebar, which the tabs on the bar line up beside while it shows.
   readonly property var sidebar: sidebarItem
+  // Shared interaction and theme state for the bar, sidebar, and popups.
+  readonly property var controller: controllerItem
 
   // The tabs' widgets with the sidebar's header on their bar, or null until
   // one has said whether it has.
@@ -30,9 +32,9 @@ Item {
   function search() { sidebarItem.search() }
   function endSearch() { sidebarItem.endSearch() }
   function toggleSidebar(screen) { sidebarItem.toggleSidebar(screen) }
-  function renameSpace() { sidebarItem.renameSpace() }
-  function renameTab() { sidebarItem.renameTab("") }
-  function sendTab() { sidebarItem.sendTab() }
+  function renameSpace() { controllerItem.renameSpace() }
+  function renameTab() { controllerItem.renameTab("") }
+  function sendTab() { controllerItem.sendTab() }
 
   // What the sidebar and the bars show, for `just stress` to check.
   function shown() {
@@ -45,20 +47,21 @@ Item {
 
   Base {
     sidebar: sidebarItem
+    controller: controllerItem
     look: Spaces.barLook(root.shell ? root.shell.barConfig : null)
     bar: root.shell ? root.shell.bar : null
   }
 
   SpaceMenu {
-    sidebar: sidebarItem
+    controller: controllerItem
   }
 
   MovePicker {
-    sidebar: sidebarItem
+    controller: controllerItem
   }
 
   IconPicker {
-    sidebar: sidebarItem
+    controller: controllerItem
     omarchyPath: root.omarchyPath
   }
 
@@ -66,6 +69,12 @@ Item {
   // (TabsWidget.qml reaches it through the shell).
   Watch {
     id: watchItem
+  }
+
+  Controller {
+    id: controllerItem
+    watch: watchItem
+    sidebar: sidebarItem
   }
 
   // The spaces from before the last restart open again by themselves, unless
@@ -77,6 +86,7 @@ Item {
   Sidebar {
     id: sidebarItem
     watch: watchItem
+    controller: controllerItem
     // As the tabs' widgets have it, or as the config does until they load,
     // so the list doesn't start with a header that then goes.
     headerOnBar: root.headerBars ? root.headerBars.length > 0

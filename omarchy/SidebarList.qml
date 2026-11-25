@@ -30,6 +30,7 @@ Item {
   id: root
 
   property var sidebar: null
+  property var controller: null
   property color foreground: Commons.Color.bar.text
   // How much of it shows, from its left edge.
   property real shownWidth: width
@@ -237,15 +238,15 @@ Item {
           required property int index
           readonly property bool selected: index === root.sidebar.selectedIndex
           // Its name is being typed.
-          readonly property bool renaming: root.sidebar.renaming !== "" && root.sidebar.renaming === modelData.id
-          readonly property bool menuOpen: root.sidebar.menuFor !== "" && root.sidebar.menuFor === modelData.id
+          readonly property bool renaming: !!root.controller && root.controller.renaming !== "" && root.controller.renaming === modelData.id
+          readonly property bool menuOpen: !!root.controller && root.controller.menuFor !== "" && root.controller.menuFor === modelData.id
           // Its icon is being picked: the badge shows the one under the
           // picker's cursor.
-          readonly property bool picking: root.sidebar.iconFor !== "" && root.sidebar.iconFor === modelData.id
-          readonly property string icon: picking && root.sidebar.iconPreview ? root.sidebar.iconPreview : modelData.icon
+          readonly property bool picking: !!root.controller && root.controller.iconFor !== "" && root.controller.iconFor === modelData.id
+          readonly property string icon: picking && root.controller.iconPreview ? root.controller.iconPreview : modelData.icon
           readonly property bool home: modelData.id === "home"
           readonly property color hue: rowItem.home ? root.foreground
-            : (Spaces.badgeColor(rowItem.modelData.label, root.sidebar.palette) || root.foreground)
+            : (Spaces.badgeColor(rowItem.modelData.label, root.controller ? root.controller.palette : Spaces.DEFAULT_PALETTE) || root.foreground)
           readonly property bool dragged: root.dragFrom === index
           // Aside, to open the gap a dragged row would drop into.
           property real shift: Spaces.dragShift(index, root.dragFrom, root.dragTo, root.pitch)
@@ -261,7 +262,7 @@ Item {
           Highlight {
             held: rowItem.modelData.active
             lit: rowItem.renaming || rowItem.menuOpen || rowItem.picking || rowItem.dragged
-              || (!root.sidebar.menuRow && !root.sidebar.iconRow && rowItem.selected && (root.sidebar.searching || rowMouse.containsMouse))
+              || (!(root.controller && root.controller.menuRow) && !(root.controller && root.controller.iconRow) && rowItem.selected && (root.sidebar.searching || rowMouse.containsMouse))
             border.width: rowItem.renaming ? 1 : 0
             border.color: root.accent
           }
@@ -311,7 +312,7 @@ Item {
           // full strength however dimmed the badge is.
           StatusDot {
             status: rowItem.modelData.status
-            colors: root.sidebar.statusColors
+            colors: root.controller ? root.controller.statusColors : null
             workingColor: root.foreground
             size: Math.max(6, Math.round(root.badgeSize * 0.28))
             x: badge.x + badge.width - width * 0.7
@@ -331,7 +332,7 @@ Item {
               id: nameText
               width: parent.width
               textFormat: Text.PlainText
-              text: rowItem.renaming ? root.sidebar.nameText : rowItem.modelData.label
+              text: rowItem.renaming ? root.controller.nameText : rowItem.modelData.label
               // The search's cursor; otherwise the highlight says which space you're in.
               color: rowItem.selected && root.sidebar.searching ? root.accent : root.foreground
               font.family: root.fontFamily
@@ -339,11 +340,11 @@ Item {
               font.bold: rowItem.modelData.active
               elide: rowItem.renaming ? Text.ElideLeft : Text.ElideRight
 
-              // The keyboard reaches the rename through the sidebar's
+              // The keyboard reaches the rename through the controller's
               // panel, so the name draws its own selection, under the text,
               // and its own caret, which a selection hides.
               Rectangle {
-                visible: rowItem.renaming && root.sidebar.nameSelected
+                visible: rowItem.renaming && root.controller.nameSelected
                 z: -1
                 width: Math.min(nameText.contentWidth, nameText.width)
                 height: Style.font.subtitle + Style.spacing.xxs
@@ -353,7 +354,7 @@ Item {
               }
 
               Rectangle {
-                visible: rowItem.renaming && !root.sidebar.nameSelected
+                visible: rowItem.renaming && !root.controller.nameSelected
                 x: Math.min(nameText.contentWidth, nameText.width) + 1
                 width: Math.max(1, Style.space(2))
                 height: Style.font.subtitle + Style.spacing.xxs
@@ -398,7 +399,7 @@ Item {
               if (root.dragFrom < 0) {
                 if (rowItem.renaming || root.sidebar.filterText !== ""
                     || !Spaces.startsDrag(rowItem.modelData, dy, root.dragThreshold)) return
-                root.sidebar.closeMenu()
+                if (root.controller) root.controller.closeMenu()
                 root.dragFrom = rowItem.index
                 rowMouse.wasDrag = true
               }
@@ -419,11 +420,11 @@ Item {
               if (rowItem.renaming || rowMouse.wasDrag) return
               if (mouse.button !== Qt.RightButton) {
                 root.sidebar.activate(rowItem.index)
-              } else if (Spaces.rowActions(rowItem.modelData).length > 0) {
+              } else if (root.controller && Spaces.rowActions(rowItem.modelData).length > 0) {
                 // The base covers the screen, so its coordinates are the
                 // screen's, which the menu's surface shares.
                 var at = rowMouse.mapToItem(null, mouse.x, mouse.y)
-                root.sidebar.openMenu(rowItem.modelData.id, at.x, at.y, root.screen)
+                root.controller.openMenu(rowItem.modelData.id, at.x, at.y, root.screen)
               }
             }
           }

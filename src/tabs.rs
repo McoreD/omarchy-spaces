@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::commands::{Live, Row, Snapshot};
+use crate::live::{Live, Row, Snapshot};
 use crate::monitors;
 use crate::name::{self, HOME};
 use crate::status::Status;
@@ -140,7 +140,7 @@ fn app_name(class: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::Screen;
+    use crate::live::Screen;
 
     #[test]
     fn names_apps_from_window_classes() {

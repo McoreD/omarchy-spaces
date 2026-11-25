@@ -8,7 +8,7 @@
 
 use serde::Serialize;
 
-use crate::commands::{Live, Row, Screen, Snapshot};
+use crate::live::{Live, Row, Screen, Snapshot};
 use crate::name;
 use crate::status::Status;
 use crate::tabs;

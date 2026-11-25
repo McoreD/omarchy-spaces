@@ -6,8 +6,8 @@ use std::collections::BTreeSet;
 
 use serde::Serialize;
 
-use crate::commands::{Live, Row, Snapshot, TerminalRow};
 use crate::folder::{self, Folder};
+use crate::live::{Live, Row, Snapshot, TerminalRow};
 use crate::name;
 use crate::status::Status;
 use crate::tabs;

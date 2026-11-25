@@ -17,6 +17,7 @@ Scope {
   id: root
 
   property var sidebar: null
+  property var controller: null
   // The bar's background look: opaque, glassy or none (Spaces.barLook).
   property string look: "opaque"
   // The shell's bar: its edge and its thickness on each screen.
@@ -77,6 +78,7 @@ Scope {
           shownWidth: sidebarPart.width
           screen: base.modelData
           sidebar: root.sidebar
+          controller: root.controller
           foreground: surface.foreground
         }
       }

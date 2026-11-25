@@ -20,9 +20,9 @@ import "Spaces.mjs" as Spaces
 PanelWindow {
   id: root
 
-  property var sidebar: null
+  property var controller: null
 
-  readonly property var actions: sidebar ? sidebar.menuActions : []
+  readonly property var actions: controller ? controller.menuActions : []
   property int current: -1
 
   readonly property color foreground: Commons.Color.popups.text
@@ -31,8 +31,8 @@ PanelWindow {
   readonly property int itemHeight: Math.max(Style.spacing.popupRowHeight, Style.font.body + Style.spacing.controlPaddingY * 2)
   readonly property int edge: Style.spacing.md
 
-  visible: actions.length > 0 && !!sidebar && !!sidebar.menuScreen && !sidebar.movingTab
-  screen: sidebar ? sidebar.menuScreen : null
+  visible: actions.length > 0 && !!controller && !!controller.menuScreen && !controller.movingTab
+  screen: controller ? controller.menuScreen : null
   anchors { top: true; bottom: true; left: true; right: true }
   exclusionMode: ExclusionMode.Ignore
   color: "transparent"
@@ -42,7 +42,7 @@ PanelWindow {
 
   // It starts on Cancel, so Enter alone, or held from picking "Close tab",
   // closes nothing.
-  readonly property bool confirming: !!sidebar && sidebar.confirmingClose
+  readonly property bool confirming: !!controller && controller.confirmingClose
   onConfirmingChanged: if (confirming) confirm.selectedIndex = 0
 
   onVisibleChanged: {
@@ -52,14 +52,14 @@ PanelWindow {
 
   function pick(index) {
     var action = root.actions[index]
-    if (action && action.enabled) root.sidebar.pickAction(action.id)
+    if (action && action.enabled) root.controller.pickAction(action.id)
   }
 
   // Anywhere outside the card closes the menu.
   MouseArea {
     anchors.fill: parent
     acceptedButtons: Qt.AllButtons
-    onPressed: root.sidebar.closeMenu()
+    onPressed: root.controller.closeMenu()
   }
 
   Item {
@@ -72,7 +72,7 @@ PanelWindow {
         event.accepted = true
         return
       }
-      if (event.key === Qt.Key_Escape) root.sidebar.closeMenu()
+      if (event.key === Qt.Key_Escape) root.controller.closeMenu()
       else if (event.key === Qt.Key_Down || event.text === "j" || event.key === Qt.Key_Tab) root.current = Spaces.stepAction(root.actions, root.current, 1)
       else if (event.key === Qt.Key_Up || event.text === "k" || event.key === Qt.Key_Backtab) root.current = Spaces.stepAction(root.actions, root.current, -1)
       else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) root.pick(root.current)
@@ -86,13 +86,13 @@ PanelWindow {
     visible: !root.confirming
     // Where you clicked, kept on the screen: above the pointer when there
     // isn't room below it.
-    x: Math.max(root.edge, Math.min(root.sidebar ? root.sidebar.menuX : 0, root.width - width - root.edge))
+    x: Math.max(root.edge, Math.min(root.controller ? root.controller.menuX : 0, root.width - width - root.edge))
     y: {
-      var at = root.sidebar ? root.sidebar.menuY : 0
+      var at = root.controller ? root.controller.menuY : 0
       return at + height + root.edge <= root.height ? at : Math.max(root.edge, at - height)
     }
     // A tab's has only short labels, with nothing to say beside them.
-    width: Style.space(root.sidebar && root.sidebar.menuTabFor ? 170 : 240)
+    width: Style.space(root.controller && root.controller.menuTabFor ? 170 : 240)
     height: items.implicitHeight + contentTopInset + contentBottomInset
     color: Commons.Color.popups.background
     borderSpec: root.borderSpec
@@ -205,11 +205,11 @@ PanelWindow {
     id: confirm
     anchors.fill: parent
     opened: root.confirming
-    message: root.sidebar ? root.sidebar.closeWarning : ""
+    message: root.controller ? root.controller.closeWarning : ""
     confirmText: "Close tab"
     background: Commons.Color.popups.background
     foreground: root.foreground
-    onCanceled: root.sidebar.closeMenu()
-    onConfirmed: root.sidebar.closeTab()
+    onCanceled: root.controller.closeMenu()
+    onConfirmed: root.controller.closeTab()
   }
 }

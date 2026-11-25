@@ -79,6 +79,7 @@ BarWidget {
     return shell && typeof shell.serviceFor === "function" ? shell.serviceFor("com.t4t5.spaces") : null
   }
   readonly property var sidebar: root.service && root.service.sidebar ? root.service.sidebar : null
+  readonly property var controller: root.service && root.service.controller ? root.service.controller : null
 
   // Where this widget sits on its bar, which spans its screen.
   property point origin: Qt.point(0, 0)
@@ -184,9 +185,9 @@ BarWidget {
   }
 
   function startDrag(index) {
-    if (root.sidebar) {
-      root.sidebar.closeMenu()
-      root.sidebar.endNaming(false)
+    if (root.controller) {
+      root.controller.closeMenu()
+      root.controller.endNaming(false)
     }
     settling.stop()
     var widths = []
@@ -280,9 +281,9 @@ BarWidget {
   // at its screen's top when the bar is at the bottom.
   function openTabMenu(id, x, y) {
     var window = root.QsWindow.window
-    if (!root.sidebar || !window || !window.screen) return
+    if (!root.controller || !window || !window.screen) return
     var top = root.bar && root.bar.position === "bottom" ? window.screen.height - window.height : 0
-    root.sidebar.openTabMenu(id, x, top + y, window.screen)
+    root.controller.openTabMenu(id, x, top + y, window.screen)
   }
 
   // The background, from the screen's edge to where the windows begin, over
@@ -508,15 +509,15 @@ BarWidget {
         // Later: the new order makes new tabs, this one among them.
         onDropped: Qt.callLater(root.drop)
         onDragCanceled: root.endDrag()
-        editing: !!root.sidebar && root.sidebar.renaming === modelData.id
+        editing: !!root.controller && root.controller.renaming === modelData.id
         status: modelData.status
         current: modelData.active
         cap: root.tabCap
         onClicked: root.run(["space", "tab", "go", modelData.id])
         hasMenu: true
-        menuOpen: !!root.sidebar && root.sidebar.menuTabFor === modelData.id
-          && !!root.sidebar.menuScreen && root.sidebar.menuScreen.name === root.screenName
-        onDoubleClicked: if (root.sidebar) root.sidebar.renameTab(modelData.id)
+        menuOpen: !!root.controller && root.controller.menuTabFor === modelData.id
+          && !!root.controller.menuScreen && root.controller.menuScreen.name === root.screenName
+        onDoubleClicked: if (root.controller) root.controller.renameTab(modelData.id)
         onMenuRequested: function(x, y) { root.openTabMenu(modelData.id, x, y) }
       }
     }
@@ -637,12 +638,12 @@ BarWidget {
         // Wide enough for the placeholder while there's no name.
         width: text === "" ? placeholder.x + placeholder.implicitWidth : Math.min(implicitWidth, room)
         textFormat: Text.PlainText
-        text: button.editing && root.sidebar ? root.sidebar.nameText : ""
+        text: button.editing && root.controller ? root.controller.nameText : ""
         elide: Text.ElideLeft
         color: label.color
         font: label.font
         // A selection of nothing shows no highlight, so the caret shows instead.
-        readonly property bool selected: button.editing && !!root.sidebar && root.sidebar.nameSelected && text !== ""
+        readonly property bool selected: button.editing && !!root.controller && root.controller.nameSelected && text !== ""
 
         // What to type, while there's no name: a tab with none (one of home's)
         // would otherwise show only its number.
@@ -696,7 +697,7 @@ BarWidget {
     StatusDot {
       id: dot
       status: button.status
-      colors: root.sidebar ? root.sidebar.statusColors : null
+      colors: root.controller ? root.controller.statusColors : null
       workingColor: root.foreground
       size: Math.max(5, Math.round(root.fontSize * 0.45))
       x: root.vertical ? parent.width * 0.7

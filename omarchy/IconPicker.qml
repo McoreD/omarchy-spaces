@@ -21,10 +21,10 @@ import "Spaces.mjs" as Spaces
 PanelWindow {
   id: root
 
-  property var sidebar: null
+  property var controller: null
   property string omarchyPath: ""
 
-  readonly property var row: sidebar ? sidebar.iconRow : null
+  readonly property var row: controller ? controller.iconRow : null
   // Glyphs or emojis, while not searching.
   property string tab: "glyphs"
   property string query: ""
@@ -43,14 +43,14 @@ PanelWindow {
   readonly property color selectedBackground: Commons.Color.menu.selectedBackground
   readonly property var borderSpec: Border.localOrSurfaceSpec("popups", "border", Commons.Color.popups.border, Commons.Color.popups.border, Style.normalBorderWidth)
   // The colour the space's badge takes, which its glyphs are shown in.
-  readonly property color hue: row && sidebar ? (Spaces.badgeColor(row.label, sidebar.palette) || foreground) : foreground
+  readonly property color hue: row && controller ? (Spaces.badgeColor(row.label, controller.palette) || foreground) : foreground
   readonly property int edge: Style.spacing.md
   readonly property int cellSize: Style.space(40)
   readonly property int fieldHeight: Math.max(Style.spacing.popupRowHeight, Style.font.body + Style.spacing.controlPaddingY * 2)
   readonly property int columns: Math.max(1, Math.floor(grid.width / cellSize))
 
-  visible: !!row && !!sidebar && !!sidebar.menuScreen
-  screen: sidebar ? sidebar.menuScreen : null
+  visible: !!row && !!controller && !!controller.menuScreen
+  screen: controller ? controller.menuScreen : null
   anchors { top: true; bottom: true; left: true; right: true }
   exclusionMode: ExclusionMode.Ignore
   color: "transparent"
@@ -81,9 +81,9 @@ PanelWindow {
 
   // The badge shows the icon under the cursor.
   function preview() {
-    if (!root.sidebar || !root.visible) return
+    if (!root.controller || !root.visible) return
     var entry = root.shown[root.current]
-    root.sidebar.iconPreview = entry ? entry.icon : ""
+    root.controller.iconPreview = entry ? entry.icon : ""
   }
 
   function setQuery(text) {
@@ -103,7 +103,7 @@ PanelWindow {
 
   function pick(index) {
     var entry = root.shown[index]
-    if (entry) root.sidebar.pickIcon(entry.icon)
+    if (entry) root.controller.pickIcon(entry.icon)
   }
 
   FileView {
@@ -122,7 +122,7 @@ PanelWindow {
   MouseArea {
     anchors.fill: parent
     acceptedButtons: Qt.AllButtons
-    onPressed: root.sidebar.closeIconPicker()
+    onPressed: root.controller.closeIconPicker()
   }
 
   Item {
@@ -136,7 +136,7 @@ PanelWindow {
           && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127
       if (event.key === Qt.Key_Escape) {
         if (root.query) root.setQuery("")
-        else root.sidebar.closeIconPicker()
+        else root.controller.closeIconPicker()
       } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
         if (!root.searching) root.switchTab(root.tab === "glyphs" ? "emojis" : "glyphs")
       } else if (event.key === Qt.Key_Left) {
@@ -167,9 +167,9 @@ PanelWindow {
     id: card
     // Where the menu was, kept on the screen: above the pointer when there
     // isn't room below it.
-    x: Math.max(root.edge, Math.min(root.sidebar ? root.sidebar.menuX : 0, root.width - width - root.edge))
+    x: Math.max(root.edge, Math.min(root.controller ? root.controller.menuX : 0, root.width - width - root.edge))
     y: {
-      var at = root.sidebar ? root.sidebar.menuY : 0
+      var at = root.controller ? root.controller.menuY : 0
       return at + height + root.edge <= root.height ? at : Math.max(root.edge, at - height)
     }
     width: Math.min(Style.space(372), root.width - root.edge * 2)

@@ -18,9 +18,9 @@ import "Spaces.mjs" as Spaces
 PanelWindow {
   id: root
 
-  property var sidebar: null
+  property var controller: null
 
-  readonly property var targets: sidebar ? sidebar.moveTargets : []
+  readonly property var targets: controller ? controller.moveTargets : []
   property string query: ""
   readonly property var shown: Spaces.filterRows(targets, query)
   property int current: 0
@@ -34,14 +34,14 @@ PanelWindow {
   readonly property int badgeSize: Math.round(rowHeight * 0.75)
   // Nothing to move, or nowhere to move it.
   readonly property string note: {
-    if (!sidebar || !sidebar.menuTab) return ""
-    if (sidebar.menuTab.windows === 0) return "Nothing is open on this tab"
+    if (!controller || !controller.menuTab) return ""
+    if (controller.menuTab.windows === 0) return "Nothing is open on this tab"
     if (root.targets.length === 0) return "There are no other spaces"
     return root.shown.length === 0 ? "No space matches “" + root.query.trim() + "”" : ""
   }
 
-  visible: !!sidebar && sidebar.movingTab && !!sidebar.menuTab && !!sidebar.menuScreen
-  screen: sidebar ? sidebar.menuScreen : null
+  visible: !!controller && controller.movingTab && !!controller.menuTab && !!controller.menuScreen
+  screen: controller ? controller.menuScreen : null
   anchors { top: true; bottom: true; left: true; right: true }
   exclusionMode: ExclusionMode.Ignore
   color: "transparent"
@@ -71,14 +71,14 @@ PanelWindow {
 
   function pick(index) {
     var row = root.shown[index]
-    if (row && root.note === "") root.sidebar.sendTabTo(row.id)
+    if (row && root.note === "") root.controller.sendTabTo(row.id)
   }
 
   // Anywhere outside the card closes it.
   MouseArea {
     anchors.fill: parent
     acceptedButtons: Qt.AllButtons
-    onPressed: root.sidebar.closeMenu()
+    onPressed: root.controller.closeMenu()
   }
 
   Item {
@@ -92,7 +92,7 @@ PanelWindow {
           && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127
       if (event.key === Qt.Key_Escape) {
         if (root.query) root.setQuery("")
-        else root.sidebar.closeMenu()
+        else root.controller.closeMenu()
       } else if (event.key === Qt.Key_Up || event.key === Qt.Key_Backtab || (ctrl && event.key === Qt.Key_P)) {
         root.move(-1)
       } else if (event.key === Qt.Key_Down || event.key === Qt.Key_Tab || (ctrl && event.key === Qt.Key_N)) {
@@ -113,15 +113,15 @@ PanelWindow {
 
   BorderSurface {
     id: card
-    readonly property bool centered: !!root.sidebar && root.sidebar.moveCentered
+    readonly property bool centered: !!root.controller && root.controller.moveCentered
     // Where the menu was, kept on the screen: above the pointer when there
     // isn't room below it.
     x: centered ? Math.round((root.width - width) / 2)
-      : Math.max(root.edge, Math.min(root.sidebar ? root.sidebar.menuX : 0, root.width - width - root.edge))
+      : Math.max(root.edge, Math.min(root.controller ? root.controller.menuX : 0, root.width - width - root.edge))
     y: {
       // Its top stays put as typing shortens the list.
       if (centered) return Math.round(root.height * 0.25)
-      var at = root.sidebar ? root.sidebar.menuY : 0
+      var at = root.controller ? root.controller.menuY : 0
       return at + height + root.edge <= root.height ? at : Math.max(root.edge, at - height)
     }
     width: Math.min(Style.space(280), root.width - root.edge * 2)
@@ -190,7 +190,7 @@ PanelWindow {
             visible: root.query === ""
             leftPadding: Style.spacing.xxs
             textFormat: Text.PlainText
-            text: root.sidebar && root.sidebar.menuTab ? (root.sidebar.menuTab.slot > 0 ? "Move tab " + root.sidebar.menuTab.slot : "Move tab") + " to space" : ""
+            text: root.controller && root.controller.menuTab ? (root.controller.menuTab.slot > 0 ? "Move tab " + root.controller.menuTab.slot : "Move tab") + " to space" : ""
             color: root.foreground
             opacity: 0.4
             font.family: Style.font.family
@@ -225,8 +225,8 @@ PanelWindow {
           readonly property bool hot: index === root.current
           readonly property bool home: modelData.id === "home"
           readonly property bool letters: !home && !modelData.icon
-          readonly property color hue: home || !root.sidebar ? root.foreground
-            : (Spaces.badgeColor(modelData.label, root.sidebar.palette) || root.foreground)
+          readonly property color hue: home || !root.controller ? root.foreground
+            : (Spaces.badgeColor(modelData.label, root.controller.palette) || root.foreground)
 
           width: list.width
           height: root.rowHeight
