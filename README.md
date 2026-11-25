@@ -1,31 +1,10 @@
 # Spaces for Omarchy
 
 <p align="center">
-  <a href="#install">install</a> · <a href="#getting-started">getting started</a> · <a href="docs/README.md">docs</a>
-</p>
-
-<p align="center">
-  <b>A set of tabs for each thing you work on.</b><br>
-  Built for Hyprland on Omarchy.
-</p>
-
-<p align="center">
   <img src="assets/screenshot.png" width="627" alt="The Spaces sidebar, listing each space with a status dot on one of them, beside the tabs of the open space">
 </p>
 
----
-
-A **space** holds one piece of work. Each space has its own **tabs**, and each tab is a workspace for whatever windows you like. Switch spaces, and all of it changes at once.
-
-## Features
-
-- **A sidebar for your spaces** — Collapse it to a rail of badges, or expand it to see their names.
-- **Tabs on the bar** — They take the place of Omarchy's workspaces, and name themselves after what's in them.
-- **Agent status** — See at a glance when Claude Code is working, done or waiting for you.
-- **Picks up where you left off** — After a restart, your terminals, Claude Code conversations and browser windows come back.
-- **Multiple monitors** — They all show the same space, each with its own tabs.
-- **Your keys** — Nothing is bound until you bind it.
-- **Themes** — Follows your Omarchy theme and the look of your bar.
+A **space** holds one piece of work. Each space has its own **tabs**, and each tab is a workspace for whatever windows you like.
 
 ## Install
 
