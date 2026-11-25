@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{OnceLock, mpsc};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -22,7 +22,8 @@ use serde_json::{Value, json};
 /// The label every Spaces terminal carries, `omarchy-spaces=1`, to ask core for
 /// only those.
 pub const LABEL: &str = "omarchy-spaces";
-/// The label naming the window's process, the terminal app's.
+/// The label naming the window's process, the terminal app's, as `window_label`
+/// makes it.
 pub const WINDOW_LABEL: &str = "omarchy-spaces-window";
 /// The last turn someone looked at, which Herdr's clients share (its
 /// `docs/labels.md`), so a `done` seen stays seen when `watch` restarts, and
@@ -69,9 +70,9 @@ pub struct Report {
 }
 
 impl Terminal {
-    /// The process of the window it shows in.
-    pub fn window_pid(&self) -> Option<u32> {
-        self.labels.get(WINDOW_LABEL)?.parse().ok()
+    /// Whether it shows in the window run by `pid` here.
+    fn shows_in(&self, pid: u32) -> bool {
+        self.labels.get(WINDOW_LABEL) == Some(&window_label(pid))
     }
 
     /// The last turn someone looked at, from any client; `None` when none
@@ -79,6 +80,20 @@ impl Terminal {
     pub fn seen_turn(&self) -> Option<u64> {
         self.labels.get(SEEN_LABEL)?.parse().ok()
     }
+}
+
+/// The window run by `pid`, as its terminals are labelled. A pid alone says
+/// too little: core also lists the terminals of other machines added to it,
+/// which may run Spaces too, and a terminal there can outlive this boot.
+fn window_label(pid: u32) -> String {
+    static BOOT: OnceLock<String> = OnceLock::new();
+    let boot = BOOT.get_or_init(|| {
+        std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    });
+    format!("{boot}/{pid}")
 }
 
 /// Core's socket: `HC_SOCKET`, else `default.sock` in its runtime folder.
@@ -160,7 +175,7 @@ pub fn run_shell(
     let mut params = json!({
         "cwd": cwd,
         "env": env,
-        "labels": { LABEL: "1", WINDOW_LABEL: window.to_string(), SEEN_LABEL: "0" },
+        "labels": { LABEL: "1", WINDOW_LABEL: window_label(window), SEEN_LABEL: "0" },
         "no_parent": true,
         "rm": true,
     });
@@ -257,7 +272,7 @@ impl Terminals {
         let mut found: Vec<&Terminal> = self
             .by_address
             .values()
-            .filter(|t| t.window_pid() == Some(pid))
+            .filter(|t| t.shows_in(pid))
             .collect();
         found.sort_by(|a, b| a.address.cmp(&b.address));
         found
@@ -334,7 +349,7 @@ mod tests {
             address: address.into(),
             labels: [
                 (LABEL.to_string(), "1".to_string()),
-                (WINDOW_LABEL.to_string(), window.to_string()),
+                (WINDOW_LABEL.to_string(), window_label(window)),
             ]
             .into(),
             cwd: "/p/ren".into(),
@@ -356,6 +371,23 @@ mod tests {
             .collect();
         assert_eq!(found, ["t1", "t2"]);
         assert!(terminals.in_window(70).is_empty());
+    }
+
+    #[test]
+    fn leaves_another_machines_windows_alone() {
+        let mut theirs = terminal("box/t1", 50);
+        theirs
+            .labels
+            .insert(WINDOW_LABEL.into(), "another-boot/50".into());
+        let mut older = terminal("t2", 50);
+        older.labels.insert(WINDOW_LABEL.into(), "50".into());
+        let terminals = Terminals::new(vec![theirs, older, terminal("box/t3", 50)]);
+        let found: Vec<&str> = terminals
+            .in_window(50)
+            .iter()
+            .map(|t| t.address.as_str())
+            .collect();
+        assert_eq!(found, ["box/t3"], "one running there, in a window here");
     }
 
     #[test]
@@ -396,7 +428,7 @@ mod tests {
         // Labelled away from Spaces: out of view.
         assert!(terminals.apply(&event("labels", json!({ "labels": {} }))));
         assert!(terminals.get("t1").is_none());
-        let created = serde_json::to_value(json!({ "address": "t1", "labels": { LABEL: "1", WINDOW_LABEL: "50" }, "cwd": "/p", "turn": 0 })).unwrap();
+        let created = serde_json::to_value(json!({ "address": "t1", "labels": { LABEL: "1", WINDOW_LABEL: window_label(50) }, "cwd": "/p", "turn": 0 })).unwrap();
         assert!(terminals.apply(&event("created", created)));
         assert_eq!(terminals.in_window(50).len(), 1);
         assert!(terminals.apply(&event("finished", json!({ "reason": "exited" }))));

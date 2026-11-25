@@ -469,6 +469,12 @@ struct Core {
     socket: PathBuf,
 }
 
+/// How a terminal says which window shows it: the boot, then its process.
+fn window_label(pid: u32) -> String {
+    let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap();
+    format!("{}/{pid}", boot.trim())
+}
+
 impl Core {
     fn start(env: &Env) -> Self {
         let socket = env.root.path().join("core.sock");
@@ -508,7 +514,7 @@ impl Core {
         let address = format!("t{}", state.next);
         let record = json!({
             "address": address,
-            "labels": { "omarchy-spaces": "1", "omarchy-spaces-window": pid.to_string() },
+            "labels": { "omarchy-spaces": "1", "omarchy-spaces-window": window_label(pid) },
             "cwd": dir.display().to_string(),
             "foreground": { "pid": 1, "name": "zsh", "argv": ["-zsh"], "cwd": dir.display().to_string() },
             "turn": 0,
@@ -2284,7 +2290,7 @@ fn shell_runs_in_core_and_ends_with_its_window() {
     assert_eq!(run["labels"]["omarchy-spaces"], "1");
     assert_eq!(
         run["labels"]["omarchy-spaces-window"],
-        std::process::id().to_string(),
+        window_label(std::process::id()),
         "the window's process: its parent"
     );
     assert_eq!(run["rm"], true);
