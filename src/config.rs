@@ -1,5 +1,6 @@
 //! `~/.config/omarchy-spaces/config.toml`, the global config.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -7,6 +8,7 @@ use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use serde::de::IgnoredAny;
 
 use crate::paths;
 
@@ -48,26 +50,42 @@ fn space_shell() -> String {
     format!("'{}' shell", exe.replace('\'', "'\\''"))
 }
 
+/// Settings that aren't ours: misspelled, or an older or newer Spaces'. Each
+/// table takes its own, to warn of them; the rest of the file still counts.
+type Unknown = BTreeMap<String, IgnoredAny>;
+
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct Config {
     /// A dmenu-style command for `space go` with no name.
     pub picker: Option<String>,
-    /// How to open a terminal: a command for `sh -c`, run in the folder with
-    /// `SPACES_DIR` set to it.
-    pub terminal: Option<String>,
-    /// Whether terminals Spaces opens run in herdr-core (`space shell`).
-    /// When unset, uses herdr-core only when its `hc` is on `PATH`.
-    pub herdr_core: Option<bool>,
+    /// The terminals Spaces opens.
+    pub terminal: Terminal,
     /// What comes back after a restart (`space restore`).
     pub restore: Restore,
     /// The sounds when an agent needs you (`sound.rs`).
     pub sounds: Sounds,
+    #[serde(flatten)]
+    unknown: Unknown,
+}
+
+/// `[terminal]`: what opens a terminal, and what runs in it.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Terminal {
+    /// How to open a terminal: a command for `sh -c`, run in the folder with
+    /// `SPACES_DIR` set to it.
+    pub command: Option<String>,
+    /// Whether terminals Spaces opens run in herdr-core (`space shell`).
+    /// When unset, uses herdr-core only when its `hc` is on `PATH`.
+    pub herdr_core: Option<bool>,
+    #[serde(flatten)]
+    unknown: Unknown,
 }
 
 /// `[restore]`: whether the plugin restores on start, and what comes back.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
 pub struct Restore {
     /// Whether the plugin opens your last spaces again after a restart.
     pub enabled: bool,
@@ -75,6 +93,8 @@ pub struct Restore {
     pub agents: bool,
     /// Whether a restart opens Chromium's windows again.
     pub browser: bool,
+    #[serde(flatten)]
+    unknown: Unknown,
 }
 
 impl Default for Restore {
@@ -83,19 +103,22 @@ impl Default for Restore {
             enabled: true,
             agents: true,
             browser: true,
+            unknown: Unknown::new(),
         }
     }
 }
 
 /// `[sounds]`: whether to play them, and files in place of the defaults.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
 pub struct Sounds {
     pub enabled: bool,
     /// When an agent finishes while you aren't looking.
     pub done: Option<String>,
     /// When an agent starts waiting for you.
     pub waiting: Option<String>,
+    #[serde(flatten)]
+    unknown: Unknown,
 }
 
 impl Default for Sounds {
@@ -104,6 +127,7 @@ impl Default for Sounds {
             enabled: true,
             done: None,
             waiting: None,
+            unknown: Unknown::new(),
         }
     }
 }
@@ -126,23 +150,44 @@ impl Config {
     pub fn load_from(path: &Path) -> Result<Self> {
         match fs::read_to_string(path) {
             Ok(text) => {
-                toml::from_str(&text).with_context(|| format!("can't read {}", paths::tilde(path)))
+                let config: Self = toml::from_str(&text)
+                    .with_context(|| format!("can't read {}", paths::tilde(path)))?;
+                for setting in config.unknown() {
+                    eprintln!(
+                        "space: warning: there's no setting '{setting}', in {}",
+                        paths::tilde(path)
+                    );
+                }
+                Ok(config)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e).with_context(|| format!("can't read {}", paths::tilde(path))),
         }
     }
 
+    /// The settings that aren't ours, as `sounds.bell`.
+    fn unknown(&self) -> Vec<String> {
+        [
+            ("", &self.unknown),
+            ("terminal.", &self.terminal.unknown),
+            ("restore.", &self.restore.unknown),
+            ("sounds.", &self.sounds.unknown),
+        ]
+        .into_iter()
+        .flat_map(|(table, unknown)| unknown.keys().map(move |key| format!("{table}{key}")))
+        .collect()
+    }
+
     /// Whether default terminals run in herdr-core (`space shell`).
     pub fn use_herdr_core(&self) -> bool {
-        self.herdr_core.unwrap_or_else(has_herdr_core)
+        self.terminal.herdr_core.unwrap_or_else(has_herdr_core)
     }
 
     /// The terminal command for picking up a conversation, which `space shell`
     /// does. A terminal of your own has to run that itself.
     pub fn resuming_terminal(&self) -> String {
         let terminal = self.terminal();
-        if self.terminal.is_some() || self.use_herdr_core() {
+        if self.terminal.command.is_some() || self.use_herdr_core() {
             return terminal;
         }
         format!("{terminal} {}", space_shell())
@@ -150,8 +195,8 @@ impl Config {
 
     /// The configured terminal command, or Omarchy's way.
     pub fn terminal(&self) -> String {
-        if let Some(terminal) = &self.terminal {
-            return terminal.clone();
+        if let Some(command) = &self.terminal.command {
+            return command.clone();
         }
         let base = if on_path("uwsm-app") {
             OMARCHY_TERMINAL
@@ -231,7 +276,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
 
-        fs::write(&path, "herdr_core = false\n").unwrap();
+        fs::write(&path, "[terminal]\nherdr_core = false\n").unwrap();
         let config = Config::load_from(&path).unwrap();
         assert!(!config.use_herdr_core());
         assert!(config.terminal().contains("xdg-terminal-exec"));
@@ -241,7 +286,7 @@ mod tests {
             config.terminal()
         );
 
-        fs::write(&path, "herdr_core = true\n").unwrap();
+        fs::write(&path, "[terminal]\nherdr_core = true\n").unwrap();
         let config = Config::load_from(&path).unwrap();
         assert!(config.use_herdr_core());
         assert!(
@@ -294,9 +339,6 @@ mod tests {
         assert!(!restore.enabled);
         assert!(!restore.agents);
         assert!(restore.browser);
-
-        fs::write(&path, "[restore]\napps = true\n").unwrap();
-        assert!(Config::load_from(&path).is_err());
     }
 
     #[test]
@@ -309,15 +351,45 @@ mod tests {
         assert_eq!(sounds.done.as_deref(), Some("~/ding.oga"));
         fs::write(&path, "[sounds]\nenabled = false\n").unwrap();
         assert!(!Config::load_from(&path).unwrap().sounds.enabled);
-        fs::write(&path, "[sounds]\nbell = \"x\"\n").unwrap();
-        assert!(Config::load_from(&path).is_err());
     }
 
     #[test]
-    fn rejects_unknown_keys() {
+    fn reads_the_terminal() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        fs::write(&path, "roots = [\"~/dev\"]\n").unwrap();
+        fs::write(&path, "[terminal]\ncommand = \"exec foot\"\n").unwrap();
+        assert_eq!(Config::load_from(&path).unwrap().terminal(), "exec foot");
+    }
+
+    #[test]
+    fn unknown_settings_leave_the_others_be() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "roots = [\"~/dev\"]\n\
+             [terminal]\nfont = 9\n\
+             [restore]\nbrowser = false\napps = true\n\
+             [sounds]\nenabled = false\nbell = { a = 1.5 }\n\
+             [icons]\nsize = 2\n",
+        )
+        .unwrap();
+        let config = Config::load_from(&path).unwrap();
+        assert!(!config.restore.browser && config.restore.enabled);
+        assert!(!config.sounds.enabled);
+        assert_eq!(
+            config.unknown(),
+            [
+                "icons",
+                "roots",
+                "terminal.font",
+                "restore.apps",
+                "sounds.bell"
+            ]
+        );
+
+        // A value of the wrong kind is still a mistake.
+        fs::write(&path, "[sounds]\nenabled = \"no\"\n").unwrap();
         assert!(Config::load_from(&path).is_err());
     }
 }

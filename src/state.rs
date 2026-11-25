@@ -8,9 +8,15 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
+use serde::de::DeserializeOwned;
 
 use crate::name;
+
+/// The version of `spaces.json` and of sessions. Goes up when one changes in a
+/// way that an older `space` would read wrong; a new field that it can do
+/// without isn't one.
+pub const VERSION: u32 = 1;
 
 /// Replaces a file in one step, so a reader never sees half of it. Writing
 /// back what was read takes a lock too (`lock`), so two `space` processes
@@ -34,6 +40,32 @@ pub fn read_optional(path: &Path) -> Result<String> {
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(String::new()),
         Err(e) => Err(e).with_context(|| format!("can't read {}", path.display())),
     }
+}
+
+/// Reads the JSON of a file that says its version. One that doesn't is from
+/// before they did, which is the first.
+pub fn parse<T: DeserializeOwned>(text: &str) -> Result<T> {
+    let value: serde_json::Value = serde_json::from_str(text)?;
+    let version = value.get("version").map_or(Some(1), |v| v.as_u64());
+    let version = version.context("its version isn't a number")?;
+    ensure!(
+        version <= u64::from(VERSION),
+        "it's version {version}, made by a newer space than this one, which reads {VERSION}"
+    );
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Puts a file that can't be understood aside, so that nothing is saved over
+/// it, and says so. Hold its lock.
+pub fn put_aside(path: &Path, why: &anyhow::Error) -> Result<()> {
+    let aside = path.with_extension(format!("broken-{}", now()));
+    fs::rename(path, &aside).with_context(|| format!("can't put {} aside", path.display()))?;
+    eprintln!(
+        "space: warning: can't understand {} ({why:#}), so it's now {}",
+        path.display(),
+        aside.display()
+    );
+    Ok(())
 }
 
 /// Opens a file to lock, making it if needed.
@@ -196,6 +228,17 @@ mod tests {
         assert_eq!(last.get("c"), Some(Visit { key: 1, at: 200 }));
         last.renumber("a", &[(3, 1)].into());
         assert_eq!(last.get("a").unwrap().key, 1, "its tab didn't move");
+    }
+
+    #[test]
+    fn reads_the_versions_it_knows() {
+        type Read = BTreeMap<String, u32>;
+        assert_eq!(parse::<Read>(r#"{"a":2}"#).unwrap()["a"], 2);
+        assert_eq!(parse::<Read>(r#"{"version":1,"a":2}"#).unwrap()["a"], 2);
+        let newer = parse::<Read>(r#"{"version":2,"a":2}"#).unwrap_err();
+        assert!(newer.to_string().contains("newer space"), "{newer}");
+        assert!(parse::<Read>(r#"{"version":"1"}"#).is_err());
+        assert!(parse::<Read>("{ half").is_err());
     }
 
     #[test]

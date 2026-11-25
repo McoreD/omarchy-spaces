@@ -35,12 +35,12 @@ pub struct Entry {
     /// while that window lives, so the name doesn't change with focus.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor: Option<String>,
-    /// When it was made, in Unix milliseconds: the sidebar lists spaces in
-    /// the order you made them, so they keep their places as names change.
-    /// Moving a space (`space reorder`) hands these times out again, in the
-    /// new order.
-    #[serde(default)]
-    pub created: u64,
+    /// Its place in the sidebar, lowest first; 0 for none yet. A new space's
+    /// is when it was made, in Unix milliseconds, so it comes last and keeps
+    /// its place as names change. Moving a space (`space reorder`) hands the
+    /// spaces' places out again, in the new order.
+    #[serde(default, alias = "created", skip_serializing_if = "is_zero")]
+    pub order: u64,
     /// The names you gave its tabs, by what their workspaces are numbered, as
     /// every monitor has its own tab 3 (3 and 13). A tab without one is called
     /// after its most recently focused window. A name lasts as long as its
@@ -49,8 +49,14 @@ pub struct Entry {
     pub tabs: BTreeMap<u8, String>,
 }
 
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct File {
+    #[serde(default)]
+    version: u32,
     #[serde(default)]
     spaces: BTreeMap<String, Entry>,
 }
@@ -77,15 +83,20 @@ impl Store {
         Self::read(state_dir, state::lock(state_dir, ".spaces.lock"))
     }
 
-    fn read(state_dir: &Path, lock: Result<std::fs::File>) -> Result<Self> {
+    fn read(state_dir: &Path, mut lock: Result<std::fs::File>) -> Result<Self> {
         let path = state_dir.join("spaces.json");
         let text = state::read_optional(&path)?;
-        let file: File = if text.trim().is_empty() {
+        let file = if text.trim().is_empty() {
             File::default()
         } else {
-            // A broken file loses only names and folders; say so, start over.
-            serde_json::from_str(&text).unwrap_or_else(|e| {
-                eprintln!("space: warning: ignoring {}: {e}", path.display());
+            state::parse(&text).unwrap_or_else(|e| {
+                // One that's going to be saved over is put aside first. Not
+                // locked, it may be another by now, and stays.
+                if lock.is_ok()
+                    && let Err(e) = state::put_aside(&path, &e)
+                {
+                    lock = Err(e);
+                }
                 File::default()
             })
         };
@@ -132,6 +143,7 @@ impl Store {
             bail!("can't save {}: {e:#}", self.path.display());
         }
         let text = serde_json::to_string_pretty(&File {
+            version: state::VERSION,
             spaces: self.spaces.clone(),
         })?;
         state::write_atomic(&self.path, &(text + "\n"))
@@ -201,10 +213,43 @@ mod tests {
     }
 
     #[test]
-    fn a_broken_file_starts_over() {
+    fn a_file_it_cant_read_is_put_aside() {
+        for text in ["{ nope", r#"{ "version": 99, "spaces": {} }"#] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("spaces.json");
+            std::fs::write(&path, text).unwrap();
+            assert!(Store::load(dir.path()).unwrap().spaces.is_empty());
+            assert!(path.exists(), "only looked at");
+
+            let mut store = Store::lock(dir.path()).unwrap();
+            assert!(store.spaces.is_empty());
+            store.entry("s1").name = Some("Mail".into());
+            store.save().unwrap();
+            let kept = std::fs::read_dir(dir.path()).unwrap().flatten();
+            let aside = kept
+                .map(|file| file.path())
+                .find(|path| path.to_string_lossy().contains("spaces.broken-"));
+            assert_eq!(std::fs::read_to_string(aside.unwrap()).unwrap(), text);
+            let store = Store::load(dir.path()).unwrap();
+            assert_eq!(store.get("s1").unwrap().name.as_deref(), Some("Mail"));
+        }
+    }
+
+    #[test]
+    fn says_its_version_and_reads_files_from_before() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("spaces.json"), "{ nope").unwrap();
-        assert!(Store::load(dir.path()).unwrap().spaces.is_empty());
+        let path = dir.path().join("spaces.json");
+        std::fs::write(&path, r#"{ "spaces": { "s1": { "created": 5 } } }"#).unwrap();
+        let mut store = Store::lock(dir.path()).unwrap();
+        assert_eq!(store.get("s1").unwrap().order, 5);
+        store.entry("s1").order = 6;
+        store.save().unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            saved,
+            serde_json::json!({ "version": 1, "spaces": { "s1": { "order": 6 } } })
+        );
     }
 
     #[test]

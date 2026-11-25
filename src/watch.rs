@@ -153,7 +153,11 @@ pub fn watch(sounds: bool) -> Result<()> {
         }
         let configured = stamp(&paths::config_file());
         if configured != config_seen {
-            config = Config::load_or_default();
+            // Halfway through a change, or mistaken, what it last said stands.
+            match Config::load() {
+                Ok(read) => config = read,
+                Err(e) => eprintln!("space: warning: {e:#}"),
+            }
             config_seen = configured;
         }
 

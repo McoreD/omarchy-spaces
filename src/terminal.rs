@@ -354,9 +354,9 @@ pub fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-/// Opens a terminal in `dir` with `command` (the `terminal` setting), run by
-/// `sh -c` in that folder with `SPACES_DIR` set to it. It runs on its own,
-/// outliving `space`.
+/// Opens a terminal in `dir` with `command` (`terminal.command` in the
+/// config), run by `sh -c` in that folder with `SPACES_DIR` set to it. It runs
+/// on its own, outliving `space`.
 pub fn launch(command: &str, dir: &Path) -> Result<()> {
     Command::new("sh")
         .arg("-c")
@@ -445,9 +445,15 @@ mod tests {
                 .map(str::is_empty),
             Some(false)
         );
-        let child = Command::new("sleep").arg("5").spawn().unwrap();
-        assert_eq!(program_name(child.id()).as_deref(), Some("sleep"));
-        let mut child = child;
+        let mut child = Command::new("sleep").arg("5").spawn().unwrap();
+        // `spawn` can return just before the kernel gives it its new name.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut name = program_name(child.id());
+        while name.as_deref() != Some("sleep") && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            name = program_name(child.id());
+        }
+        assert_eq!(name.as_deref(), Some("sleep"));
         child.kill().unwrap();
         child.wait().unwrap();
         assert_eq!(program_name(u32::MAX), None);

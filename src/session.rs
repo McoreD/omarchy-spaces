@@ -184,17 +184,10 @@ fn read(path: &Path) -> Result<Option<Session>> {
     if text.trim().is_empty() {
         return Ok(None);
     }
-    match serde_json::from_str(&text) {
+    match state::parse(&text) {
         Ok(session) => Ok(Some(session)),
         Err(e) => {
-            let aside = path.with_extension(format!("broken-{}", state::now()));
-            fs::rename(path, &aside)
-                .with_context(|| format!("can't put {} aside", path.display()))?;
-            eprintln!(
-                "space: warning: can't understand {} ({e}), so it's now {}",
-                path.display(),
-                aside.display()
-            );
+            state::put_aside(path, &e)?;
             Ok(None)
         }
     }
@@ -203,7 +196,17 @@ fn read(path: &Path) -> Result<Option<Session>> {
 /// Replaces a session in one step, on the disk by the time it returns: the
 /// power may be about to go.
 fn write(path: &Path, session: &Session) -> Result<()> {
-    let text = serde_json::to_string_pretty(session)? + "\n";
+    #[derive(Serialize)]
+    struct Saved<'a> {
+        version: u32,
+        #[serde(flatten)]
+        session: &'a Session,
+    }
+    let saved = Saved {
+        version: state::VERSION,
+        session,
+    };
+    let text = serde_json::to_string_pretty(&saved)? + "\n";
     let dir = path.parent().expect("sessions live in a directory");
     fs::create_dir_all(dir).with_context(|| format!("can't create {}", dir.display()))?;
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
@@ -273,8 +276,8 @@ fn backup_due(state_dir: &Path) -> bool {
 pub fn set_previous_from(state_dir: &Path, file: &Path) -> Result<()> {
     let text =
         fs::read_to_string(file).with_context(|| format!("can't read {}", file.display()))?;
-    let wanted: Session = serde_json::from_str(&text)
-        .with_context(|| format!("can't understand {}", file.display()))?;
+    let wanted: Session =
+        state::parse(&text).with_context(|| format!("can't understand {}", file.display()))?;
     let _lock = state::lock(state_dir, ".session.lock")?;
     let all = match previous(state_dir)? {
         Some(left) => merge(left, wanted),
@@ -604,6 +607,26 @@ mod tests {
             fs::read_to_string(dir.path().join(broken.unwrap())).unwrap(),
             "{ half"
         );
+    }
+
+    #[test]
+    fn says_its_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = current_path(dir.path());
+        write(&path, &session("a", &["/x"])).unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            (&saved["version"], &saved["instance"]),
+            (&1.into(), &"a".into())
+        );
+        assert_eq!(read(&path).unwrap(), Some(session("a", &["/x"])));
+
+        // One from a newer `space` is left as it is to restore.
+        let newer = dir.path().join("newer.json");
+        fs::write(&newer, r#"{"version":99,"instance":"a","spaces":[]}"#).unwrap();
+        assert!(set_previous_from(dir.path(), &newer).is_err());
+        assert!(newer.exists());
     }
 
     #[test]

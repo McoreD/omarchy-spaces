@@ -828,7 +828,7 @@ impl Env {
     fn write_config(&self, text: &str) {
         let dir = self.home().join(".config/omarchy-spaces");
         fs::create_dir_all(&dir).unwrap();
-        let terminal = "terminal = 'pwd >> \"$HOME/launched\"'\n";
+        let terminal = "terminal.command = 'pwd >> \"$HOME/launched\"'\n";
         fs::write(dir.join("config.toml"), format!("{terminal}{text}")).unwrap();
     }
 }
@@ -1382,7 +1382,7 @@ fn restore_opens_the_browsers_windows_among_the_terminals() {
 fn restore_gets_by_without_a_config_it_can_read() {
     let env = Env::new();
     let notes = env.dir("notes");
-    env.write_config("terminal = 'twice'");
+    env.write_config("terminal.command = 'twice'");
     fs::create_dir_all(env.state()).unwrap();
     let saved = json!({ "instance": "before", "spaces": [
         { "terminals": [{ "slot": 1, "folder": notes }] },

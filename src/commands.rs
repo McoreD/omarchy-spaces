@@ -664,8 +664,8 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
             for id in &spaces {
                 let open = live.workspaces.get(id);
                 let entry = store.entry(id);
-                if entry.created == 0 {
-                    entry.created = state::now();
+                if entry.order == 0 {
+                    entry.order = state::now();
                 }
                 // A tab's name goes with its tab.
                 entry
@@ -678,7 +678,7 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
                     .retain(|tab, _| open.is_some_and(|open| open.contains(tab)));
             }
             let mut ids: Vec<String> = spaces.into_iter().collect();
-            ids.sort_by_key(|id| (store.get(id).map_or(0, |e| e.created), id.clone()));
+            ids.sort_by_key(|id| (store.get(id).map_or(0, |e| e.order), id.clone()));
             ids
         }
         None => {
@@ -688,7 +688,7 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
                 .filter(|id| *id != HOME)
                 .cloned()
                 .collect();
-            ids.sort_by_key(|id| (store.get(id).map_or(0, |e| e.created), id.clone()));
+            ids.sort_by_key(|id| (store.get(id).map_or(0, |e| e.order), id.clone()));
             ids
         }
     };
@@ -901,8 +901,8 @@ pub fn new(dir: Option<PathBuf>) -> Result<()> {
     let mut store = Store::lock(&paths::state_dir())?;
     let entry = store.entry(&id);
     entry.folder.get_or_insert(Folder::here(&dir));
-    if entry.created == 0 {
-        entry.created = state::now();
+    if entry.order == 0 {
+        entry.order = state::now();
     }
     store.save()?;
     println!("Opened a space in {}", paths::tilde(&dir));
@@ -1147,7 +1147,7 @@ pub fn restore(file: Option<PathBuf>, auto: bool) -> Result<()> {
             saved: session.spaces[0].clone(),
             id: String::new(),
             // In the sidebar, they keep their order.
-            created: now + spaces.len() as u64,
+            order: now + spaces.len() as u64,
         };
         if !space.saved.windows.is_empty() {
             space.open_terminals(&hypr, &config, &mut opened, || {
@@ -1264,7 +1264,7 @@ struct Restoring {
     id: String,
     /// The windows of `saved`, those open by now.
     addresses: Vec<Option<String>>,
-    created: u64,
+    order: u64,
 }
 
 impl Restoring {
@@ -1372,7 +1372,7 @@ impl Restoring {
             entry.name = entry.name.take().or_else(|| saved.name.clone());
             entry.icon = entry.icon.take().or_else(|| saved.icon.clone());
             entry.folder = entry.folder.take().or_else(|| saved.folder.clone());
-            entry.created = self.created;
+            entry.order = self.order;
         }
         store.save()?;
         drop(store);
@@ -2148,20 +2148,20 @@ fn reorder_home(
     hypr.eval(&script)
 }
 
-/// Gives the spaces `created` times in `order`, from the times they have:
-/// the same times, handed out in the new order, made to rise strictly so no
-/// two tie. New spaces, stamped now, still come after them all.
+/// Puts the spaces in `order`, handing out the places they have again, made
+/// to rise strictly so no two tie. New spaces, whose places are the time now,
+/// still come after them all.
 fn restamp(store: &mut Store, order: &[String]) {
-    let mut times: Vec<u64> = order
+    let mut places: Vec<u64> = order
         .iter()
-        .map(|id| store.get(id).map_or(0, |e| e.created))
+        .map(|id| store.get(id).map_or(0, |e| e.order))
         .collect();
-    times.sort_unstable();
+    places.sort_unstable();
     let mut last = 0;
-    for (id, time) in order.iter().zip(times) {
-        let time = time.max(last + 1);
-        store.entry(id).created = time;
-        last = time;
+    for (id, place) in order.iter().zip(places) {
+        let place = place.max(last + 1);
+        store.entry(id).order = place;
+        last = place;
     }
 }
 
@@ -2920,13 +2920,13 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::load(dir.path()).unwrap();
-        store.entry("s1").created = 10;
-        store.entry("s2").created = 10;
-        store.entry("s3").created = 30;
+        store.entry("s1").order = 10;
+        store.entry("s2").order = 10;
+        store.entry("s3").order = 30;
         restamp(&mut store, &ids(&["s3", "s1", "s2"]));
-        let created = |id| store.get(id).unwrap().created;
-        assert!(created("s3") < created("s1") && created("s1") < created("s2"));
-        assert!(created("s2") <= 30, "{}", created("s2"));
+        let place = |id| store.get(id).unwrap().order;
+        assert!(place("s3") < place("s1") && place("s1") < place("s2"));
+        assert!(place("s2") <= 30, "{}", place("s2"));
     }
 
     #[test]
