@@ -36,7 +36,7 @@ version=$(sed -n 's/^  "version": "\([0-9][0-9.]*\)",\?$/\1/p' manifest.json)
 arch=$(uname -m)
 case $arch in
 x86_64 | aarch64) ;;
-*) fail "there's no build for $arch: build it from source (see the README)" ;;
+*) fail "there's no build for $arch: build it from source (see docs/guide/install.md)" ;;
 esac
 
 bin="$HOME/.local/bin"
