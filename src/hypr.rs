@@ -308,7 +308,7 @@ pub fn focus_monitor(monitor: &str) -> String {
 pub fn show_workspace(name: &str) -> String {
     format!(
         "local spaces = package.loaded[\"hypr.omarchy-spaces\"]\n\
-         if spaces and spaces.show then spaces.show({}) end",
+         if spaces and spaces.internal then spaces.internal.show({}) end",
         lua_string(name)
     )
 }
@@ -316,7 +316,7 @@ pub fn show_workspace(name: &str) -> String {
 /// Lua that has every monitor follow to the space you are in, if the Hyprland
 /// part is loaded (`hypr/omarchy-spaces.lua`).
 pub const FOLLOW: &str = "local spaces = package.loaded[\"hypr.omarchy-spaces\"]\n\
-     if spaces and spaces.sync then spaces.sync() end";
+     if spaces and spaces.internal then spaces.internal.sync() end";
 
 /// Move a workspace to a monitor, by its name.
 pub fn move_workspace(selector: &str, monitor: &str) -> String {

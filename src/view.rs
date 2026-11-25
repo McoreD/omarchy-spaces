@@ -12,9 +12,10 @@ use crate::monitors;
 use crate::name::{self, HOME, Location};
 use crate::status::Status;
 
-/// Goes up when what's printed changes in a way that a plugin made for the
-/// last one can't read, so that one updated without the other says so.
-const VERSION: u32 = 1;
+/// Goes up when what's printed, here and by `space ls --json`, changes in a
+/// way that a reader made for the last one can't read, so that the plugin
+/// updated without `space`, or the other way around, says so.
+pub(crate) const VERSION: u32 = 1;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct State<'a> {

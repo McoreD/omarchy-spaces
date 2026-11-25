@@ -6,11 +6,14 @@
 -- at the end of ~/.config/hypr/bindings.lua, which loads after Omarchy's
 -- defaults. Remove that line to undo it.
 
--- spaces.go_to_tab(n) and spaces.move_window_to_tab(n[, follow]) make
--- actions for tab keys. This is plain Lua inside Hyprland rather than a call to
--- `space`, so it can't leave you stuck: outside a space (`home`) each one runs
--- the action Omarchy binds to workspace n, and works even if `space` is
--- missing.
+-- Each helper it returns makes an action for `o.bind` and `o.rebind`. What an
+-- action is (a command, a function) is up to the helper and can change, so
+-- bindings don't hold `space`'s commands themselves.
+--
+-- spaces.go_to_tab(n) and spaces.move_window_to_tab(n[, follow]) are plain Lua
+-- inside Hyprland rather than a call to `space`, so they can't leave you
+-- stuck: outside a space (`home`) each one runs the action Omarchy binds to
+-- workspace n, and works even if `space` is missing.
 
 -- Every monitor shows the same space. Within it each has tabs of its own,
 -- numbered as Omarchy numbers its workspaces: the first monitor's are 1-10,
@@ -310,10 +313,16 @@ local function move_window(slot, follow_it)
   end
 end
 
--- Plugin actions for `o.rebind`, so bindings don't hardcode the plugin id or
--- `omarchy-shell`'s call syntax.
 local PLUGIN = "com.t4t5.spaces"
 
+-- Runs a `space` command.
+local function run(command)
+  return function()
+    return "space " .. command
+  end
+end
+
+-- Calls the plugin.
 local function shell_call(action)
   return function()
     return "omarchy-shell shell call " .. PLUGIN .. " " .. action .. " ''"
@@ -322,6 +331,25 @@ end
 
 local function find_space()
   return { panel = PLUGIN }
+end
+
+-- With no space to send it to, you pick one.
+local pick_for_tab = shell_call("sendTab")
+local function send_tab(to)
+  if not to then
+    return pick_for_tab()
+  end
+  return run("tab send")() .. " " .. o.shell_quote(to)
+end
+
+local function send_window(to, follow_it)
+  assert(to, "spaces.send_window takes a space, \"next\" or \"prev\"")
+  return run("window send")() .. " " .. o.shell_quote(to) .. (follow_it == false and " --silent" or "")
+end
+
+-- Never without a terminal, even if `space` is missing.
+local function terminal()
+  return run("terminal")() .. " || omarchy-launch-terminal"
 end
 
 -- `sync` is for `space`, when it renames the workspace you are on into
@@ -340,15 +368,28 @@ local function show_tab(name)
 end
 
 local M = {
-  go_to_tab = focus,
-  move_window_to_tab = move_window,
   toggle_sidebar = shell_call("toggleSidebar"),
   find_space = find_space,
+
+  new_space = run("new"),
+  next_space = run("next"),
+  prev_space = run("prev"),
   rename_space = shell_call("renameSpace"),
+
+  new_tab = run("tab new"),
+  next_tab = run("tab next"),
+  prev_tab = run("tab prev"),
+  go_to_tab = focus,
   rename_tab = shell_call("renameTab"),
-  send_tab = shell_call("sendTab"),
-  sync = sync,
-  show = show_tab,
+  send_tab = send_tab,
+
+  send_window = send_window,
+  move_window_to_tab = move_window,
+
+  terminal = terminal,
+
+  -- For `space` alone (src/hypr.rs).
+  internal = { sync = sync, show = show_tab },
 }
 
 -- A tab emptied by closing its last window doesn't linger, however the

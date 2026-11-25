@@ -26,6 +26,7 @@ use crate::spaces::{self, Store};
 use crate::state::{self, Last};
 use crate::status::{self, Status};
 use crate::terminal;
+use crate::view;
 
 /// Where `space tab go`, `new`, `next` and `prev` go. A space's workspaces
 /// are its tabs.
@@ -598,8 +599,9 @@ pub struct Row {
 pub struct TerminalRow {
     /// Hyprland's address for the window: `0x55a4...`.
     pub address: String,
-    /// What its workspace is numbered.
-    pub slot: u8,
+    /// The tab it's on, by its key: what its workspace is numbered. `None` on
+    /// a workspace without a number.
+    pub tab: Option<u8>,
     /// The folder its shell is in.
     #[serde(flatten)]
     pub folder: Folder,
@@ -615,7 +617,7 @@ impl TerminalRow {
     fn new(t: &Terminal, live: &Live) -> Self {
         Self {
             address: t.address.clone(),
-            slot: t.tab,
+            tab: (t.tab > 0).then_some(t.tab),
             folder: t.shell.folder.clone(),
             program: t.shell.program.clone(),
             label: t.shell.label(),
@@ -967,7 +969,7 @@ pub(crate) fn session_of(
             if windows.is_empty() {
                 return None;
             }
-            let tabs: BTreeSet<u8> = windows.iter().map(|w| w.slot).collect();
+            let tabs: BTreeSet<u8> = windows.iter().map(|w| w.tab).collect();
             let layouts = tabs
                 .into_iter()
                 .map(|tab| {
@@ -1007,13 +1009,13 @@ fn session_window(
     window: &SpaceWindow,
     before: &[&Session],
 ) -> Option<session::Window> {
-    let slot = window.tab?;
+    let tab = window.tab?;
     let corner = snapshot
         .places
-        .get(&(window.space.clone(), slot))
+        .get(&(window.space.clone(), tab))
         .map_or((0, 0), |place| place.corner);
     Some(session::Window {
-        slot,
+        tab,
         address: window.address.clone(),
         floating: match window.fullscreen {
             _ if !window.floating => None,
@@ -1158,9 +1160,9 @@ pub fn restore(file: Option<PathBuf>, auto: bool) -> Result<()> {
             if !space.has_browser(None) {
                 space.note_restored(&hypr)?;
             }
-            for slot in space.slots() {
-                if !space.has_browser(Some(slot)) {
-                    space.arrange(&hypr, slot);
+            for key in space.tabs() {
+                if !space.has_browser(Some(key)) {
+                    space.arrange(&hypr, key);
                 }
             }
             if space.addresses.iter().any(Option::is_some) {
@@ -1179,9 +1181,9 @@ pub fn restore(file: Option<PathBuf>, auto: bool) -> Result<()> {
     for space in spaces.iter_mut().filter(|s| s.has_browser(None)) {
         space.open_browsers(&hypr, &mut opened, &mut browser_works);
         space.note_restored(&hypr)?;
-        for slot in space.slots() {
-            if space.has_browser(Some(slot)) {
-                space.arrange(&hypr, slot);
+        for key in space.tabs() {
+            if space.has_browser(Some(key)) {
+                space.arrange(&hypr, key);
             }
         }
         if space.addresses.iter().any(Option::is_some) {
@@ -1269,20 +1271,20 @@ struct Restoring {
 
 impl Restoring {
     /// Whether any of its windows, or of those on a tab, is a browser's.
-    fn has_browser(&self, slot: Option<u8>) -> bool {
+    fn has_browser(&self, tab: Option<u8>) -> bool {
         self.saved
             .windows
             .iter()
-            .any(|w| w.browser.is_some() && slot.is_none_or(|slot| w.slot == slot))
+            .any(|w| w.browser.is_some() && tab.is_none_or(|tab| w.tab == tab))
     }
 
-    fn slots(&self) -> BTreeSet<u8> {
-        self.saved.windows.iter().map(|w| w.slot).collect()
+    fn tabs(&self) -> BTreeSet<u8> {
+        self.saved.windows.iter().map(|w| w.tab).collect()
     }
 
     /// The tab you were on.
     fn back(&self) -> Option<String> {
-        let first = self.saved.windows.first()?.slot;
+        let first = self.saved.windows.first()?.tab;
         Some(session_selector(&self.id, self.saved.last.unwrap_or(first)))
     }
 
@@ -1296,7 +1298,7 @@ impl Restoring {
         opening: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
         self.id = match self.saved.windows.first() {
-            Some(first) if !self.saved.home => fresh_space(hypr, first.slot)?,
+            Some(first) if !self.saved.home => fresh_space(hypr, first.tab)?,
             _ => HOME.to_string(),
         };
         let mut opening = Some(opening);
@@ -1335,7 +1337,7 @@ impl Restoring {
 
     fn opened(&mut self, n: usize, address: Option<String>, opened: &mut HashSet<String>) {
         if let Some(address) = &address {
-            let workspace = session_workspace(&self.id, self.saved.windows[n].slot);
+            let workspace = session_workspace(&self.id, self.saved.windows[n].tab);
             reserve::release(&paths::reserved_dir(), &workspace);
             opened.insert(address.clone());
         }
@@ -1351,9 +1353,9 @@ impl Restoring {
     }
 
     /// Arranges a tab's windows as they were.
-    fn arrange(&self, hypr: &Hypr, slot: u8) {
+    fn arrange(&self, hypr: &Hypr, key: u8) {
         // Everything is open; only where is off.
-        if let Err(e) = arrange(hypr, &self.id, slot, &self.saved, &self.addresses) {
+        if let Err(e) = arrange(hypr, &self.id, key, &self.saved, &self.addresses) {
             eprintln!("space: warning: {e:#}");
         }
     }
@@ -1393,11 +1395,11 @@ fn reopen_terminal(
     token: &str,
     opening: impl FnOnce() -> Result<()>,
 ) -> Result<Option<String>> {
-    let workspace = session_workspace(id, terminal.slot);
+    let workspace = session_workspace(id, terminal.tab);
     let events = hypr.events()?;
     hypr.dispatch(&hypr::exec_on(
         &restored_command(config, terminal, token),
-        &format!("{} silent", session_selector(id, terminal.slot)),
+        &format!("{} silent", session_selector(id, terminal.tab)),
     ))?;
     opening()?;
     // You may be opening windows of your own there by now.
@@ -1436,9 +1438,9 @@ fn open_browser(
         eprintln!("space: warning: Chromium opens its last windows itself; leaving it to that");
         return Ok(None);
     }
-    let workspace = session_workspace(id, window.slot);
+    let workspace = session_workspace(id, window.tab);
     let rule = |enabled| {
-        let on = format!("{} silent", session_selector(id, window.slot));
+        let on = format!("{} silent", session_selector(id, window.tab));
         hypr.eval(&hypr::open_class_on(browser.class_pattern(), &on, enabled))
     };
     let events = hypr.events()?;
@@ -1498,13 +1500,13 @@ fn restored_command(config: &Config, terminal: &session::Window, token: &str) ->
 fn arrange(
     hypr: &Hypr,
     id: &str,
-    slot: u8,
+    key: u8,
     saved: &session::Space,
     addresses: &[Option<String>],
 ) -> Result<()> {
     let default = session::Layout::default();
-    let was = saved.layouts.get(&slot).unwrap_or(&default);
-    let name = session_workspace(id, slot);
+    let was = saved.layouts.get(&key).unwrap_or(&default);
+    let name = session_workspace(id, key);
     let monitors = hypr.monitors().unwrap_or_default();
     let find = || -> Result<Option<hypr::Workspace>> {
         Ok(hypr.workspaces()?.into_iter().find(|ws| ws.name == name))
@@ -1515,12 +1517,12 @@ fn arrange(
     // On the monitor whose tab it is, whichever its connector is now. `home`'s
     // are where Omarchy has them.
     let blocks = Blocks::load();
-    if let Some(monitor) = blocks.monitor(slot).or(was.monitor.as_deref())
+    if let Some(monitor) = blocks.monitor(key).or(was.monitor.as_deref())
         && !saved.home
         && workspace.monitor != monitor
         && monitors.iter().any(|m| m.name == monitor)
     {
-        hypr.dispatch(&hypr::move_workspace(&session_selector(id, slot), monitor))?;
+        hypr.dispatch(&hypr::move_workspace(&session_selector(id, key), monitor))?;
         workspace = find()?.unwrap_or(workspace);
     }
 
@@ -1536,7 +1538,7 @@ fn arrange(
     };
     let monitor = monitors.iter().find(|m| m.name == workspace.monitor);
     for (n, terminal) in saved.windows.iter().enumerate() {
-        let Some(address) = window(&n).filter(|_| terminal.slot == slot) else {
+        let Some(address) = window(&n).filter(|_| terminal.tab == key) else {
             continue;
         };
         if let Some(rect) = terminal.floating {
@@ -2612,6 +2614,13 @@ pub fn emptied(workspace: &str) -> Result<()> {
     leave_tab(&hypr, &id, key, emptied, focused)
 }
 
+/// What `space ls --json` prints.
+#[derive(Serialize)]
+struct List<'a> {
+    version: u32,
+    spaces: &'a [Row],
+}
+
 /// `space ls`: every space, the active one marked, with a window count.
 pub fn ls(json: bool) -> Result<()> {
     let hypr = match Hypr::from_env() {
@@ -2632,7 +2641,11 @@ pub fn ls(json: bool) -> Result<()> {
 
     let mut out = std::io::stdout().lock();
     if json {
-        serde_json::to_writer_pretty(&mut out, &rows)?;
+        let list = List {
+            version: view::VERSION,
+            spaces: &rows,
+        };
+        serde_json::to_writer_pretty(&mut out, &list)?;
         writeln!(out)?;
     } else {
         write!(out, "{}", format_rows(&rows))?;

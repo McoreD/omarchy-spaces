@@ -143,10 +143,10 @@ local spaces = require("hypr.omarchy-spaces")
 
 o.rebind("SUPER + B", "Show or hide spaces", spaces.toggle_sidebar())
 o.rebind("SUPER + P", "Find a space", spaces.find_space())
-o.rebind("SUPER + N", "New space", "space new")
-o.rebind("SUPER + SHIFT + J", "Next space", "space next")
-o.rebind("SUPER + SHIFT + K", "Previous space", "space prev")
-o.rebind("SUPER + T", "New tab", "space tab new")
+o.rebind("SUPER + N", "New space", spaces.new_space())
+o.rebind("SUPER + SHIFT + J", "Next space", spaces.next_space())
+o.rebind("SUPER + SHIFT + K", "Previous space", spaces.prev_space())
+o.rebind("SUPER + T", "New tab", spaces.new_tab())
 for n = 1, 10 do
   local key = "code:" .. tostring(n + 9)
   o.rebind("SUPER + " .. key, "Go to tab " .. n, spaces.go_to_tab(n))
@@ -154,23 +154,23 @@ for n = 1, 10 do
 end
 ```
 
-`o.rebind` replaces whatever Omarchy binds to that key, so pick others if you use those; `omarchy menu keybindings --print` lists what's taken. The number keys do exactly what Omarchy's workspace keys do while you're in `home`. Everything else you can bind is below, as `"space …"` commands or helpers on `spaces`.
+`o.rebind` replaces whatever Omarchy binds to that key, so pick others if you use those; `omarchy menu keybindings --print` lists what's taken. The number keys do exactly what Omarchy's workspace keys do while you're in `home`. Everything else you can bind is below. Bind these rather than `space` commands: they stay the same if the commands change.
 
 | Action | Does |
 |---|---|
 | `spaces.toggle_sidebar()` | Expand or collapse the spaces sidebar |
-| `space next` / `space prev` | Next / previous space, down and up the sidebar. They wrap around, with `home` at the top |
-| `space new` | New space, with a terminal in the folder you are in |
-| `space window send next` / `space window send prev` | Send the window to the next / previous space, and go with it |
+| `spaces.next_space()` / `spaces.prev_space()` | Next / previous space, down and up the sidebar. They wrap around, with `home` at the top |
+| `spaces.new_space()` | New space, with a terminal in the folder you are in |
+| `spaces.send_window("next")` / `spaces.send_window("prev")` | Send the window to the next / previous space, or to one by name, and go with it; with `false` after it, staying where you are |
 | `spaces.rename_tab()` | Name the tab you are on: type over its name on the bar, Enter to keep it, Escape to stop. An empty name has it called after its window again |
 | `spaces.send_tab()` | Move the tab you are on to another space, and go with it: type to filter the spaces, Enter to pick, Escape to stop. It starts on the space you left last |
-| `space tab send next` / `space tab send prev` | Move the tab you are on to the next / previous space, and go with it |
+| `spaces.send_tab("next")` / `spaces.send_tab("prev")` | Move the tab you are on to the next / previous space, or to one by name, and go with it |
 | `spaces.rename_space()` | Rename the space you are in: type over its name in the sidebar, Enter to keep it, Escape to stop. An empty name has it called after its folder again |
 | `spaces.find_space()` | Find a space: type to filter, Enter to switch, Escape to stop. Expands the sidebar for the search if it's collapsed |
-| `space terminal` | Terminal in the folder you are in; on an empty tab, the space's folder |
-| `space tab new` | New tab, with a terminal in the space's folder |
+| `spaces.terminal()` | Terminal in the folder you are in; on an empty tab, the space's folder. If that fails, Omarchy's own |
+| `spaces.new_tab()` | New tab, with a terminal in the space's folder |
 | `spaces.go_to_tab(n)` | Go to tab N |
-| `space tab next` / `space tab prev` | Next / previous tab |
+| `spaces.next_tab()` / `spaces.prev_tab()` | Next / previous tab |
 | `spaces.move_window_to_tab(n)` | Move the window to tab N; with `false`, staying where you are |
 
 In `home`, `go_to_tab` and `move_window_to_tab` behave exactly as Omarchy's workspace keys, so a new tab there opens empty.
@@ -201,7 +201,7 @@ space window send <space|next|prev> [--silent]  # the window to another space, o
 space window tab <n> [--silent]  # the window to tab n of the active space on this monitor
 
 # The rest
-space ls [--json]            # list spaces with window counts
+space ls [--json]            # list spaces with window counts; --json as { version, spaces }
 space restore                # open the spaces from before the last restart again
 space restore <file>         # or those of an earlier session
 space terminal               # a terminal in the folder you are in, or the space's
@@ -209,7 +209,7 @@ space status <working|waiting|done|idle> [--window <addr>] [--pid <pid>]  # repo
 space watch [--sounds]       # print the monitors, their tabs and the spaces, as a line of JSON each time they change; --sounds also rings for agents
 ```
 
-A space can be given by what it's called or by its id (`s1`, as `space ls` shows), and a tab by its space and what its workspace is numbered (`s1:2`, `work:2`). Each monitor's are numbered as Omarchy numbers workspaces, 1-10 on the first and 11-20 on the next, each shown as 1-10: the second monitor's tab 2 is `s1:12`. `space tab go 2` goes to tab 2 of the monitor you are on. `space close` asks each app to close, as `super+w` does, so an app can still stop to save.
+A space can be given by what it's called or by its id (`s1`, as `space ls` shows), and a tab by its space and what its workspace is numbered (`s1:2`, `work:2`). Each monitor's are numbered as Omarchy numbers workspaces, 1-10 on the first and 11-20 on the next, each shown as 1-10: the second monitor's tab 2 is `s1:12`. In what `space` prints as JSON, a `tab` or a `key` is what its workspace is numbered, 12, and a `slot` what it shows as, 2. `space tab go 2` goes to tab 2 of the monitor you are on. `space close` asks each app to close, as `super+w` does, so an app can still stop to save.
 
 After you log out or restart, the plugin opens the spaces that were up again by itself (it runs `space restore`, unless `[restore]` in the config sets `enabled = false`), `home` included: their names, icons and tab names, and their terminals, each in its folder and arranged as they were (splits and their sizes, groups, floating and fullscreen windows, monitors). A terminal that was running Claude Code picks its conversation up again (`claude --resume`), unless `[restore]` sets `agents = false`; with a terminal `command` of your own, that takes one that runs `space shell`. Chromium's windows and web apps come back among them with their tabs, unless `[restore]` sets `browser = false`: the tab you were on comes first, and the tabs load anew, without their history, groups or pins. Incognito windows don't, nor do windows of a browser on another data folder. If Chromium is set to continue where you left off, that's left to it. It then goes back to the space you were in, unless you have started on something else. Other programs in the terminals, what they had printed, and other apps' windows don't come back; the windows beside one take its room. Splits are restored in Hyprland's dwindle layout; in others, windows come back in the order they were opened.
 
@@ -231,6 +231,7 @@ The icon picker's glyphs, `omarchy/glyphs.json`, come from Nerd Fonts' list of g
 ```sh
 cargo test
 node --test omarchy/tests/*.test.mjs
+lua hypr/tests/keys.lua
 just reload             # after changing the plugin; the shell doesn't reload it by itself
 just stress             # goes between your spaces quickly, and checks that what shows keeps up
 ```

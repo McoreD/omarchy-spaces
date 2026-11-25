@@ -1,0 +1,135 @@
+-- The helpers for your keys, against stubs of Hyprland and Omarchy:
+--   lua hypr/tests/keys.lua
+
+local dispatched, omarchy = {}, {}
+local active = { name = "1" }
+
+-- `hl.dsp.window.move({ ... })` and the like, as { "window.move", { ... } }.
+local function dispatcher(path)
+  return setmetatable({}, {
+    __index = function(_, key)
+      return dispatcher(path and path .. "." .. key or key)
+    end,
+    __call = function(_, args)
+      return { path, args }
+    end,
+  })
+end
+
+local monitor = { name = "eDP-1", id = 0 }
+hl = {
+  on = function() end,
+  dsp = dispatcher(),
+  dispatch = function(action)
+    dispatched[#dispatched + 1] = action
+  end,
+  get_active_workspace = function()
+    return active
+  end,
+  get_active_monitor = function()
+    return monitor
+  end,
+  get_active_window = function()
+    return { address = "0x1" }
+  end,
+  get_monitors = function()
+    return { monitor }
+  end,
+  get_workspaces = function()
+    return {}
+  end,
+  get_workspace = function() end,
+}
+o = {
+  shell_quote = function(value)
+    return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
+  end,
+  workspaces = {
+    workspace_id = function(_, slot)
+      return slot
+    end,
+    focus = function(slot)
+      return function()
+        omarchy[#omarchy + 1] = "focus " .. slot
+      end
+    end,
+    move_window = function(slot, follow)
+      return function()
+        omarchy[#omarchy + 1] = "move " .. slot .. " " .. tostring(follow)
+      end
+    end,
+    reconcile = function() end,
+  },
+}
+package.preload["default.hypr.paths"] = function()
+  return { state_home = "/nonexistent" }
+end
+
+local here = arg[0]:match("^(.*)/tests/[^/]*$") or ".."
+local spaces = dofile(here .. "/omarchy-spaces.lua")
+
+local function equal(got, want)
+  if got ~= want then
+    error("got " .. tostring(got) .. ", want " .. tostring(want), 2)
+  end
+end
+
+-- `space`'s commands.
+equal(spaces.new_space(), "space new")
+equal(spaces.next_space(), "space next")
+equal(spaces.prev_space(), "space prev")
+equal(spaces.new_tab(), "space tab new")
+equal(spaces.next_tab(), "space tab next")
+equal(spaces.prev_tab(), "space tab prev")
+equal(spaces.terminal(), "space terminal || omarchy-launch-terminal")
+equal(spaces.send_window("next"), "space window send 'next'")
+equal(spaces.send_window("prev", false), "space window send 'prev' --silent")
+equal(spaces.send_window("it's", true), "space window send 'it'\\''s'")
+equal(pcall(spaces.send_window), false)
+equal(spaces.send_tab("next"), "space tab send 'next'")
+
+-- The plugin's.
+local call = "omarchy-shell shell call com.t4t5.spaces "
+equal(spaces.send_tab(), call .. "sendTab ''")
+equal(spaces.toggle_sidebar(), call .. "toggleSidebar ''")
+equal(spaces.rename_space(), call .. "renameSpace ''")
+equal(spaces.rename_tab(), call .. "renameTab ''")
+equal(spaces.find_space().panel, "com.t4t5.spaces")
+
+-- In `home`, Omarchy's own.
+spaces.go_to_tab(3)()
+spaces.move_window_to_tab(4, false)()
+equal(table.concat(omarchy, ", "), "focus 3, move 4 false")
+equal(#dispatched, 0)
+
+-- In a space, its tabs.
+active = { name = "s1:1" }
+spaces.go_to_tab(3)()
+spaces.move_window_to_tab(4)()
+spaces.move_window_to_tab(5, false)()
+equal(#omarchy, 2)
+equal(dispatched[1][1], "focus")
+equal(dispatched[1][2].workspace, "name:s1:3")
+equal(dispatched[2][1], "window.move")
+equal(dispatched[2][2].workspace, "name:s1:4")
+equal(dispatched[2][2].follow, true)
+equal(dispatched[3][2].follow, false)
+
+-- What `space` itself calls (src/hypr.rs).
+equal(type(spaces.internal.sync), "function")
+equal(type(spaces.internal.show), "function")
+
+-- The README has every helper, and no others.
+local file = assert(io.open(here .. "/../README.md"))
+local readme = file:read("a")
+file:close()
+local documented = {}
+for name in readme:gmatch("spaces%.([a-z_]+)%(") do
+  assert(spaces[name], "the README has spaces." .. name .. ", which isn't there")
+  documented[name] = true
+end
+for name in pairs(spaces) do
+  assert(name == "internal" or documented[name], "the README doesn't have spaces." .. name)
+end
+
+print("ok")

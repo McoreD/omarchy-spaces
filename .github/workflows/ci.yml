@@ -32,3 +32,4 @@ jobs:
       - run: cargo test --locked
       - run: node --test omarchy/tests/*.test.mjs
       - run: luac5.4 -p hypr/omarchy-spaces.lua
+      - run: lua5.4 hypr/tests/keys.lua

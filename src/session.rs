@@ -47,8 +47,9 @@ pub struct Session {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Space {
-    /// Whether it's `home`. Slots here are what tabs' workspaces are
-    /// numbered, as every monitor has its own tab 3 (3 and 13).
+    /// Whether it's `home`. Its tabs, as every space's, are known by their
+    /// keys, what their workspaces are numbered: every monitor has its own tab
+    /// 3 (3 and 13).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub home: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -61,10 +62,10 @@ pub struct Space {
     /// The tab you were on, or left it on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last: Option<u8>,
-    /// The names you gave its tabs, by slot.
+    /// The names you gave its tabs, by their keys.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tabs: BTreeMap<u8, String>,
-    /// How its tabs' windows are arranged, by slot.
+    /// How its tabs' windows are arranged, by their keys.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub layouts: BTreeMap<u8, Layout>,
     /// Where new tabs open, for a space without windows.
@@ -92,7 +93,9 @@ pub struct Layout {
 /// A terminal, or else a browser's window.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Window {
-    pub slot: u8,
+    /// The tab it's on, by its key.
+    #[serde(alias = "slot")]
+    pub tab: u8,
     /// A terminal's folder.
     #[serde(flatten)]
     pub folder: Option<Folder>,
@@ -152,15 +155,15 @@ fn merge(left: Session, mut saved: Session) -> Session {
         let left = spaces.remove(i);
         let offset = home.windows.len();
         home.windows.extend(left.windows);
-        for (slot, mut layout) in left.layouts {
+        for (tab, mut layout) in left.layouts {
             layout.tiles = layout
                 .tiles
                 .and_then(|t| t.filter_map(&|window| Some(window + offset)));
             layout.focused = layout.focused.map(|window| window + offset);
-            home.layouts.entry(slot).or_insert(layout);
+            home.layouts.entry(tab).or_insert(layout);
         }
-        for (slot, name) in left.tabs {
-            home.tabs.entry(slot).or_insert(name);
+        for (tab, name) in left.tabs {
+            home.tabs.entry(tab).or_insert(name);
         }
     }
     saved.spaces.splice(0..0, spaces);
@@ -481,7 +484,7 @@ mod tests {
                 .iter()
                 .map(|folder| Space {
                     windows: vec![Window {
-                        slot: 1,
+                        tab: 1,
                         folder: Some(Folder::here(folder)),
                         address: format!("0x{folder}"),
                         ..Default::default()
@@ -607,6 +610,16 @@ mod tests {
             fs::read_to_string(dir.path().join(broken.unwrap())).unwrap(),
             "{ half"
         );
+    }
+
+    #[test]
+    fn reads_what_earlier_versions_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = current_path(dir.path());
+        let saved = r#"{"instance":"a","spaces":[{"terminals":[
+            {"slot":1,"folder":"/x","address":"0x/x"}]}]}"#;
+        fs::write(&path, saved).unwrap();
+        assert_eq!(read(&path).unwrap(), Some(session("a", &["/x"])));
     }
 
     #[test]
