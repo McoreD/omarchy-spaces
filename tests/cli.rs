@@ -2126,7 +2126,7 @@ fn shell_is_your_own_after_the_conversation() {
     let id = "be6fb713-2beb-4233-86c2-266ee407ec56";
     assert_eq!(
         run(&format!("claude {id}")),
-        format!("{path} -i -c claude --resume {id}; exec '{path}'")
+        format!("{path} -i -c claude --resume {id} || claude; exec '{path}'")
     );
     // Nothing that can be picked up: just the shell.
     assert_eq!(run("claude x; rm -rf ~"), path.to_string());

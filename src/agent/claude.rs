@@ -20,7 +20,9 @@ pub const ADAPTER: Adapter = Adapter {
             .map_or_else(|| paths::home().join(".claude"), PathBuf::from);
         read(&dir, process)
     },
-    resume: |id| is_uuid(id).then(|| format!("claude --resume {id}")),
+    // One you never said anything in isn't kept, and can't be resumed: that
+    // fails, and a new one takes its place. Leaving one isn't a failure.
+    resume: |id| is_uuid(id).then(|| format!("claude --resume {id} || claude")),
 };
 
 fn is_uuid(id: &str) -> bool {
@@ -123,7 +125,10 @@ mod tests {
 
     #[test]
     fn makes_a_command_only_from_an_id() {
-        assert_eq!((ADAPTER.resume)(ID), Some(format!("claude --resume {ID}")));
+        assert_eq!(
+            (ADAPTER.resume)(ID),
+            Some(format!("claude --resume {ID} || claude"))
+        );
         assert_eq!((ADAPTER.resume)("x; rm -rf ~"), None);
     }
 

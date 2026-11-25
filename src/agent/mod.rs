@@ -111,7 +111,7 @@ mod tests {
         let id = "be6fb713-2beb-4233-86c2-266ee407ec56";
         assert_eq!(
             parse_resume(&format!("claude {id}")),
-            Some(format!("claude --resume {id}"))
+            Some(format!("claude --resume {id} || claude"))
         );
         assert_eq!(parse_resume("claude x; rm -rf ~"), None);
         assert_eq!(parse_resume(&format!("sh {id}")), None);
