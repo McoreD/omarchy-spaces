@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::Conversation;
 use crate::browser::Browser;
+use crate::folder::Folder;
 use crate::layout::{Rect, Tree};
 use crate::state;
 
@@ -67,8 +68,8 @@ pub struct Space {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub layouts: BTreeMap<u8, Layout>,
     /// Where new tabs open, for a space without windows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub folder: Option<PathBuf>,
+    #[serde(flatten)]
+    pub folder: Option<Folder>,
     /// Its windows, oldest first, then its browser windows.
     #[serde(alias = "terminals")]
     pub windows: Vec<Window>,
@@ -93,8 +94,8 @@ pub struct Layout {
 pub struct Window {
     pub slot: u8,
     /// A terminal's folder.
-    #[serde(default)]
-    pub folder: PathBuf,
+    #[serde(flatten)]
+    pub folder: Option<Folder>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser: Option<Browser>,
     /// Its window, under the Hyprland it was saved under.
@@ -478,7 +479,7 @@ mod tests {
                 .map(|folder| Space {
                     windows: vec![Window {
                         slot: 1,
-                        folder: folder.into(),
+                        folder: Some(Folder::here(folder)),
                         address: format!("0x{folder}"),
                         ..Default::default()
                     }],
@@ -538,7 +539,7 @@ mod tests {
         // /y closes, while /x goes from folder to folder.
         for secs in 2..=13 {
             let mut now = session("a", &["/x"]);
-            now.spaces[0].windows[0].folder = format!("/x/{}", secs / 2).into();
+            now.spaces[0].windows[0].folder = Some(Folder::here(format!("/x/{}", secs / 2)));
             saver.update(now, at(secs)).unwrap();
         }
         let saved = read(&path).unwrap().unwrap();
@@ -680,8 +681,12 @@ mod tests {
         let all = merge(home("/x"), saved);
         assert_eq!(all.spaces.len(), 2);
         assert!(all.spaces[0].home && all.spaces[0].active);
-        let folders: Vec<_> = all.spaces[0].windows.iter().map(|t| &t.folder).collect();
-        assert_eq!(folders, [Path::new("/y"), Path::new("/x")]);
+        let folders: Vec<_> = all.spaces[0]
+            .windows
+            .iter()
+            .map(|t| t.folder.clone())
+            .collect();
+        assert_eq!(folders, ["/y", "/x"].map(|dir| Some(Folder::here(dir))));
         assert_eq!(
             all.spaces[0].layouts[&1].tiles,
             Some(Tree::Tile(vec![1])),

@@ -7,6 +7,7 @@ pub mod browser;
 pub mod commands;
 pub mod config;
 pub mod core;
+pub mod folder;
 pub mod hypr;
 pub mod layout;
 pub mod monitors;

@@ -70,6 +70,12 @@ pub struct Report {
 }
 
 impl Terminal {
+    /// The machine it runs on, as core calls it: `box` for `box/t7`. `None`
+    /// for this one.
+    pub fn machine(&self) -> Option<&str> {
+        Some(self.address.split_once('/')?.0)
+    }
+
     /// Whether it shows in the window run by `pid` here.
     fn shows_in(&self, pid: u32) -> bool {
         self.labels.get(WINDOW_LABEL) == Some(&window_label(pid))
@@ -156,9 +162,11 @@ fn space_labels() -> Value {
     json!({ LABEL: "1" })
 }
 
-/// Spaces' live terminals.
+/// Spaces' live terminals, as a subscription starts with them: from memory.
+/// `terminal.list` asks each machine added to core, waiting seconds for one
+/// that doesn't answer and then leaving its terminals out.
 pub fn list() -> Result<Vec<Terminal>> {
-    let result = call("terminal.list", json!({ "labels": space_labels() }))?;
+    let result = call("events.subscribe", json!({ "labels": space_labels() }))?;
     Ok(serde_json::from_value(result["terminals"].clone())?)
 }
 

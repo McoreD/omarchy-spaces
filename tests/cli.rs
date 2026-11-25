@@ -437,9 +437,6 @@ impl CoreState {
         self.requests.push(request.clone());
         let params = &request["params"];
         let result = match request["method"].as_str().unwrap_or("") {
-            "terminal.list" => {
-                json!({ "terminals": self.terminals, "hidden_finished": 0, "machines": [] })
-            }
             "events.subscribe" => {
                 self.subscribers.push(stream.try_clone().unwrap());
                 json!({ "seq": 0, "terminals": self.terminals })
@@ -508,10 +505,18 @@ impl Core {
     /// A terminal showing in the window at `address`, whose process is
     /// `1000 + address` as the fake Hyprland has it, at its prompt in `dir`.
     fn add(&self, window: &str, dir: &Path) -> String {
+        self.add_on(None, window, dir)
+    }
+
+    /// One running on `machine`.
+    fn add_on(&self, machine: Option<&str>, window: &str, dir: &Path) -> String {
         let pid = 1000 + u32::from_str_radix(window.trim_start_matches("0x"), 16).unwrap();
         let mut state = self.state.lock().unwrap();
         state.next += 1;
-        let address = format!("t{}", state.next);
+        let address = match machine {
+            Some(machine) => format!("{machine}/t{}", state.next),
+            None => format!("t{}", state.next),
+        };
         let record = json!({
             "address": address,
             "labels": { "omarchy-spaces": "1", "omarchy-spaces-window": window_label(pid) },
@@ -2098,6 +2103,36 @@ fn a_terminal_in_core_is_named_and_followed_through_core() {
         json!({ "pid": 8, "name": "zsh", "argv": ["-zsh"], "cwd": ren.display().to_string() }),
     );
     assert_eq!(env.ls_json()[1]["terminals"][0]["label"], "ren");
+}
+
+#[test]
+fn a_terminal_on_another_machine_is_in_a_folder_there() {
+    let env = Env::new();
+    let core = Core::start(&env);
+    // A folder by the same path here, in a checkout, is another one.
+    let app = env.dir("ren/app");
+    fs::create_dir_all(env.dir("ren").join(".git")).unwrap();
+    let window = env.add_window("s1:1");
+    core.add_on(Some("box"), &window, &app);
+    env.set_active("s1:1");
+
+    let row = &env.ls_json()[1];
+    assert_eq!(row["label"], "app");
+    assert_eq!(row["folder"], app.display().to_string());
+    assert_eq!(row["machine"], "box");
+    assert_eq!(row["terminals"][0]["folder"], app.display().to_string());
+    assert_eq!(row["terminals"][0]["machine"], "box");
+    let listed = env.ok(&["ls"]);
+    assert!(
+        listed.contains(&format!("box:{}", app.display())),
+        "{listed}"
+    );
+
+    // A terminal opens here, so not there.
+    env.ok(&["terminal"]);
+    env.ok(&["tab", "new"]);
+    let home = env.dir("").display().to_string();
+    assert_eq!(env.launched(2), [home.clone(), home]);
 }
 
 #[test]

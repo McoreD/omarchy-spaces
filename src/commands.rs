@@ -13,6 +13,7 @@ use serde::Serialize;
 use crate::browser::{self, Browser, Browsers};
 use crate::config::{self, Config};
 use crate::core;
+use crate::folder::{self, Folder};
 use crate::hypr::{self, Hypr};
 use crate::layout::{self, Rect, Tree};
 use crate::monitors::{self, Blocks, Strip};
@@ -567,7 +568,8 @@ pub struct Row {
     pub icon: Option<String>,
     /// The checkout (or folder) its terminal is in. `None` for `home`, and
     /// for a space that never had a terminal.
-    pub folder: Option<PathBuf>,
+    #[serde(flatten, serialize_with = "folder::or_null")]
+    pub folder: Option<Folder>,
     pub active: bool,
     /// `None` when Hyprland can't be reached.
     pub windows: Option<u32>,
@@ -599,7 +601,8 @@ pub struct TerminalRow {
     /// What its workspace is numbered.
     pub slot: u8,
     /// The folder its shell is in.
-    pub folder: PathBuf,
+    #[serde(flatten)]
+    pub folder: Folder,
     /// What runs in it (`claude`, `nvim`), or `None` at the prompt.
     pub program: Option<String>,
     /// What its tab shows: the program, or else the folder's name.
@@ -613,7 +616,7 @@ impl TerminalRow {
         Self {
             address: t.address.clone(),
             slot: t.tab,
-            folder: t.shell.cwd.clone(),
+            folder: t.shell.folder.clone(),
             program: t.shell.program.clone(),
             label: t.shell.label(),
             status: live.statuses.get(&t.address).copied(),
@@ -629,7 +632,7 @@ fn describe(
     id: &str,
     entry: &mut spaces::Entry,
     terminals: &[Terminal],
-) -> (String, Option<PathBuf>) {
+) -> (String, Option<Folder>) {
     let followed = entry
         .anchor
         .as_ref()
@@ -637,14 +640,14 @@ fn describe(
         .or_else(|| terminals.first());
     if let Some(terminal) = followed {
         entry.anchor = Some(terminal.address.clone());
-        entry.folder = Some(terminal.shell.cwd.clone());
+        entry.folder = Some(terminal.shell.folder.clone());
     } else {
         entry.anchor = None;
     }
-    let folder = entry.folder.as_deref().map(terminal::checkout);
+    let folder = entry.folder.as_ref().map(Folder::checkout);
     let label = match (&entry.name, &folder) {
         (Some(name), _) => name.clone(),
-        (None, Some(folder)) => terminal::folder_name(folder),
+        (None, Some(folder)) => folder.name(),
         (None, None) => id.to_string(),
     };
     (label, folder)
@@ -694,7 +697,7 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
                label: String,
                named: bool,
                icon: Option<String>,
-               folder: Option<PathBuf>,
+               folder: Option<Folder>,
                tabs| {
         let visit = last.get(id);
         Row {
@@ -819,34 +822,36 @@ fn resolve(rows: &[Row], target: &str) -> Result<String> {
 }
 
 /// The folder you are in: the focused terminal's, else the active space's,
-/// else home.
+/// else home. One on another machine is passed over.
 fn here_folder(hypr: &Hypr) -> Result<PathBuf> {
     if let Some(pid) = hypr.active_window_pid()?
-        && let Some(cwd) = terminal::shell_cwd(pid)
+        && let Some(folder) = terminal::shell_folder(pid)
+        && let Some(dir) = folder.local()
     {
-        return Ok(cwd);
+        return Ok(dir.to_path_buf());
     }
     let (store, rows, _) = lock_rows(Some(hypr))?;
     Ok(rows
         .iter()
         .find(|r| r.active)
         .and_then(|r| store.get(&r.id))
-        .and_then(|entry| entry.folder.clone())
+        .and_then(|entry| entry.folder.as_ref()?.local())
         .filter(|dir| dir.is_dir())
-        .unwrap_or_else(paths::home))
+        .map_or_else(paths::home, Path::to_path_buf))
 }
 
 /// The folder a space's new tab opens in: the space's own, its checkout's
-/// when it's in one, else the folder you are in.
+/// when it's in one, else the folder you are in. One on another machine is
+/// passed over.
 fn space_folder(hypr: &Hypr, space: &str) -> Result<PathBuf> {
     let (rows, _) = load_rows(Some(hypr))?;
     match rows
-        .into_iter()
+        .iter()
         .find(|r| r.id == space)
-        .and_then(|r| r.folder)
+        .and_then(|r| r.folder.as_ref()?.local())
         .filter(|dir| dir.is_dir())
     {
-        Some(dir) => Ok(dir),
+        Some(dir) => Ok(dir.to_path_buf()),
         None => here_folder(hypr),
     }
 }
@@ -895,7 +900,7 @@ pub fn new(dir: Option<PathBuf>) -> Result<()> {
     // The watcher may have seen the space by now, and made its entry.
     let mut store = Store::lock(&paths::state_dir())?;
     let entry = store.entry(&id);
-    entry.folder.get_or_insert(dir.clone());
+    entry.folder.get_or_insert(Folder::here(&dir));
     if entry.created == 0 {
         entry.created = state::now();
     }
@@ -938,10 +943,12 @@ pub(crate) fn session_of(
                         .iter()
                         .find(|w| w.address == t.address)?;
                     let conversation = t.shell.conversation.clone();
+                    let folder = match &conversation {
+                        Some(conversation) => Folder::here(&conversation.folder),
+                        None => t.shell.folder.clone(),
+                    };
                     Some(session::Window {
-                        folder: conversation
-                            .as_ref()
-                            .map_or_else(|| t.shell.cwd.clone(), |c| c.folder.clone()),
+                        folder: Some(folder),
                         conversation,
                         ..session_window(snapshot, window, before)?
                     })
@@ -1460,11 +1467,13 @@ const BROWSER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// The command for a saved terminal.
 fn restored_command(config: &Config, terminal: &session::Window, token: &str) -> String {
-    // A folder that's gone gives way to the nearest one still there.
+    // A folder that's gone gives way to the nearest one still there, and one
+    // on another machine to home.
     let dir = terminal
         .folder
-        .ancestors()
-        .find(|dir| dir.is_dir())
+        .as_ref()
+        .and_then(Folder::local)
+        .and_then(|dir| dir.ancestors().find(|dir| dir.is_dir()))
         .map_or_else(paths::home, Path::to_path_buf);
     let resume = terminal
         .conversation
@@ -2646,7 +2655,7 @@ fn format_rows(rows: &[Row]) -> String {
             Some(n) => format!("{n} windows"),
             None => "-".to_string(),
         };
-        let folder = row.folder.as_deref().map(paths::tilde).unwrap_or_default();
+        let folder = row.folder.as_ref().map(Folder::display).unwrap_or_default();
         let line = format!(
             "{marker} {:id_width$}  {:width$}  {windows:<11}  {folder}",
             row.id, row.label
@@ -2700,7 +2709,7 @@ fn picker_lines(rows: &[&Row]) -> Vec<String> {
                 None => {}
             }
             if let Some(folder) = &row.folder {
-                details.push(paths::tilde(folder));
+                details.push(folder.display());
             }
             if row.active {
                 details.push("current".into());
@@ -2767,7 +2776,7 @@ mod tests {
             tab,
             pid,
             shell: terminal::Shell {
-                cwd: cwd.into(),
+                folder: Folder::here(cwd),
                 program: None,
                 agent: None,
                 conversation: None,
@@ -2829,7 +2838,7 @@ mod tests {
         ];
         let (label, folder) = describe("s1", &mut entry, &terminals);
         assert_eq!(label, "ren");
-        assert_eq!(folder.as_deref(), Some(Path::new(repo_s)));
+        assert_eq!(folder, Some(Folder::here(repo_s)));
         assert_eq!(entry.anchor.as_deref(), Some("0xa"));
 
         // It keeps following that window even when it's no longer first.

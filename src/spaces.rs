@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::folder::Folder;
 use crate::state;
 
 /// What Spaces remembers about one space.
@@ -28,8 +29,8 @@ pub struct Entry {
     pub icon: Option<String>,
     /// The folder of the terminal it follows, last time it was seen; where
     /// it started before that. New terminals in it open here.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub folder: Option<PathBuf>,
+    #[serde(flatten)]
+    pub folder: Option<Folder>,
     /// The address of the terminal window it follows: its first one, kept
     /// while that window lives, so the name doesn't change with focus.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -176,7 +177,7 @@ mod tests {
         assert!(store.spaces.is_empty());
         store.entry("s1").name = Some("Japanese".into());
         store.entry("s1").icon = Some("🗾".into());
-        store.entry("s2").folder = Some("/p/mail".into());
+        store.entry("s2").folder = Some(Folder::here("/p/mail"));
         store.entry("s2").tabs.insert(3, "server".into());
         store.entry("home").tabs.insert(13, "mail".into());
         store.save().unwrap();
@@ -187,7 +188,7 @@ mod tests {
         assert_eq!(store.get("s1").unwrap().icon.as_deref(), Some("🗾"));
         assert_eq!(
             store.get("s2").unwrap().folder,
-            Some(PathBuf::from("/p/mail"))
+            Some(Folder::here("/p/mail"))
         );
         assert_eq!(store.get("s2").unwrap().tabs[&3], "server");
 

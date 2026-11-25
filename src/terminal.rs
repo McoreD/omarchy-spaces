@@ -4,19 +4,20 @@
 //! A window's shell is herdr-core's when the window shows one of its
 //! terminals (`core.rs`), and is found in `/proc` otherwise.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 
 use crate::agent::{self, Conversation};
-use crate::{core, paths, status};
+use crate::folder::Folder;
+use crate::{core, status};
 
 /// What the shell of a terminal window is doing: the folder it's in, and
 /// the program it's running, unless it's at its prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shell {
-    pub cwd: PathBuf,
+    pub folder: Folder,
     /// The command running in the terminal's foreground (`claude`, `nvim`),
     /// or `None` at the prompt.
     pub program: Option<String>,
@@ -83,17 +84,15 @@ impl Shell {
     /// What a tab shows for this terminal: what it's running, or else the
     /// folder it's in.
     pub fn label(&self) -> String {
-        self.program
-            .clone()
-            .unwrap_or_else(|| folder_name(&self.cwd))
+        self.program.clone().unwrap_or_else(|| self.folder.name())
     }
 }
 
 /// The folder the shell of the terminal window run by `pid` is in, or `None`
 /// when the window isn't a terminal.
-pub fn shell_cwd(pid: u32) -> Option<PathBuf> {
+pub fn shell_folder(pid: u32) -> Option<Folder> {
     let core = core::list().ok().map(core::Terminals::new);
-    shell_of(pid, core.as_ref()).map(|shell| shell.cwd)
+    shell_of(pid, core.as_ref()).map(|shell| shell.folder)
 }
 
 /// The shell of the terminal window run by `pid`: core's terminal in it,
@@ -120,8 +119,9 @@ fn from_core(terminal: &core::Terminal) -> Shell {
         }
         None => (terminal.cwd.clone(), None),
     };
+    let machine = terminal.machine();
     Shell {
-        cwd,
+        folder: Folder::on(machine, cwd),
         program,
         agent: Some(Agent {
             source: AgentSource::Core(terminal.address.clone()),
@@ -136,6 +136,8 @@ fn from_core(terminal: &core::Terminal) -> Shell {
         conversation: terminal
             .foreground
             .as_ref()
+            // Another machine's pid would be some other process here.
+            .filter(|_| machine.is_none())
             .and_then(|fg| agent::conversation(fg.pid?)),
     }
 }
@@ -158,7 +160,7 @@ pub fn shell(pid: u32) -> Option<Shell> {
             .map(|p| p.trim().to_string())
             .filter(|p| !p.is_empty());
         return Some(Shell {
-            cwd,
+            folder: Folder::here(cwd),
             program,
             agent: None,
             conversation: std::fs::read_to_string(fake.join(format!("{pid}.conversation")))
@@ -184,7 +186,7 @@ pub fn shell(pid: u32) -> Option<Shell> {
     })?;
     let cwd = std::fs::canonicalize(format!("/proc/{shell}/cwd")).ok()?;
     Some(Shell {
-        cwd,
+        folder: Folder::here(cwd),
         program: foreground(&stat, &shells).and_then(program_name),
         agent: None,
         conversation: foreground(&stat, &shells).and_then(agent::conversation),
@@ -324,32 +326,6 @@ fn display_name<'a>(comm: &str, args: impl Iterator<Item = &'a str>) -> Option<S
     (!name.is_empty()).then(|| name.to_string())
 }
 
-/// The checkout `dir` is in (a worktree's own folder), else `dir` itself, as
-/// herdr names its spaces: `cd src` inside a repo keeps the repo's name.
-pub fn checkout(dir: &Path) -> PathBuf {
-    let home = paths::home();
-    for candidate in dir.ancestors() {
-        // Stop at home: a dotfiles repo there would name every space `~`.
-        if candidate == home {
-            break;
-        }
-        if candidate.join(".git").exists() {
-            return candidate.to_path_buf();
-        }
-    }
-    dir.to_path_buf()
-}
-
-/// A folder as a space's name: its last part, `~` for the home folder.
-pub fn folder_name(dir: &Path) -> String {
-    if dir == paths::home() {
-        return "~".into();
-    }
-    dir.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| dir.display().to_string())
-}
-
 /// The terminal `command` as one shell command that runs it in `dir` with
 /// `SPACES_DIR` and `env` set, for Hyprland to run (`launch` sets them
 /// itself).
@@ -414,24 +390,23 @@ mod tests {
     }
 
     #[test]
-    fn names_folders_after_their_checkout() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("ren");
-        std::fs::create_dir_all(repo.join(".git")).unwrap();
-        std::fs::create_dir_all(repo.join("src/deep")).unwrap();
-        assert_eq!(checkout(&repo.join("src/deep")), repo);
-        // A worktree has a `.git` file of its own.
-        let worktree = repo.join("worktrees/fix");
-        std::fs::create_dir_all(&worktree).unwrap();
-        std::fs::write(worktree.join(".git"), "gitdir: ../../.git/worktrees/fix\n").unwrap();
-        assert_eq!(checkout(&worktree), worktree);
-        let plain = tmp.path().join("notes");
-        std::fs::create_dir_all(&plain).unwrap();
-        assert_eq!(checkout(&plain), plain);
-
-        assert_eq!(folder_name(&repo), "ren");
-        assert_eq!(folder_name(&paths::home()), "~");
-        assert_eq!(folder_name(Path::new("/")), "/");
+    fn a_terminal_on_another_machine_is_in_a_folder_there() {
+        let mut terminal = core::Terminal {
+            address: "box/t1".into(),
+            cwd: "/srv".into(),
+            foreground: Some(core::Foreground {
+                pid: Some(std::process::id()),
+                name: "claude".into(),
+                argv: vec!["claude".into()],
+                cwd: "/srv/app".into(),
+            }),
+            ..Default::default()
+        };
+        let shell = from_core(&terminal);
+        assert_eq!(shell.folder, Folder::on(Some("box"), "/srv/app"));
+        assert_eq!(shell.conversation, None);
+        terminal.address = "t1".into();
+        assert_eq!(from_core(&terminal).folder, Folder::here("/srv/app"));
     }
 
     #[test]
@@ -481,13 +456,13 @@ mod tests {
     #[test]
     fn labels_a_terminal_by_its_program_else_its_folder() {
         let at = |cwd: &Path, program: Option<&str>| Shell {
-            cwd: cwd.to_path_buf(),
+            folder: Folder::here(cwd),
             program: program.map(String::from),
             agent: None,
             conversation: None,
         };
         assert_eq!(at(Path::new("/p/ren"), Some("claude")).label(), "claude");
         assert_eq!(at(Path::new("/p/ren/src"), None).label(), "src");
-        assert_eq!(at(&paths::home(), None).label(), "~");
+        assert_eq!(at(&crate::paths::home(), None).label(), "~");
     }
 }
