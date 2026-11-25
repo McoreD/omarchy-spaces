@@ -521,7 +521,7 @@ impl Core {
             "address": address,
             "labels": { "omarchy-spaces": "1", "omarchy-spaces-window": window_label(pid) },
             "cwd": dir.display().to_string(),
-            "foreground": { "pid": 1, "name": "zsh", "argv": ["-zsh"], "cwd": dir.display().to_string() },
+            "foreground": { "pid": 1, "name": "bash", "argv": ["-bash"], "cwd": dir.display().to_string() },
             "turn": 0,
             "state": "live",
         });
@@ -2120,7 +2120,7 @@ fn a_terminal_in_core_is_named_and_followed_through_core() {
     core.event(
         &t,
         "foreground",
-        json!({ "pid": 8, "name": "zsh", "argv": ["-zsh"], "cwd": ren.display().to_string() }),
+        json!({ "pid": 8, "name": "bash", "argv": ["-bash"], "cwd": ren.display().to_string() }),
     );
     assert_eq!(env.ls_json()[1]["terminals"][0]["label"], "ren");
 }
@@ -3303,4 +3303,11 @@ fn an_unplugged_monitors_tab_put_somewhere_by_hand_stays() {
     let row = &env.ls_json()[1];
     assert_eq!(row["guests"], json!({}));
     assert_eq!(row["tabs"], json!({ "1": "test" }));
+}
+
+#[test]
+fn the_plugin_has_the_same_version_as_space() {
+    let manifest: Value =
+        serde_json::from_str(include_str!("../omarchy/manifest.json")).expect("manifest.json");
+    assert_eq!(manifest["version"], env!("CARGO_PKG_VERSION"));
 }

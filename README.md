@@ -25,7 +25,7 @@ You need Omarchy 4.5 or newer, and Rust: check with `cargo --version`, and if it
 1. Get the code, and build `space` into `~/.local/bin`, which Omarchy has on its PATH. Keep the folder: the plugin is linked from it.
 
    ```sh
-   git clone <repo-url> ~/.local/share/omarchy-spaces
+   git clone https://github.com/t4t5/omarchy-spaces.git ~/.local/share/omarchy-spaces
    cd ~/.local/share/omarchy-spaces
    cargo build --release
    install -Dm755 target/release/space ~/.local/bin/space
@@ -236,3 +236,9 @@ just stress             # goes between your spaces quickly, and checks that what
 ```
 
 The justfile's `install` and `setup` do Install's steps for a clone you work in, building into `~/.cargo/bin` and adding the `require` line for you. The plugin and `space` go together: after changing what `space watch` prints, do both `just install` and `just reload`, and raise `VERSION` in `src/view.rs` and `omarchy/Spaces.mjs` if the one can't read the other.
+
+`space` and the plugin share one version, in `Cargo.toml` and `omarchy/manifest.json`; the tests fail if they differ. CI (`.github/workflows/ci.yml`) runs on pull requests and on `main`: the tests above, `cargo fmt --check`, `cargo clippy` with warnings as errors, and a syntax check of the Lua.
+
+## License
+
+[MIT](LICENSE), except the sounds in `assets/sounds/`, which are Herdr's, under the [Apache License 2.0](assets/sounds/LICENSE).

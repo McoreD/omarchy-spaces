@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "com.t4t5.spaces",
   "name": "Spaces",
-  "version": "0.7.0",
+  "version": "0.1.0",
   "author": "T4T5",
   "description": "The active space's tabs on the bar, and a sidebar of spaces named after their folders",
   "kinds": [
