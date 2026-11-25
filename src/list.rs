@@ -44,8 +44,8 @@ struct Space<'a> {
     /// What most needs you among the agents in its windows, if any is
     /// working, done or waiting.
     status: Option<Status>,
-    /// When it was last left, in Unix milliseconds, or 0 if never.
-    left_at: u64,
+    /// When it was last left, in Unix milliseconds, or `null` if never.
+    left_at: Option<u64>,
     /// Its tabs, monitor by monitor, in the order they show. `null` when
     /// Hyprland can't be reached.
     tabs: Option<Vec<Tab>>,
@@ -109,7 +109,7 @@ fn space<'a>(row: &'a Row, hyprland: Option<(&Snapshot, &Live)>) -> Space<'a> {
         active: row.active,
         windows: row.windows,
         status: row.status,
-        left_at: row.left_at,
+        left_at: (row.left_at > 0).then_some(row.left_at),
         tabs: hyprland.map(|(snapshot, live)| tabs_of(row, snapshot, live)),
         terminals: row.terminals.iter().map(|t| terminal(&row.id, t)).collect(),
     }

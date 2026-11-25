@@ -2023,8 +2023,11 @@ fn ls_lists_spaces_with_counts() {
         ])
     );
     assert_eq!(rows[0]["folder"], Value::Null);
-    assert_eq!(rows[1]["left_at"], 0, "never left");
+    assert_eq!(rows[1]["left_at"], Value::Null, "never left");
     assert_eq!(rows.len(), 2);
+
+    env.ok(&["go", "home"]);
+    assert!(env.ls_json()[1]["left_at"].as_u64().is_some_and(|t| t > 0));
 }
 
 #[test]
