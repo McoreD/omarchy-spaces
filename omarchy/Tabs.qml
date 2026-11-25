@@ -55,7 +55,7 @@ Item {
     var terminals = Spaces.terminalsByAddress(root.rows)
     var here = active ? Spaces.locate(active.id, active.name).space : ""
     var row = (root.rows || []).find(function(r) { return r.id === here })
-    return Spaces.tabsFor(workspaces, windows, active, terminals, row ? row.tabs : null)
+    return Spaces.tabsFor(workspaces, windows, active, terminals, row ? row.tabs : null, row ? row.guests : null)
   }
 
   // Window classes and focus order come from Hyprland's IPC, which Quickshell

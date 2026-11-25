@@ -13,7 +13,7 @@ const json = JSON.stringify([
 test("parses space ls --json", () => {
   const rows = parseRows(json)
   assert.equal(rows.length, 4)
-  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, icon: "", folder: "", active: false, windows: 4, leftAt: 1000, status: "", tabs: {}, terminals: [] })
+  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, icon: "", folder: "", active: false, windows: 4, leftAt: 1000, status: "", tabs: {}, guests: {}, terminals: [] })
   assert.equal(rows[3].windows, -1, "no count without Hyprland")
   assert.equal(rows[3].named, true)
   assert.throws(() => parseRows("space: error"), /unexpected/)
@@ -190,6 +190,11 @@ test("each monitor has its own tabs", () => {
   // Unplugged, its tabs are on the one that's left.
   workspaces[2].monitor = "eDP-1"
   assert.deepEqual(tabs({ id: -2, name: "ren:2", monitor: "eDP-1" }).map((t) => t.key), [1, 2, 11])
+  const shown = (guests) => tabsFor(workspaces, [], { id: -2, name: "ren:2", monitor: "eDP-1" }, {}, {}, guests)
+    .tabs.map((t) => [t.slot, t.key])
+  assert.deepEqual(shown({ 11: 3 }), [[1, 1], [2, 2], [3, 11]], "numbered after its own")
+  assert.deepEqual(shown({ 11: 0 }), [[1, 1], [2, 2], [0, 11]], "or last, without one")
+  assert.deepEqual(parseRows('[{"id":"s1","guests":{"11":4,"x":2,"12":11}}]')[0].guests, { 11: 4 })
 })
 
 test("home's tabs are the monitor's plain workspaces", () => {

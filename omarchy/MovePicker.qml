@@ -190,7 +190,7 @@ PanelWindow {
             visible: root.query === ""
             leftPadding: Style.spacing.xxs
             textFormat: Text.PlainText
-            text: root.sidebar && root.sidebar.menuTab ? "Move tab " + root.sidebar.menuTab.slot + " to space" : ""
+            text: root.sidebar && root.sidebar.menuTab ? (root.sidebar.menuTab.slot > 0 ? "Move tab " + root.sidebar.menuTab.slot : "Move tab") + " to space" : ""
             color: root.foreground
             opacity: 0.4
             font.family: Style.font.family

@@ -19,6 +19,8 @@ struct Hyprland {
     /// What the monitor you aren't on shows, with two plugged in: `eDP-1`,
     /// whose workspaces are numbered 1-10, and `DP-1`, whose are 11-20.
     elsewhere: Option<String>,
+    /// Whether the second was unplugged, its workspaces left on the first.
+    unplugged: bool,
     /// Workspaces as (id, name).
     workspaces: Vec<(i64, String)>,
     /// Windows, by the name of the workspace each is on.
@@ -115,7 +117,12 @@ impl Hyprland {
         let id = self.ensure(name);
         let windows = self.windows.iter().filter(|w| *w == name).count();
         let layout = if self.layouts { "dwindle" } else { "" };
-        json!({ "id": id, "name": name, "monitor": monitor_of(name), "windows": windows, "tiledLayout": layout })
+        let monitor = if self.unplugged {
+            "eDP-1"
+        } else {
+            monitor_of(name)
+        };
+        json!({ "id": id, "name": name, "monitor": monitor, "windows": windows, "tiledLayout": layout })
     }
 
     /// Hyprland destroys empty workspaces that no monitor shows.
@@ -750,7 +757,21 @@ impl Env {
         .unwrap();
         let mut hypr = self.hypr.lock().unwrap();
         hypr.ensure(shows);
+        hypr.unplugged = false;
         hypr.elsewhere = Some(shows.into());
+    }
+
+    /// Leaves one monitor, with everything on it.
+    fn unplug(&self) {
+        fs::create_dir_all(self.home().join(".local/state/omarchy")).unwrap();
+        fs::write(
+            self.home().join(".local/state/omarchy/monitor-workspaces"),
+            "0\teDP-1\tBOE\n1\t\tStudioDisplay\n",
+        )
+        .unwrap();
+        let mut hypr = self.hypr.lock().unwrap();
+        hypr.unplugged = true;
+        hypr.elsewhere = None;
     }
 
     /// What the monitor you aren't on shows.
@@ -2901,4 +2922,67 @@ fn a_tab_sent_to_another_space_stays_on_its_monitor() {
     env.add_window("s2:12");
     env.ok(&["tab", "reorder", "s2:12", "1"]);
     assert_eq!(env.windows(), ["s1:1", "s2:12", "s2:1", "s2:11"]);
+}
+
+#[test]
+fn an_unplugged_monitors_tabs_are_numbered_among_the_ones_left() {
+    let env = Env::new();
+    env.add_window("s1:1");
+    env.add_window("s1:2");
+    env.add_window("s1:11");
+    env.add_window("s1:11");
+    env.set_active("s1:2");
+    env.unplug();
+    env.ok(&["tab", "rename", "s1:11", "test"]);
+    let guests = |env: &Env| env.ls_json()[1]["guests"].clone();
+    assert_eq!(guests(&env), json!({ "11": 3 }));
+
+    // By its number, or stepping to it as they show.
+    env.ok(&["tab", "go", "3"]);
+    assert_eq!(env.active(), "s1:11");
+    env.ok(&["tab", "next"]);
+    assert_eq!(env.active(), "s1:1");
+    env.ok(&["tab", "prev"]);
+    assert_eq!(env.active(), "s1:11");
+
+    // A window to it, and from it; a new tab leaves it its number.
+    env.ok(&["window", "tab", "2"]);
+    assert_eq!(env.active(), "s1:2");
+    env.ok(&["window", "tab", "3"]);
+    assert_eq!(env.active(), "s1:11");
+    env.ok(&["tab", "new"]);
+    assert_eq!(env.active(), "s1:4");
+    assert_eq!(guests(&env), json!({ "11": 3 }));
+
+    // Where you left the space is still there.
+    env.ok(&["tab", "go", "3"]);
+    env.ok(&["go", "home"]);
+    env.ok(&["go", "s1"]);
+    assert_eq!(env.active(), "s1:11");
+
+    // Back, it's the other monitor's tab 1 again, with the name it had.
+    env.plug_in("s1:11");
+    assert_eq!(guests(&env), json!({}));
+    assert_eq!(env.ls_json()[1]["tabs"], json!({ "11": "test" }));
+}
+
+#[test]
+fn an_unplugged_monitors_tab_put_somewhere_by_hand_stays() {
+    let env = Env::new();
+    env.add_window("s1:1");
+    env.add_window("s1:2");
+    env.add_window("s1:11");
+    env.set_active("s1:2");
+    env.unplug();
+    env.ok(&["tab", "rename", "s1:11", "test"]);
+
+    assert_eq!(
+        env.ok(&["tab", "reorder", "s1:11", "1"]),
+        "Moved tab 3 to 1\n"
+    );
+    assert_eq!(env.windows(), ["s1:2", "s1:3", "s1:1"]);
+    assert_eq!(env.active(), "s1:3", "with you on the tab you were on");
+    let row = &env.ls_json()[1];
+    assert_eq!(row["guests"], json!({}));
+    assert_eq!(row["tabs"], json!({ "1": "test" }));
 }

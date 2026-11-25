@@ -234,10 +234,11 @@ BarWidget {
   }
 
   function tabLabel(tab) {
-    if (root.vertical) return String(tab.slot)
+    var number = tab.slot > 0 ? String(tab.slot) : ""
+    if (root.vertical) return number || "·"
     // Its number and what you last used on it: a new tab, with nothing open
     // on it yet, is just its number.
-    return tab.slot + (tab.label ? "  " + tab.label : "")
+    return number + (number && tab.label ? "  " : "") + (tab.label || (number ? "" : "·"))
   }
 
   // Opens a tab's menu at a point on the bar's window, which need not start
@@ -464,7 +465,7 @@ BarWidget {
         required property var modelData
         required property int index
         text: root.tabLabel(modelData)
-        number: String(modelData.slot)
+        number: modelData.slot > 0 ? String(modelData.slot) : ""
         mouseLayer: tabMouse
         dragged: root.dragFrom === index
         shift: Spaces.dragShift(index, root.dragFrom, root.dragTo, root.dragPitch)

@@ -15,7 +15,7 @@ use crate::config::{self, Config};
 use crate::core;
 use crate::hypr::{self, Hypr};
 use crate::layout::{self, Rect, Tree};
-use crate::monitors::Blocks;
+use crate::monitors::{self, Blocks, Strip};
 use crate::name::{self, HOME, Location};
 use crate::paths;
 use crate::reserve;
@@ -48,16 +48,12 @@ pub fn go_to_tab(target: Target) -> Result<()> {
     if target == Target::New && space != HOME {
         return new_tab(&hypr, &active, &here);
     }
-    let block = Blocks::load().of(&active);
+    let strip = Strip::new(&hypr.workspaces()?, space, &active, &Blocks::load());
     let key = match target {
-        Target::Slot(slot) => name::key_in(block, slot),
-        Target::New => {
-            let open = open_tabs(&hypr.workspaces()?, &active, &here);
-            name::key_in(block, new_slot(&open, block)?)
-        }
+        Target::Slot(slot) => strip.at(slot),
+        Target::New => new_tab_in(&strip, [])?,
         Target::Next | Target::Prev => {
-            let open = open_tabs(&hypr.workspaces()?, &active, &here);
-            match step_tab(target == Target::Next, &open, here.key()) {
+            match step_tab(target == Target::Next, &strip.keys(), here.key()) {
                 Some(key) => key,
                 None => return Ok(()),
             }
@@ -78,7 +74,7 @@ pub fn go_to_named_tab(tab: String) -> Result<()> {
     let (rows, _) = load_rows(Some(&hypr))?;
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
-    let Tab { id, key, .. } = tab_or_active(&rows, Some(&tab), &active)?;
+    let Tab { id, key, .. } = tab_or_active(&hypr, &rows, Some(&tab), &active)?;
     if is_tab(&id, key, active.id, &active.name) {
         return Ok(());
     }
@@ -99,7 +95,7 @@ fn new_tab(hypr: &Hypr, active: &hypr::Workspace, here: &Location) -> Result<()>
     let config = Config::load()?;
     let space = here.space();
     let dir = space_folder(hypr, space)?;
-    let block = Blocks::load().of(active);
+    let blocks = Blocks::load();
     let (_, key) = reserve::reserve(&paths::reserved_dir(), |reserved| {
         let workspaces = hypr.workspaces()?;
         let opening: Vec<u8> = reserved
@@ -116,29 +112,14 @@ fn new_tab(hypr: &Hypr, active: &hypr::Workspace, here: &Location) -> Result<()>
         {
             return Ok((space.to_string(), key));
         }
-        let mut open = open_tabs(&workspaces, active, here);
-        open.extend(opening);
-        let slot = new_slot(&open, block)?;
-        Ok((space.to_string(), name::key_in(block, slot)))
+        let strip = Strip::new(&workspaces, space, active, &blocks);
+        let taken = open_in(&workspaces, space).into_iter().chain(opening);
+        Ok((space.to_string(), new_tab_in(&strip, taken)?))
     })?;
     let workspace = name::workspace_name(space, key);
     open_terminal_then(hypr, &config, &dir, &workspace, || focus(hypr, space, key))?;
     remember(space, key);
     Ok(())
-}
-
-/// The active space's tabs that have a workspace on the focused monitor now,
-/// the focused one included.
-fn open_tabs(
-    workspaces: &[hypr::Workspace],
-    active: &hypr::Workspace,
-    here: &Location,
-) -> BTreeSet<u8> {
-    let mut open: BTreeSet<u8> = tabs_on(workspaces, here.space(), &active.monitor)
-        .filter_map(|ws| name::locate(ws.id, &ws.name).key())
-        .collect();
-    open.extend(here.key());
-    open
 }
 
 /// A space's workspaces on a monitor.
@@ -152,27 +133,16 @@ fn tabs_on<'a>(
         .filter(move |ws| ws.monitor == monitor && name::locate(ws.id, &ws.name).space() == space)
 }
 
-/// The slot for a new tab of a monitor's, given the space's open ones: after
-/// its last, else its first free one.
-fn new_slot(open: &BTreeSet<u8>, block: u8) -> Result<u8> {
-    let open: BTreeSet<u8> = open
-        .iter()
-        .filter(|key| name::block_of(**key) == block)
-        .map(|key| name::slot_of(*key))
-        .collect();
-    let after_last = open.last().map_or(1, |last| last + 1);
-    if after_last <= name::SLOTS {
-        return Ok(after_last);
-    }
-    (1..=name::SLOTS)
-        .find(|slot| !open.contains(slot))
+/// A new tab for a monitor: see `Strip::new_tab`.
+fn new_tab_in(strip: &Strip, taken: impl IntoIterator<Item = u8>) -> Result<u8> {
+    strip
+        .new_tab(taken)
         .with_context(|| format!("all {} tabs are open; close one first", name::SLOTS))
 }
 
 /// The tab after or before `current` among the open ones; `None` when there's
 /// nowhere else to go.
-fn step_tab(forward: bool, open: &BTreeSet<u8>, current: Option<u8>) -> Option<u8> {
-    let open: Vec<u8> = open.iter().copied().collect();
+fn step_tab(forward: bool, open: &[u8], current: Option<u8>) -> Option<u8> {
     let Some(i) = current.and_then(|c| open.iter().position(|&key| key == c)) else {
         return if forward { open.first() } else { open.last() }.copied();
     };
@@ -186,7 +156,8 @@ pub fn window_to_tab(slot: u8, silent: bool) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
-    let key = name::key_in(Blocks::load().of(&active), slot);
+    let workspaces = hypr.workspaces()?;
+    let key = Strip::new(&workspaces, here.space(), &active, &Blocks::load()).at(slot);
     if here.key() == Some(key) || !hypr.has_active_window()? {
         return Ok(());
     }
@@ -258,6 +229,9 @@ pub(crate) struct Snapshot {
     windows: BTreeMap<String, u32>,
     /// Each space's tabs, by their keys.
     workspaces: BTreeMap<String, BTreeSet<u8>>,
+    /// Where a tab shows as another number than its own, by space and key:
+    /// an unplugged monitor's, on the one that's left (`monitors::slots`).
+    guests: BTreeMap<String, BTreeMap<u8, u8>>,
     /// The windows on spaces' workspaces, `home`'s included.
     pub space_windows: Vec<SpaceWindow>,
     /// Every window, spaces' or not, for the browser's to be told apart.
@@ -279,6 +253,7 @@ pub(crate) struct Live {
     active: Option<String>,
     windows: BTreeMap<String, u32>,
     workspaces: BTreeMap<String, BTreeSet<u8>>,
+    guests: BTreeMap<String, BTreeMap<u8, u8>>,
     terminals: BTreeMap<String, Vec<Terminal>>,
     /// Windows that reported a native status via `space status` without being
     /// recognized as a terminal in `/proc`.
@@ -380,6 +355,7 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
             );
         }
     }
+    snapshot.guests = guests(&snapshot.places);
     let clients = hypr.clients()?;
     if clients.iter().any(|c| c.grouped.len() > 1) {
         snapshot.group_bar = group_bar(hypr);
@@ -423,6 +399,29 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
         }
     }
     Ok(snapshot)
+}
+
+/// The tabs that show as another number than their own.
+fn guests(places: &BTreeMap<(String, u8), TabPlace>) -> BTreeMap<String, BTreeMap<u8, u8>> {
+    let blocks = Blocks::load();
+    let mut strips: BTreeMap<(&str, u8), Vec<u8>> = BTreeMap::new();
+    for ((space, key), place) in places {
+        if space != HOME
+            && let Some(block) = blocks.block(&place.monitor)
+        {
+            strips.entry((space, block)).or_default().push(*key);
+        }
+    }
+    let mut guests: BTreeMap<String, BTreeMap<u8, u8>> = BTreeMap::new();
+    for ((space, block), keys) in strips {
+        for (key, slot) in monitors::slots(keys, block) {
+            if name::block_of(key) != block {
+                let of = guests.entry(space.to_string()).or_default();
+                of.insert(key, slot);
+            }
+        }
+    }
+    guests
 }
 
 /// How high a group's bar is, as Hyprland works it out. A stacked one depends
@@ -486,6 +485,7 @@ pub(crate) fn live_from(
         active: snapshot.active.clone(),
         windows: snapshot.windows.clone(),
         workspaces: snapshot.workspaces.clone(),
+        guests: snapshot.guests.clone(),
         terminals,
         extra_agents,
         addresses,
@@ -538,6 +538,9 @@ pub struct Row {
     pub status: Option<Status>,
     /// The names you gave its tabs, by what their workspaces are numbered.
     pub tabs: BTreeMap<u8, String>,
+    /// What its tabs that an unplugged monitor left on another show as there,
+    /// by what their workspaces are numbered; 0 for no number.
+    pub guests: BTreeMap<u8, u8>,
 }
 
 /// A terminal window, as the bar names its tab.
@@ -674,6 +677,10 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
                     .max()
             }),
             tabs,
+            guests: live
+                .and_then(|l| l.guests.get(id))
+                .cloned()
+                .unwrap_or_default(),
         }
     };
 
@@ -1722,14 +1729,15 @@ fn switch(hypr: &Hypr, target: &str) -> Result<()> {
 /// there, else its first tab there. The other monitors follow
 /// (`hypr/omarchy-spaces.lua`).
 fn landing_tab(hypr: &Hypr, last: &Last, active: &hypr::Workspace, target: &str) -> Result<u8> {
-    let block = Blocks::load().of(active);
+    let workspaces = hypr.workspaces()?;
+    let strip = Strip::new(&workspaces, target, active, &Blocks::load());
+    // There, or where it was, unless another shows there now.
     if let Some(visit) = last.get(target)
-        && name::block_of(visit.key) == block
+        && (strip.slot(visit.key).is_some() || strip.at(name::slot_of(visit.key)) == visit.key)
     {
         return Ok(visit.key);
     }
     if target != HOME || last.get(target).is_some() {
-        let workspaces = hypr.workspaces()?;
         let tabs: Vec<(u8, &str)> = tabs_on(&workspaces, target, &active.monitor)
             .filter_map(|ws| Some((name::locate(ws.id, &ws.name).key()?, ws.name.as_str())))
             .collect();
@@ -1749,7 +1757,7 @@ fn landing_tab(hypr: &Hypr, last: &Last, active: &hypr::Workspace, target: &str)
             return Ok(*key);
         }
     }
-    Ok(name::key_in(block, 1))
+    Ok(strip.at(1))
 }
 
 /// Which space `space window send` and `space tab send` send to.
@@ -1930,25 +1938,35 @@ pub fn reorder_tab(tab: String, position: usize) -> Result<()> {
         bail!("positions start at 1, the space's first tab");
     }
     let active = hypr.active_workspace()?;
-    let Tab { id, key, slot } = tab_or_active(&rows, Some(&tab), &active)?;
+    let Tab { id, key, slot } = tab_or_active(&hypr, &rows, Some(&tab), &active)?;
     // The tabs there are, as the bar shows them: its monitor's.
     let workspaces = hypr.workspaces()?;
-    let monitor = workspaces
+    let on = workspaces
         .iter()
         .find(|ws| is_tab(&id, key, ws.id, &ws.name))
-        .map_or(active.monitor.as_str(), |ws| ws.monitor.as_str());
-    let tabs: Vec<u8> = tabs_on(&workspaces, &id, monitor)
-        .filter_map(|ws| name::locate(ws.id, &ws.name).key())
-        .collect::<BTreeSet<u8>>()
-        .into_iter()
-        .collect();
+        .unwrap_or(&active);
+    let strip = Strip::new(&workspaces, &id, on, &Blocks::load());
+    let tabs = strip.keys();
     let order = moved(tabs.clone(), key, position - 1);
-    // Where each tab that moves goes.
+    // Where each tab that moves goes. Among the monitor's guests, they become
+    // its own, on the slots they show as: put somewhere by hand, a tab stays.
     let moves: BTreeMap<u8, u8> = order
         .into_iter()
         .zip(tabs)
         .filter(|(from, to)| from != to)
+        .map(|(from, to)| match strip.slot(to) {
+            Some(slot) if slot > 0 && id != HOME => (from, strip.own(slot)),
+            _ => (from, to),
+        })
         .collect();
+    let elsewhere = |ws: &&hypr::Workspace| ws.monitor != on.monitor;
+    if let Some(taken) = workspaces
+        .iter()
+        .filter(elsewhere)
+        .find(|ws| moves.values().any(|to| is_tab(&id, *to, ws.id, &ws.name)))
+    {
+        bail!("tab {} is on another monitor", taken.name);
+    }
     let Some(&to) = moves.get(&key) else {
         return Ok(());
     };
@@ -1979,14 +1997,12 @@ pub fn reorder_tab(tab: String, position: usize) -> Result<()> {
 /// The tabs that move in the order to move them, each into the place the one
 /// before it left, once the tab `first` is out of the way.
 fn in_turn(first: u8, moves: &BTreeMap<u8, u8>) -> Vec<(u8, u8)> {
-    let mut free = first;
+    let mut waiting = moves.clone();
+    waiting.remove(&first);
     let mut steps = Vec::new();
-    while let Some((&from, &to)) = moves.iter().find(|(_, to)| **to == free) {
-        if from == first {
-            break;
-        }
+    while let Some((&from, &to)) = waiting.iter().find(|(_, to)| !waiting.contains_key(to)) {
+        waiting.remove(&from);
         steps.push((from, to));
-        free = from;
     }
     steps
 }
@@ -2091,7 +2107,12 @@ struct Tab {
 
 /// The tab given as `<space>:<n>` (`s1:2`, `ren:2`), `n` being its key, or
 /// with none, the one you are on.
-fn tab_or_active(rows: &[Row], tab: Option<&str>, active: &hypr::Workspace) -> Result<Tab> {
+fn tab_or_active(
+    hypr: &Hypr,
+    rows: &[Row],
+    tab: Option<&str>,
+    active: &hypr::Workspace,
+) -> Result<Tab> {
     let here = name::locate(active.id, &active.name);
     let (space, key) = match tab {
         Some(tab) => tab
@@ -2106,11 +2127,14 @@ fn tab_or_active(rows: &[Row], tab: Option<&str>, active: &hypr::Workspace) -> R
     if !open.contains(&key) {
         bail!("'{}' has no tab {key}", row.label);
     }
-    Ok(Tab {
-        id,
-        key,
-        slot: name::slot_of(key),
-    })
+    let workspaces = hypr.workspaces()?;
+    let on = workspaces
+        .iter()
+        .find(|ws| is_tab(&id, key, ws.id, &ws.name))
+        .unwrap_or(active);
+    let shown = Strip::new(&workspaces, &id, on, &Blocks::load()).slot(key);
+    let slot = shown.filter(|slot| *slot > 0).unwrap_or(name::slot_of(key));
+    Ok(Tab { id, key, slot })
 }
 
 /// `space tab rename [<space>:<n>] <name>`: gives a tab, the one you are on
@@ -2120,7 +2144,7 @@ pub fn rename_tab(tab: Option<String>, new_name: String) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (mut store, rows, _) = lock_rows(Some(&hypr))?;
     let active = hypr.active_workspace()?;
-    let Tab { id, key, slot } = tab_or_active(&rows, tab.as_deref(), &active)?;
+    let Tab { id, key, slot } = tab_or_active(&hypr, &rows, tab.as_deref(), &active)?;
     let new_name = spaces::clean_name(&new_name)?;
 
     let tabs = &mut store.entry(&id).tabs;
@@ -2196,7 +2220,7 @@ pub fn close_tab(tab: Option<String>) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (rows, _) = load_rows(Some(&hypr))?;
     let active = hypr.active_workspace()?;
-    let Tab { id, key, slot } = tab_or_active(&rows, tab.as_deref(), &active)?;
+    let Tab { id, key, slot } = tab_or_active(&hypr, &rows, tab.as_deref(), &active)?;
     let on_tab = |ws_id, ws_name: &str| is_tab(&id, key, ws_id, ws_name);
     let windows: Vec<String> = hypr
         .clients()?
@@ -2225,15 +2249,23 @@ fn is_tab(space: &str, key: u8, ws_id: i64, ws_name: &str) -> bool {
     location.space() == space && location.key() == Some(key)
 }
 
-/// The tab to go to from a space's tab that is ending, on `monitor`: its next
-/// tab with windows there, else the one before.
-fn tab_beside(workspaces: &[hypr::Workspace], id: &str, key: u8, monitor: &str) -> Option<u8> {
-    let tabs: BTreeSet<u8> = tabs_on(workspaces, id, monitor)
-        .filter(|ws| ws.windows > 0)
-        .filter_map(|ws| name::locate(ws.id, &ws.name).key())
-        .collect();
-    let after = tabs.range(key + 1..).next();
-    let before = tabs.range(..key).next_back();
+/// The tab to go to from a space's tab that is ending, on the workspace
+/// `from`: the next one with windows on its monitor, else the one before.
+fn tab_beside(
+    workspaces: &[hypr::Workspace],
+    id: &str,
+    key: u8,
+    from: &hypr::Workspace,
+) -> Option<u8> {
+    let full = |key: u8| {
+        workspaces
+            .iter()
+            .any(|ws| ws.windows > 0 && is_tab(id, key, ws.id, &ws.name))
+    };
+    let tabs = Strip::new(workspaces, id, from, &Blocks::load()).keys();
+    let at = tabs.iter().position(|tab| *tab == key)?;
+    let after = tabs[at + 1..].iter().find(|tab| full(**tab));
+    let before = tabs[..at].iter().rev().find(|tab| full(**tab));
     after.or(before).copied()
 }
 
@@ -2246,7 +2278,7 @@ pub fn send_tab(tab: Option<String>, to: SpaceTarget) -> Result<()> {
     let (rows, _) = load_rows(Some(&hypr))?;
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
-    let Tab { id, key, slot } = tab_or_active(&rows, tab.as_deref(), &active)?;
+    let Tab { id, key, slot } = tab_or_active(&hypr, &rows, tab.as_deref(), &active)?;
     let to = match to {
         SpaceTarget::Named(target) => resolve(&rows, &target)?,
         SpaceTarget::Next | SpaceTarget::Prev => match neighbour(&rows, to == SpaceTarget::Next) {
@@ -2272,9 +2304,9 @@ pub fn send_tab(tab: Option<String>, to: SpaceTarget) -> Result<()> {
         .iter()
         .find(|ws| is_tab(&id, key, ws.id, &ws.name))
         .unwrap_or(&active);
-    let block = Blocks::load().of(from);
+    let blocks = Blocks::load();
     let was_here = is_tab(&id, key, active.id, &active.name);
-    let beside = tab_beside(&workspaces, &id, key, &from.monitor);
+    let beside = tab_beside(&workspaces, &id, key, from);
     // Whether the space has anything else, on any monitor.
     let lives_on = snapshot
         .space_windows
@@ -2283,13 +2315,16 @@ pub fn send_tab(tab: Option<String>, to: SpaceTarget) -> Result<()> {
 
     let label = rows.iter().find(|r| r.id == to).map_or("", |r| &r.label);
     let (to_key, reserved) = if to == HOME {
-        (key_after(&open_in(&workspaces, HOME), block, HOME)?, None)
+        let strip = Strip::new(&workspaces, HOME, from, &blocks);
+        (key_after(&strip, open_in(&workspaces, HOME), HOME)?, None)
     } else {
         let (_, key) = reserve::reserve(&paths::reserved_dir(), |reserved| {
-            let mut open = open_in(&hypr.workspaces()?, &to);
+            let workspaces = hypr.workspaces()?;
+            let strip = Strip::new(&workspaces, &to, from, &blocks);
             let opening = reserved.iter().filter(|(of, _)| *of == to);
-            open.extend(opening.map(|(_, key)| *key));
-            Ok((to.clone(), key_after(&open, block, label)?))
+            let taken = opening.map(|(_, key)| *key);
+            let taken = open_in(&workspaces, &to).into_iter().chain(taken);
+            Ok((to.clone(), key_after(&strip, taken, label)?))
         })?;
         (key, Some(name::workspace_name(&to, key)))
     };
@@ -2347,15 +2382,14 @@ fn open_in(workspaces: &[hypr::Workspace], space: &str) -> BTreeSet<u8> {
         .collect()
 }
 
-/// The tab after a monitor's last one open, else its first free.
-fn key_after(open: &BTreeSet<u8>, block: u8, label: &str) -> Result<u8> {
-    match new_slot(open, block) {
-        Ok(slot) => Ok(name::key_in(block, slot)),
-        Err(_) => bail!(
+/// A new tab for a monitor, in the space called `label`.
+fn key_after(strip: &Strip, taken: impl IntoIterator<Item = u8>, label: &str) -> Result<u8> {
+    strip.new_tab(taken).with_context(|| {
+        format!(
             "all {} tabs of '{label}' are open; close one first",
             name::SLOTS
-        ),
-    }
+        )
+    })
 }
 
 /// Moves a tab's windows to another. Between
@@ -2443,7 +2477,7 @@ impl MovingTab {
 /// `focused` says whether that monitor is the one you are on.
 fn leave_tab(hypr: &Hypr, id: &str, key: u8, from: &hypr::Workspace, focused: bool) -> Result<()> {
     let workspaces = hypr.workspaces()?;
-    if let Some(next) = tab_beside(&workspaces, id, key, &from.monitor) {
+    if let Some(next) = tab_beside(&workspaces, id, key, from) {
         if focused {
             focus(hypr, id, next)?;
             remember(id, next);
@@ -2681,31 +2715,28 @@ mod tests {
     }
 
     #[test]
-    fn picks_new_tabs_in_the_monitors_block() {
-        let pick = |open: &[u8], block| new_slot(&open.iter().copied().collect(), block);
-        assert_eq!(pick(&[1], 0).unwrap(), 2);
-        assert_eq!(pick(&[1, 2, 5], 0).unwrap(), 6);
-        assert_eq!(pick(&[2, 10], 0).unwrap(), 1, "a gap once 10 is taken");
-        assert_eq!(pick(&[1, 2, 11], 1).unwrap(), 2, "after its own");
-        assert_eq!(pick(&[1, 2], 1).unwrap(), 1, "the first of its own");
-        assert!(pick(&(1..=10).collect::<Vec<_>>(), 0).is_err());
-    }
-
-    #[test]
     fn steps_through_the_open_tabs() {
-        let step =
-            |forward, open: &[u8], cur| step_tab(forward, &open.iter().copied().collect(), cur);
+        let step = step_tab;
         assert_eq!(step(true, &[1, 3, 4], Some(3)), Some(4));
         assert_eq!(step(true, &[1, 3, 4], Some(4)), Some(1), "wraps");
         assert_eq!(step(false, &[1, 3, 4], Some(1)), Some(4), "wraps");
         assert_eq!(step(false, &[1, 3, 4], Some(3)), Some(1));
-        assert_eq!(
-            step(true, &[1, 11], Some(1)),
-            Some(11),
-            "an unplugged one's"
-        );
+        assert_eq!(step(true, &[1, 11, 3], Some(11)), Some(3), "as they show");
         assert_eq!(step(true, &[2], Some(2)), None, "only one tab");
         assert_eq!(step(true, &[2, 5], None), Some(2));
+    }
+
+    #[test]
+    fn moves_tabs_into_the_places_others_leave() {
+        // A rotation: 3 to the front.
+        let moves = [(1, 2), (2, 3), (3, 1)].into();
+        assert_eq!(in_turn(3, &moves), [(2, 3), (1, 2)]);
+        // A guest to the front, of which nothing takes the place.
+        let moves = [(1, 2), (2, 3), (11, 1)].into();
+        assert_eq!(in_turn(11, &moves), [(2, 3), (1, 2)]);
+        // A tab past a guest.
+        let moves = [(1, 3), (2, 1), (11, 2)].into();
+        assert_eq!(in_turn(1, &moves), [(2, 1), (11, 2)]);
     }
 
     #[test]
@@ -2773,6 +2804,7 @@ mod tests {
             left_at: 0,
             terminals: Vec::new(),
             status: None,
+            guests: BTreeMap::new(),
             tabs: BTreeMap::new(),
         }
     }

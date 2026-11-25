@@ -23,6 +23,7 @@ export function parseRows(text) {
       leftAt: typeof row.left_at === "number" ? row.left_at : 0,
       status: status(row.status),
       tabs: tabNames(row.tabs),
+      guests: guestSlots(row.guests),
       terminals: (Array.isArray(row.terminals) ? row.terminals : [])
         .filter((t) => t && typeof t.address === "string" && typeof t.label === "string")
         .map((t) => ({ address: t.address, label: t.label, status: status(t.status) })),
@@ -37,6 +38,17 @@ function tabNames(value) {
     if (/^[1-9][0-9]{0,2}$/.test(key) && typeof name === "string" && name) names[key] = name
   }
   return names
+}
+
+// The slots a space's tabs from an unplugged monitor show as, by key:
+// `{ 11: 4 }`, 0 for none.
+function guestSlots(value) {
+  const slots = {}
+  if (!value || typeof value !== "object") return slots
+  for (const [key, slot] of Object.entries(value)) {
+    if (/^[1-9][0-9]{0,2}$/.test(key) && Number.isInteger(slot) && slot >= 0 && slot <= SLOTS) slots[key] = slot
+  }
+  return slots
 }
 
 // What an agent is doing, least to most in need of you; "" when idle.
@@ -150,7 +162,8 @@ export function tabActions(tab, model, elsewhere) {
 // it has none, and there is nothing to ask.
 export function closeTabWarning(tab) {
   if (!tab || !(tab.windows > 0)) return ""
-  const what = tab.label ? `tab ${tab.slot} (${tab.label})` : `tab ${tab.slot}`
+  const number = tab.slot ? `tab ${tab.slot}` : "this tab"
+  const what = tab.label ? `${number} (${tab.label})` : number
   return `Close ${what}? ${tab.windows === 1 ? "Its window closes" : `Its ${tab.windows} windows close`} too.`
 }
 
@@ -325,16 +338,20 @@ export function terminalsByAddress(rows) {
 //   terminals:  terminalsByAddress(rows), which name terminals better than
 //               their class, and say what their agents are doing
 //   names:      the names you gave the space's tabs, by key (its row's tabs)
+//   guests:     the slots those left by an unplugged monitor show as, by key
+//               (its row's guests); 0 for none
 // Returns { space, tabs: [{ key, slot, label, named, status, windows, active }] }
-// in order, those an unplugged monitor left here included, a tab's status the one most in need of you among its
-// windows. A name you gave a tab is its label, and makes it `named`.
+// in order, those an unplugged monitor left here included, a tab's status the
+// one most in need of you among its windows. A name you gave a tab is its label, and makes it `named`.
 // `home`'s tabs are just their numbers until you name them.
-export function tabsFor(workspaces, windows, active, terminals, names) {
+export function tabsFor(workspaces, windows, active, terminals, names, guests) {
   const here = locate(active ? active.id : 0, active ? active.name : "")
   const tabs = new Map()
   const add = (workspace, where) => {
     if (where.space !== here.space || where.key === 0 || tabs.has(where.key)) return
-    tabs.set(where.key, { id: workspace.id, key: where.key, slot: where.slot, label: "", status: "", windows: 0, focus: Infinity })
+    const guest = where.space !== "home" && guests && Object.prototype.hasOwnProperty.call(guests, where.key)
+    const slot = guest ? guests[where.key] : where.slot
+    tabs.set(where.key, { id: workspace.id, key: where.key, slot, label: "", status: "", windows: 0, focus: Infinity })
   }
   for (const workspace of workspaces || []) {
     if (workspace.monitor === active?.monitor) add(workspace, locate(workspace.id, workspace.name))
@@ -357,10 +374,17 @@ export function tabsFor(workspaces, windows, active, terminals, names) {
     }
   }
 
+  // Until the rows say how guests show, they go last, without a number.
+  const taken = new Set()
+  for (const tab of [...tabs.values()].sort((a, b) => a.key - b.key)) {
+    if (taken.has(tab.slot)) tab.slot = 0
+    taken.add(tab.slot)
+  }
+
   return {
     space: here.space,
     tabs: [...tabs.values()]
-      .sort((a, b) => a.key - b.key)
+      .sort((a, b) => (a.slot || SLOTS + 1) - (b.slot || SLOTS + 1) || a.key - b.key)
       .map((tab) => {
         const home = here.space === "home"
         const name = names && Object.prototype.hasOwnProperty.call(names, tab.key) ? names[tab.key] : ""
@@ -641,7 +665,7 @@ export function reorderTabs(model, from, to) {
 export function sameTabs(a, b) {
   return a.space === b.space && a.tabs.length === b.tabs.length && a.tabs.every((tab, i) => {
     const other = b.tabs[i]
-    return tab.key === other.key && tab.label === other.label && tab.windows === other.windows
+    return tab.slot === other.slot && tab.label === other.label && tab.windows === other.windows
       && tab.active === other.active
   })
 }

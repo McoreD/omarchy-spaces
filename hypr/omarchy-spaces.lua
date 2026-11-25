@@ -250,15 +250,40 @@ if reconcile then
   end
 end
 
--- The workspace a slot of a space is on the focused monitor.
+-- The tab that shows as a slot on the focused monitor: one of its own, or a
+-- guest, another monitor's left here as it was unplugged. Guests take the
+-- lowest slots free, in order, as `space` numbers them (src/monitors.rs).
 local function tab_here(space, slot)
   local monitor = hl.get_active_monitor()
-  local key = (monitor and block_of(monitor) or 0) * SLOTS + slot
-  local workspace = hl.get_workspace(selector(tab_name(space, key)))
-  if monitor and workspace and workspace.monitor and workspace.monitor.name ~= monitor.name then
+  local block = monitor and block_of(monitor) or 0
+  local own, guests = {}, {}
+  for _, workspace in ipairs(hl.get_workspaces()) do
+    local at, key = locate(workspace)
+    if at == space and key and monitor and workspace.monitor and workspace.monitor.name == monitor.name then
+      if (key - 1) // SLOTS == block then
+        own[(key - 1) % SLOTS + 1] = true
+      else
+        guests[#guests + 1] = key
+      end
+    end
+  end
+  if not own[slot] then
+    table.sort(guests)
+    local free = 0
+    for n = 1, slot do
+      free = free + (own[n] and 0 or 1)
+    end
+    if guests[free] then
+      return selector(tab_name(space, guests[free]))
+    end
+  end
+
+  local name = tab_name(space, block * SLOTS + slot)
+  local workspace = hl.get_workspace(selector(name))
+  if workspace and workspace.monitor and monitor and workspace.monitor.name ~= monitor.name then
     move_to_monitor(workspace, monitor)
   end
-  return selector(tab_name(space, key))
+  return selector(name)
 end
 
 local function focus(slot)
