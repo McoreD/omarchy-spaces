@@ -119,8 +119,8 @@ fn tab(space: &str, key: u8, snapshot: &Snapshot, live: &Live, row: Option<&Row>
 /// `Quick-terminal`, Omarchy's `chrome-app.hey.com__-Default` web apps are
 /// `Hey.com`.
 fn app_name(class: &str) -> String {
-    let name = match browser::web_app(class) {
-        Some((_, site)) => ["app.", "www."]
+    let name = match browser::web_app_site(class) {
+        Some(site) => ["app.", "www."]
             .iter()
             .find_map(|prefix| site.strip_prefix(prefix))
             .unwrap_or(site),

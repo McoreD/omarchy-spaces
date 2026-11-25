@@ -6,9 +6,30 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use super::{Browser, Noted, desktop};
+use super::{Adapter, Browser, Noted, SessionFile, desktop};
 use crate::paths;
 use crate::terminal::shell_quote;
+
+const REGULAR: u8 = 0;
+const WEB_APP: u8 = 1;
+
+pub(super) const ADAPTER: Adapter = Adapter {
+    owns: |name| data_dir(name).is_some(),
+    files: session_files,
+    read,
+    window_group: |window| {
+        if web_app(&window.class).is_some() {
+            WEB_APP
+        } else {
+            REGULAR
+        }
+    },
+    web_app_site: |class| web_app(class).map(|(_, site)| site),
+    class_pattern,
+    is_class,
+    command,
+    opens_itself: opens_them_itself,
+};
 
 /// The ones Omarchy offers (`omarchy default browser`): their desktop entry,
 /// which starts them, and where they have their profiles. Nothing says which
@@ -26,19 +47,44 @@ fn data_dir(name: &str) -> Option<PathBuf> {
     Some(paths::config_dir().join(dir))
 }
 
-/// A file that says what a browser's windows hold.
-pub struct SessionFile {
-    pub path: PathBuf,
-    /// Whose it is, by its desktop entry, and its profile's folder.
-    name: &'static str,
-    profile: String,
-    /// Whether it's of web apps.
-    pub app: bool,
+/// What a web app's windows' class is made of: its browser's family, and the
+/// page it's of or, for one that's installed, its id. `None` for other
+/// windows' classes.
+fn web_app(class: &str) -> Option<(&str, &str)> {
+    let (family, rest) = class.split_once('-')?;
+    let is_id = |id: &str| id.len() == 32 && id.bytes().all(|b| (b'a'..=b'p').contains(&b));
+    let (app, _profile) = rest
+        .split_once("__")
+        .or_else(|| rest.split_once('-').filter(|(id, _)| is_id(id)))?;
+    let is_family = !family.is_empty() && family.bytes().all(|b| b.is_ascii_lowercase());
+    (is_family && !app.is_empty()).then_some((family, app))
+}
+
+/// The class of its windows, for Hyprland's rules. A web app's is after
+/// the page it's opened on, which may be another by now.
+fn class_pattern(browser: &Browser) -> String {
+    match web_app(&browser.class) {
+        Some((family, _)) => format!("^{family}-(.+__.*|[a-p]{{32}})-.+$"),
+        None if browser.app => "^chrome-.+$".into(),
+        None if browser.class.is_empty() => format!("^{}$", browser.name),
+        None => format!("^{}$", browser.class.replace('.', "\\.")),
+    }
+}
+
+/// Whether a window of this class can be it.
+fn is_class(browser: &Browser, class: &str) -> bool {
+    match (web_app(&browser.class), web_app(class)) {
+        (Some((family, _)), Some((other, _))) => family == other,
+        (None, Some(_)) => browser.app,
+        (Some(_), None) => false,
+        (None, None) if browser.class.is_empty() => !browser.app && class == browser.name,
+        (None, None) => class == browser.class,
+    }
 }
 
 /// The session files a process has open, if it's one of these. A browser run
 /// on another folder, as by a test of some page, isn't yours to have back.
-pub fn session_files(pid: u32) -> Vec<SessionFile> {
+fn session_files(pid: u32) -> Vec<SessionFile> {
     let config = paths::config_dir();
     let mut files: Vec<SessionFile> = open_files(pid)
         .filter_map(|path| session_file(&config, path))
@@ -60,7 +106,7 @@ fn session_file(config: &Path, path: PathBuf) -> Option<SessionFile> {
     Some(SessionFile {
         name,
         profile: profile.file_name()?.to_str()?.to_string(),
-        app,
+        group: if app { WEB_APP } else { REGULAR },
         path,
     })
 }
@@ -73,9 +119,9 @@ fn open_files(pid: u32) -> impl Iterator<Item = PathBuf> {
         .filter_map(|fd| std::fs::read_link(fd.path()).ok())
 }
 
-pub fn read(file: &SessionFile) -> Vec<Noted> {
+fn read(file: &SessionFile) -> Vec<Noted> {
     std::fs::read(&file.path)
-        .map(|data| parse(&data, file.name, &file.profile, file.app))
+        .map(|data| parse(&data, file.name, &file.profile, file.group == WEB_APP))
         .unwrap_or_default()
 }
 
@@ -101,15 +147,16 @@ fn is_running(data: &Path) -> bool {
 }
 
 /// Whether opening its windows again is left to it: it's about to.
-pub fn opens_them_itself(browser: &Browser) -> bool {
+fn opens_them_itself(browser: &Browser) -> bool {
+    let profile = browser.profile.as_deref().unwrap_or("Default");
     data_dir(&browser.name)
-        .is_some_and(|data| restores_itself(&data, &browser.profile) && !is_running(&data))
+        .is_some_and(|data| restores_itself(&data, profile) && !is_running(&data))
 }
 
 /// The command that opens it again, or `None` when there's nothing to open,
 /// or nothing to open it with. The tab that shows goes first: that's the one
 /// it then shows.
-pub fn command(browser: &Browser, launcher: &str) -> Option<String> {
+fn command(browser: &Browser, launcher: &str) -> Option<String> {
     // Only one of these: a saved session can't have another program run.
     data_dir(&browser.name)?;
     let program = shell_quote(&desktop::program(&browser.name)?);
@@ -124,7 +171,10 @@ fn arguments(browser: &Browser) -> Option<String> {
         urls.insert(0, shown);
     }
     let first = *urls.first()?;
-    let mut args = vec![format!("--profile-directory={}", browser.profile)];
+    let mut args = Vec::new();
+    if let Some(profile) = &browser.profile {
+        args.push(format!("--profile-directory={profile}"));
+    }
     if browser.app {
         args.push(format!("--app={first}"));
     } else {
@@ -195,8 +245,7 @@ fn parse(data: &[u8], name: &str, profile: &str, app: bool) -> Vec<Noted> {
         let mut browser = Browser {
             name: name.to_string(),
             class: String::new(),
-            window: id,
-            profile: profile.to_string(),
+            profile: Some(profile.to_string()),
             app,
             urls: Vec::new(),
             tab: 0,
@@ -213,7 +262,7 @@ fn parse(data: &[u8], name: &str, profile: &str, app: bool) -> Vec<Noted> {
             browser.urls.push(url.clone());
         }
         if !browser.urls.is_empty() {
-            noted.push(Noted { browser, title });
+            noted.push(Noted { id, browser, title });
         }
     }
     noted
@@ -352,7 +401,8 @@ mod tests {
             note(6, &[1, 2, 3]),
         ]);
         let want = vec![Noted {
-            browser: browser(1, &["https://b/x", "https://a/next"], 1),
+            id: 1,
+            browser: browser(&["https://b/x", "https://a/next"], 1),
             title: "Next – page".into(),
         }];
         assert_eq!(parse(&data, "chromium", "Default", false), want);
@@ -387,7 +437,7 @@ mod tests {
     fn knows_whose_a_session_file_is() {
         let of = |path: &str| {
             let file = session_file(Path::new("/h/.config"), path.into())?;
-            Some((file.name, file.profile, file.app))
+            Some((file.name, file.profile, file.group == WEB_APP))
         };
         assert_eq!(
             of("/h/.config/chromium/Default/Sessions/Session_1"),
@@ -403,12 +453,34 @@ mod tests {
     }
 
     #[test]
-    fn opens_pages_and_nothing_else() {
-        let mut b = browser(
-            1,
-            &["https://a/?x='1'", "--gpu-launcher=sh", "https://b/"],
-            2,
+    fn tells_web_apps_windows_from_others() {
+        let id = "cinhimbnkkaeohfgghhklpknlkffjgod";
+        assert_eq!(
+            web_app("chrome-app.hey.com__-Default"),
+            Some(("chrome", "app.hey.com"))
         );
+        assert_eq!(
+            web_app("brave-x.com__a_b-Profile 1"),
+            Some(("brave", "x.com"))
+        );
+        assert_eq!(
+            web_app(&format!("msedge-{id}-Default")),
+            Some(("msedge", id))
+        );
+        for other in [
+            "chromium",
+            "google-chrome",
+            "brave-browser",
+            "org.my-app.x__y",
+            "",
+        ] {
+            assert_eq!(web_app(other), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn opens_pages_and_nothing_else() {
+        let mut b = browser(&["https://a/?x='1'", "--gpu-launcher=sh", "https://b/"], 2);
         assert_eq!(
             arguments(&b).unwrap(),
             r"'--profile-directory=Default' '--new-window' 'https://b/' 'https://a/?x='\''1'\'''"
@@ -418,7 +490,7 @@ mod tests {
             arguments(&b).unwrap(),
             "'--profile-directory=Default' '--app=https://b/'"
         );
-        assert_eq!(arguments(&browser(1, &["javascript:x"], 0)), None);
+        assert_eq!(arguments(&browser(&["javascript:x"], 0)), None);
         b.name = "sh".into();
         assert_eq!(command(&b, "exec"), None, "not a browser");
     }

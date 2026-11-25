@@ -69,6 +69,7 @@ Item {
   // (TabsWidget.qml reaches it through the shell).
   Watch {
     id: watchItem
+    loadedVersion: (root.manifest && root.manifest.version) || ""
   }
 
   Controller {

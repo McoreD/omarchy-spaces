@@ -1,8 +1,8 @@
-//! Browsers' windows, to open again after a restart. How a browser notes what
-//! its windows hold, and is told to open it, is its adapter's alone to know
-//! (`chromium.rs`); windows of one without aren't opened again. Which of
-//! Hyprland's windows is which, the titles tell, and for windows that share
-//! one, the order they were opened in.
+//! Browsers' windows, to open again after a restart. How each browser notes
+//! what its windows hold, and is told to open it, is its adapter's alone to
+//! know: a file here, named in `ADAPTERS`. Windows of a browser without one
+//! aren't opened again. Which of Hyprland's windows is which, the titles tell,
+//! and for windows that share one, the order they were opened in.
 //!
 //! Closed one by one, as Omarchy does before a restart, a browser itself would
 //! only bring back the last.
@@ -10,31 +10,60 @@
 mod chromium;
 mod desktop;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
+const ADAPTERS: &[Adapter] = &[chromium::ADAPTER];
+
 /// How long a window must have gone without its browser noting it to be taken
 /// for incognito. It notes them every few seconds.
 const UNNOTED: Duration = Duration::from_secs(10);
 
-/// What a browser window holds.
+pub(super) struct Adapter {
+    /// Whether this adapter handles a saved browser with this `name`.
+    pub owns: fn(&str) -> bool,
+    /// The session files `pid` has open, if it belongs to this browser.
+    pub files: fn(u32) -> Vec<SessionFile>,
+    /// What one session file says the browser's windows hold.
+    pub read: fn(&SessionFile) -> Vec<Noted>,
+    /// Separates window kinds that share a process (e.g. regular windows vs.
+    /// web apps), so matching only pairs windows within the same group.
+    pub window_group: fn(&Window) -> u8,
+    /// The site name of a web-app window class, if this adapter knows it.
+    pub web_app_site: fn(&str) -> Option<&str>,
+    /// Hyprland window-rule class regex for restoring a saved window.
+    pub class_pattern: fn(&Browser) -> String,
+    /// Whether a Hyprland window class matches a saved window.
+    pub is_class: fn(&Browser, &str) -> bool,
+    /// The shell command that opens a saved window again.
+    pub command: fn(&Browser, &str) -> Option<String>,
+    /// Whether opening its windows again is left to the browser.
+    pub opens_itself: fn(&Browser) -> bool,
+}
+
+/// A session file a browser process has open.
+pub(super) struct SessionFile {
+    pub path: PathBuf,
+    pub name: &'static str,
+    pub profile: String,
+    pub group: u8,
+}
+
+/// What a browser window holds, as saved in `session.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Browser {
-    /// Which browser, by its desktop entry: `chromium`. Sessions from before
-    /// it was kept are Chromium's.
-    #[serde(default = "chromium_entry")]
+    /// Which browser, by its desktop entry: `chromium`, `google-chrome`, …
     pub name: String,
     /// The window's class: `chromium`, or a web app's
     /// `chrome-app.hey.com__-Default`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub class: String,
-    /// The browser's number for it, while it runs.
-    pub window: i32,
-    /// Its profile's folder: `Default`.
-    pub profile: String,
+    /// Its profile, if the browser uses one: `Default`, `Profile 1`, …
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     /// Whether it's a web app's, without tabs.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub app: bool,
@@ -45,17 +74,15 @@ pub struct Browser {
     pub tab: usize,
 }
 
-fn chromium_entry() -> String {
-    "chromium".into()
-}
-
 impl Browser {
-    /// The class of its windows, for Hyprland's rules. A web app's is after
-    /// the page it's opened on, which may be another by now.
+    fn adapter(&self) -> Option<&'static Adapter> {
+        ADAPTERS.iter().find(|adapter| (adapter.owns)(&self.name))
+    }
+
+    /// The class of its windows, for Hyprland's rules.
     pub fn class_pattern(&self) -> String {
-        match web_app(&self.class) {
-            Some((family, _)) => format!("^{family}-(.+__.*|[a-p]{{32}})-.+$"),
-            None if self.app => "^chrome-.+$".into(),
+        match self.adapter() {
+            Some(adapter) => (adapter.class_pattern)(self),
             None if self.class.is_empty() => format!("^{}$", self.name),
             None => format!("^{}$", self.class.replace('.', "\\.")),
         }
@@ -63,38 +90,30 @@ impl Browser {
 
     /// Whether a window of this class can be it.
     pub fn is_class(&self, class: &str) -> bool {
-        match (web_app(&self.class), web_app(class)) {
-            (Some((family, _)), Some((other, _))) => family == other,
-            (None, Some(_)) => self.app,
-            (Some(_), None) => false,
-            (None, None) if self.class.is_empty() => !self.app && class == self.name,
-            (None, None) => class == self.class,
+        match self.adapter() {
+            Some(adapter) => (adapter.is_class)(self, class),
+            None if self.class.is_empty() => class == self.name,
+            None => class == self.class,
         }
     }
 
     /// The command that opens it again, or `None` when there's nothing to
     /// open, or nothing to open it with.
     pub fn command(&self, launcher: &str) -> Option<String> {
-        chromium::command(self, launcher)
+        let adapter = self.adapter()?;
+        (adapter.command)(self, launcher)
     }
 
     /// Whether opening it again is left to the browser.
     pub fn opens_itself(&self) -> bool {
-        chromium::opens_them_itself(self)
+        self.adapter()
+            .is_some_and(|adapter| (adapter.opens_itself)(self))
     }
 }
 
-/// What a web app's windows' class is made of: its browser's family, and the
-/// page it's of or, for one that's installed, its id. `None` for other
-/// windows' classes.
-pub fn web_app(class: &str) -> Option<(&str, &str)> {
-    let (family, rest) = class.split_once('-')?;
-    let is_id = |id: &str| id.len() == 32 && id.bytes().all(|b| (b'a'..=b'p').contains(&b));
-    let (app, _profile) = rest
-        .split_once("__")
-        .or_else(|| rest.split_once('-').filter(|(id, _)| is_id(id)))?;
-    let is_family = !family.is_empty() && family.bytes().all(|b| b.is_ascii_lowercase());
-    (is_family && !app.is_empty()).then_some((family, app))
+/// The site name of a web-app window's class, if any browser adapter knows it.
+pub fn web_app_site(class: &str) -> Option<&str> {
+    ADAPTERS.iter().find_map(|a| (a.web_app_site)(class))
 }
 
 /// A window of Hyprland's.
@@ -108,17 +127,13 @@ pub struct Window {
     pub opened: u64,
 }
 
-impl Window {
-    fn is_app(&self) -> bool {
-        web_app(&self.class).is_some()
-    }
-}
-
-/// A window as its browser notes it, and the title of the tab that shows.
+/// A window as its browser notes it while running: what to save, plus its
+/// runtime id and title for matching it to Hyprland's windows.
 #[derive(Debug, Clone, PartialEq)]
-struct Noted {
-    browser: Browser,
-    title: String,
+pub(super) struct Noted {
+    pub id: i32,
+    pub browser: Browser,
+    pub title: String,
 }
 
 /// What the browser windows hold, kept current.
@@ -126,6 +141,8 @@ struct Noted {
 pub struct Browsers {
     files: HashMap<PathBuf, (Option<SystemTime>, Vec<Noted>)>,
     by_address: HashMap<String, Browser>,
+    /// Runtime window ids last matched to each Hyprland address.
+    window_ids: HashMap<String, i32>,
     /// Windows a browser doesn't note though it notes all others, since when.
     unnoted: HashMap<String, Instant>,
 }
@@ -136,6 +153,7 @@ impl Browsers {
         Self {
             files: HashMap::new(),
             by_address: known,
+            window_ids: HashMap::new(),
             unnoted: HashMap::new(),
         }
     }
@@ -154,53 +172,64 @@ impl Browsers {
     pub fn refresh(&mut self, windows: &[Window], now: Instant) {
         self.by_address
             .retain(|address, _| windows.iter().any(|w| w.address == *address));
+        self.window_ids
+            .retain(|address, _| windows.iter().any(|w| w.address == *address));
         self.unnoted
             .retain(|address, _| windows.iter().any(|w| w.address == *address));
         let pids: HashSet<u32> = windows.iter().map(|w| w.pid).collect();
         let mut open = HashSet::new();
         for pid in pids {
-            let files = chromium::session_files(pid);
-            for app in [false, true] {
-                let mut noted: Vec<Noted> = Vec::new();
-                for file in files.iter().filter(|file| file.app == app) {
-                    open.insert(file.path.clone());
-                    noted.extend(self.read(file).iter().cloned());
+            for adapter in ADAPTERS {
+                let files = (adapter.files)(pid);
+                if files.is_empty() {
+                    continue;
                 }
-                let windows: Vec<&Window> = windows
-                    .iter()
-                    .filter(|w| w.pid == pid && w.is_app() == app)
-                    .collect();
-                let incognito: HashSet<String> = self
-                    .unnoted
-                    .iter()
-                    .filter(|(_, since)| now.duration_since(**since) >= UNNOTED)
-                    .map(|(address, _)| address.clone())
-                    .collect();
-                let matched = match_up(&windows, &noted, &self.by_address, &incognito);
-                let all = !noted.is_empty() && matched.len() == noted.len();
-                for window in windows {
-                    let address = &window.address;
-                    if matched.contains_key(address) || self.by_address.contains_key(address) {
-                        self.unnoted.remove(address);
-                    } else if all {
-                        self.unnoted.entry(address.clone()).or_insert(now);
-                    } else if !incognito.contains(address) {
-                        self.unnoted.remove(address);
+                let groups: BTreeSet<u8> = files.iter().map(|file| file.group).collect();
+                for group in groups {
+                    let mut noted: Vec<Noted> = Vec::new();
+                    for file in files.iter().filter(|file| file.group == group) {
+                        open.insert(file.path.clone());
+                        noted.extend(self.read(adapter, file).iter().cloned());
+                    }
+                    let windows: Vec<&Window> = windows
+                        .iter()
+                        .filter(|w| w.pid == pid && (adapter.window_group)(w) == group)
+                        .collect();
+                    let incognito: HashSet<String> = self
+                        .unnoted
+                        .iter()
+                        .filter(|(_, since)| now.duration_since(**since) >= UNNOTED)
+                        .map(|(address, _)| address.clone())
+                        .collect();
+                    let matched = match_up(&windows, &noted, &self.window_ids, &incognito);
+                    let all = !noted.is_empty() && matched.len() == noted.len();
+                    for window in windows {
+                        let address = &window.address;
+                        if matched.contains_key(address) || self.by_address.contains_key(address) {
+                            self.unnoted.remove(address);
+                        } else if all {
+                            self.unnoted.entry(address.clone()).or_insert(now);
+                        } else if !incognito.contains(address) {
+                            self.unnoted.remove(address);
+                        }
+                    }
+                    for (address, (id, browser)) in matched {
+                        self.window_ids.insert(address.clone(), id);
+                        self.by_address.insert(address, browser);
                     }
                 }
-                self.by_address.extend(matched);
             }
         }
         self.files.retain(|path, _| open.contains(path));
     }
 
-    fn read(&mut self, file: &chromium::SessionFile) -> &[Noted] {
+    fn read(&mut self, adapter: &Adapter, file: &SessionFile) -> &[Noted] {
         let at = std::fs::metadata(&file.path)
             .and_then(|m| m.modified())
             .ok();
         let entry = self.files.entry(file.path.clone()).or_default();
         if entry.0 != at || at.is_none() {
-            *entry = (at, chromium::read(file));
+            *entry = (at, (adapter.read)(file));
         }
         &entry.1
     }
@@ -229,9 +258,9 @@ fn suffix(windows: &[&Window], noted: &[Noted]) -> String {
 fn match_up(
     windows: &[&Window],
     noted: &[Noted],
-    before: &HashMap<String, Browser>,
+    before: &HashMap<String, i32>,
     incognito: &HashSet<String>,
-) -> HashMap<String, Browser> {
+) -> HashMap<String, (i32, Browser)> {
     let suffix = suffix(windows, noted);
     let mut windows: Vec<&Window> = windows.to_vec();
     let mut noted: Vec<&Noted> = noted.iter().collect();
@@ -248,18 +277,18 @@ fn match_up(
             let one = same.next()?;
             let alone = same.next().is_none()
                 && windows.iter().filter(|other| titled(other, one)).count() == 1;
-            alone.then(|| (w.address.clone(), one.browser.window))
+            alone.then(|| (w.address.clone(), one.id))
         })
         .collect();
     let mut take =
         |pairs: Vec<(String, i32)>, windows: &mut Vec<&Window>, noted: &mut Vec<&Noted>| {
             for (address, id) in pairs {
-                if let Some(i) = noted.iter().position(|n| n.browser.window == id) {
+                if let Some(i) = noted.iter().position(|n| n.id == id) {
                     let mut browser = noted.remove(i).browser.clone();
                     if let Some(i) = windows.iter().position(|w| w.address == address) {
                         browser.class = windows.remove(i).class.clone();
                     }
-                    matched.insert(address, browser);
+                    matched.insert(address, (id, browser));
                 }
             }
         };
@@ -267,18 +296,18 @@ fn match_up(
 
     let as_before = windows
         .iter()
-        .filter_map(|w| Some((w.address.clone(), before.get(&w.address)?.window)))
+        .filter_map(|w| Some((w.address.clone(), *before.get(&w.address)?)))
         .collect();
     take(as_before, &mut windows, &mut noted);
 
     windows.retain(|w| !incognito.contains(&w.address));
     if windows.len() == noted.len() {
         windows.sort_by_key(|w| w.opened);
-        noted.sort_by_key(|n| n.browser.window);
+        noted.sort_by_key(|n| n.id);
         let in_order = windows
             .iter()
             .zip(&noted)
-            .map(|(w, n)| (w.address.clone(), n.browser.window))
+            .map(|(w, n)| (w.address.clone(), n.id))
             .collect();
         take(in_order, &mut windows, &mut noted);
     }
@@ -289,12 +318,11 @@ fn match_up(
 mod tests {
     use super::*;
 
-    pub fn browser(window: i32, urls: &[&str], tab: usize) -> Browser {
+    pub fn browser(urls: &[&str], tab: usize) -> Browser {
         Browser {
             name: "chromium".into(),
             class: String::new(),
-            window,
-            profile: "Default".into(),
+            profile: Some("Default".into()),
             app: false,
             urls: urls.iter().map(|u| u.to_string()).collect(),
             tab,
@@ -311,13 +339,14 @@ mod tests {
             opened,
         };
         let noted = |id, title: &str| Noted {
-            browser: browser(id, &["https://x/"], 0),
+            id,
+            browser: browser(&["https://x/"], 0),
             title: title.into(),
         };
-        let pair = |windows: &[&Window], all: &[Noted], before: &HashMap<String, Browser>| {
+        let pair = |windows: &[&Window], all: &[Noted], before: &HashMap<String, i32>| {
             let mut found: Vec<(String, i32)> = match_up(windows, all, before, &HashSet::new())
                 .into_iter()
-                .map(|(address, b)| (address, b.window))
+                .map(|(address, (id, _))| (address, id))
                 .collect();
             found.sort();
             found
@@ -333,7 +362,7 @@ mod tests {
             pair(&[&a, &b, &c], &all, &none),
             [("a".into(), 1), ("b".into(), 2), ("c".into(), 3)]
         );
-        let before = HashMap::from([("c".to_string(), browser(2, &[], 0))]);
+        let before = HashMap::from([("c".to_string(), 2)]);
         assert_eq!(
             pair(&[&a, &b, &c], &all, &before),
             [("a".into(), 1), ("b".into(), 3), ("c".into(), 2)]
@@ -347,7 +376,7 @@ mod tests {
             &none,
             &HashSet::from(["b".into()]),
         );
-        assert_eq!(found["c"].window, 2);
+        assert_eq!(found["c"].0, 2);
     }
 
     #[test]
@@ -360,7 +389,8 @@ mod tests {
             opened: 0,
         };
         let noted = |id, title: &str| Noted {
-            browser: browser(id, &["https://x/"], 0),
+            id,
+            browser: browser(&["https://x/"], 0),
             title: title.into(),
         };
         // One page's title starts as another's does.
@@ -368,40 +398,14 @@ mod tests {
         let b = window("b", "google-chrome", "Mail - Google Chrome");
         let all = [noted(1, "Mail"), noted(2, "Mail - Inbox")];
         let found = match_up(&[&a, &b], &all, &HashMap::new(), &HashSet::new());
-        assert_eq!((found["a"].window, found["b"].window), (2, 1));
-        assert_eq!(found["a"].class, "google-chrome");
-    }
-
-    #[test]
-    fn tells_web_apps_windows_from_others() {
-        let id = "cinhimbnkkaeohfgghhklpknlkffjgod";
-        assert_eq!(
-            web_app("chrome-app.hey.com__-Default"),
-            Some(("chrome", "app.hey.com"))
-        );
-        assert_eq!(
-            web_app("brave-x.com__a_b-Profile 1"),
-            Some(("brave", "x.com"))
-        );
-        assert_eq!(
-            web_app(&format!("msedge-{id}-Default")),
-            Some(("msedge", id))
-        );
-        for other in [
-            "chromium",
-            "google-chrome",
-            "brave-browser",
-            "org.my-app.x__y",
-            "",
-        ] {
-            assert_eq!(web_app(other), None, "{other}");
-        }
+        assert_eq!((found["a"].0, found["b"].0), (2, 1));
+        assert_eq!(found["a"].1.class, "google-chrome");
     }
 
     #[test]
     fn opens_where_windows_of_its_class_do() {
-        let mut b = browser(1, &["https://x/"], 0);
-        assert_eq!(b.class_pattern(), "^chromium$", "before classes were kept");
+        let mut b = browser(&["https://x/"], 0);
+        assert_eq!(b.class_pattern(), "^chromium$");
         assert!(b.is_class("chromium") && !b.is_class("google-chrome"));
         b.class = "google-chrome".into();
         assert_eq!(b.class_pattern(), "^google-chrome$");
@@ -414,14 +418,5 @@ mod tests {
         assert!(!b.is_class("chrome-y.com__z-Default") && !b.is_class("brave-browser"));
         b.class = String::new();
         assert!(b.is_class("chrome-y.com__z-Default"));
-    }
-
-    #[test]
-    fn reads_sessions_from_before_other_browsers() {
-        let b: Browser = serde_json::from_str(
-            r#"{ "window": 1, "profile": "Default", "urls": ["https://x/"] }"#,
-        )
-        .unwrap();
-        assert_eq!(b, browser(1, &["https://x/"], 0));
     }
 }

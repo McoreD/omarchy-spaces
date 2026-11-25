@@ -14,11 +14,11 @@ Nothing binds keys for you.
 
 ## Update
 
-The plugin and `space` go together, so update both:
-
 ```sh
-omarchy plugin update com.t4t5.spaces && ~/.config/omarchy/plugins/com.t4t5.spaces/install.sh && omarchy restart shell
+omarchy plugin update com.t4t5.spaces
 ```
+
+When `space` was installed with `install.sh`, the plugin sees the new version in `manifest.json`, runs `install.sh --update` to download the matching release binary and switches to it. If the plugin's UI changed, it notifies you to run `omarchy restart shell` (otherwise the new UI loads on your next login). Builds installed from source are left alone — update those with `cargo install` below.
 
 ## Build from source
 

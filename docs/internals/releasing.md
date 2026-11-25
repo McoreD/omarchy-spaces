@@ -6,7 +6,6 @@
 
 To release:
 
-1. Raise the version in `Cargo.toml`, `Cargo.lock` and `manifest.json`, and commit.
-2. Push `main` together with the version's tag, such as `v0.2.0`.
-
-The tag has `.github/workflows/release.yml` run CI, build `space` for x86-64 and ARM64 and make the GitHub release. Until it's done, a few minutes later, `install.sh` says there's no such release and changes nothing.
+1. Raise the version in `Cargo.toml`, `Cargo.lock` and `manifest.json`, and commit on a release branch.
+2. Push the version's tag, such as `v0.2.0`, and wait for `.github/workflows/release.yml` to run CI, build `space` for x86-64 and ARM64 and publish the GitHub release.
+3. Fast-forward `main` to that commit, so `omarchy plugin update` always finds the release binary ready to download.

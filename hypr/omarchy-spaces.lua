@@ -1,5 +1,5 @@
 -- Spaces for Hyprland. It binds no keys: bind the ones you want in
--- ~/.config/hypr/bindings.lua, after the require (see the README's Keys).
+-- ~/.config/hypr/bindings.lua, after the require (see docs/guide/keys.md).
 --
 -- Install: link this file to ~/.config/hypr/omarchy-spaces.lua and add
 --   local spaces = require("hypr.omarchy-spaces")

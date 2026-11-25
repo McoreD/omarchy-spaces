@@ -1124,8 +1124,9 @@ fn restore_opens_the_last_sessions_spaces_once() {
     fs::create_dir_all(&state).unwrap();
     let saved = json!({ "instance": "before", "spaces": [
         { "name": "Work", "icon": "x", "tabs": { "2": "logs" }, "windows": [
-            { "tab": 1, "folder": notes }, { "tab": 2, "folder": mail } ] },
-        { "windows": [{ "tab": 3, "folder": gone }] },
+            { "tab": 1, "terminal": { "folder": notes } },
+            { "tab": 2, "terminal": { "folder": mail } } ] },
+        { "windows": [{ "tab": 3, "terminal": { "folder": gone } }] },
     ] });
     fs::write(state.join("session.json"), saved.to_string()).unwrap();
 
@@ -1170,9 +1171,9 @@ fn restored_spaces_keep_their_ids_and_new_ones_get_their_own() {
     fs::write(env.state().join("spaces.json"), entries.to_string()).unwrap();
     fs::write(env.state().join("last"), "s1\t2\t100\ns4\t7\t200\n").unwrap();
     let saved = json!({ "version": 1, "instance": "before", "spaces": [
-        { "id": "s3", "windows": [{ "tab": 1, "folder": notes }] },
+        { "id": "s3", "windows": [{ "tab": 1, "terminal": { "folder": notes } }] },
         { "id": "s1", "name": "Taxes", "icon": "T", "windows": [
-            { "tab": 1, "folder": mail } ] },
+            { "tab": 1, "terminal": { "folder": mail } } ] },
     ] });
     fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
 
@@ -1205,7 +1206,7 @@ fn restore_gives_a_space_another_id_when_its_own_is_in_use() {
     env.add_window("s1:1");
     env.ok(&["rename", "s1", "Here"]);
     let saved = json!({ "version": 1, "instance": "before", "spaces": [
-        { "id": "s1", "name": "Before", "windows": [{ "tab": 1, "folder": notes }] },
+        { "id": "s1", "name": "Before", "windows": [{ "tab": 1, "terminal": { "folder": notes } }] },
     ] });
     fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
     env.ok(&["restore"]);
@@ -1227,9 +1228,11 @@ fn restore_brings_back_home_and_where_you_were() {
     fs::create_dir_all(env.state()).unwrap();
     let saved = json!({ "instance": "before", "spaces": [
         { "home": true, "tabs": { "3": "notes" }, "windows": [
-            { "tab": 1, "folder": mail }, { "tab": 3, "folder": notes } ] },
+            { "tab": 1, "terminal": { "folder": mail } },
+            { "tab": 3, "terminal": { "folder": notes } } ] },
         { "active": true, "last": 2, "windows": [
-            { "tab": 1, "folder": notes }, { "tab": 2, "folder": mail } ] },
+            { "tab": 1, "terminal": { "folder": notes } },
+            { "tab": 2, "terminal": { "folder": mail } } ] },
     ] });
     fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
 
@@ -1246,7 +1249,7 @@ fn restore_leaves_you_where_you_have_started_on_something() {
     let notes = env.dir("notes");
     fs::create_dir_all(env.state()).unwrap();
     let saved = json!({ "instance": "before", "spaces": [
-        { "active": true, "last": 1, "windows": [{ "tab": 1, "folder": notes }] },
+        { "active": true, "last": 1, "windows": [{ "tab": 1, "terminal": { "folder": notes } }] },
     ] });
     fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
     env.add_window("1");
@@ -1267,8 +1270,9 @@ fn restore_arranges_windows_as_they_were() {
             "focused": 0,
         } },
         "windows": [
-            { "tab": 1, "folder": notes }, { "tab": 1, "folder": notes },
-            { "tab": 2, "folder": notes, "fullscreen": 1 },
+            { "tab": 1, "terminal": { "folder": notes } },
+            { "tab": 1, "terminal": { "folder": notes } },
+            { "tab": 2, "terminal": { "folder": notes }, "fullscreen": 1 },
         ],
     }] });
     fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
@@ -1297,10 +1301,10 @@ fn restore_picks_up_conversations_where_they_were() {
         let talk =
             |id: &str, folder: &Path| json!({ "agent": "claude", "id": id, "folder": folder });
         let saved = json!({ "instance": "before", "spaces": [{ "windows": [
-            { "tab": 1, "folder": notes, "conversation": talk(id, &notes) },
-            { "tab": 2, "folder": notes, "conversation": talk("x; rm -rf ~", &notes) },
-            { "tab": 3, "folder": notes.join("gone"),
-              "conversation": talk(id, &notes.join("gone")) },
+            { "tab": 1, "terminal": { "folder": notes, "conversation": talk(id, &notes) } },
+            { "tab": 2, "terminal": { "folder": notes, "conversation": talk("x; rm -rf ~", &notes) } },
+            { "tab": 3, "terminal": { "folder": notes.join("gone"),
+              "conversation": talk(id, &notes.join("gone")) } },
         ] }] });
         fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
         env.ok(&["restore"]);
@@ -1331,18 +1335,18 @@ fn restore_opens_the_browsers_windows_among_the_terminals() {
                 "layouts": { "1": { "tiles":
                     { "split": "right", "share": 0.4, "first": [1], "second": [0] } } },
                 "windows": [
-                    { "tab": 1, "folder": notes },
-                    { "tab": 1, "browser": { "window": 7, "profile": "Default",
+                    { "tab": 1, "terminal": { "folder": notes } },
+                    { "tab": 1, "browser": { "name": "chromium", "profile": "Default",
                         "urls": ["https://a/", "https://b/"], "tab": 1 } },
                 ],
             },
             { "name": "Reading", "windows": [{ "tab": 2, "browser":
-                { "window": 8, "profile": "Default", "urls": ["https://c/"] } }] },
+                { "name": "chromium", "profile": "Default", "urls": ["https://c/"] } }] },
             { "windows": [
                 { "tab": 1, "browser": { "name": "google-chrome", "class": "google-chrome",
-                    "window": 9, "profile": "Profile 1", "urls": ["https://d/"] } },
+                    "profile": "Profile 1", "urls": ["https://d/"] } },
                 // An app that's installed, but no browser.
-                { "tab": 2, "browser": { "name": "sh", "window": 1, "profile": "Default",
+                { "tab": 2, "browser": { "name": "sh", "profile": "Default",
                     "urls": ["https://e/"] } },
             ] },
         ] });
@@ -1376,7 +1380,7 @@ fn restore_gets_by_without_a_config_it_can_read() {
     env.write_config("[restore]\nauto = 'perhaps'\n");
     fs::create_dir_all(env.state()).unwrap();
     let saved = json!({ "instance": "before", "spaces": [
-        { "windows": [{ "tab": 1, "folder": notes }] },
+        { "windows": [{ "tab": 1, "terminal": { "folder": notes } }] },
     ] });
     fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
     env.ok(&["restore"]);
@@ -1390,7 +1394,7 @@ fn restore_auto_skips_when_disabled_but_manual_still_works() {
     env.write_config("[restore]\nauto = false\n");
     fs::create_dir_all(env.state()).unwrap();
     let saved = json!({ "instance": "before", "spaces": [
-        { "name": "Work", "windows": [{ "tab": 1, "folder": notes }] },
+        { "name": "Work", "windows": [{ "tab": 1, "terminal": { "folder": notes } }] },
     ] });
     fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
 
@@ -1409,7 +1413,7 @@ fn restore_opens_an_earlier_session_from_its_file() {
     let notes = env.dir("notes");
     let file = env.home().join("earlier.json");
     let saved = json!({ "instance": "test", "spaces": [
-        { "name": "Work", "windows": [{ "tab": 1, "folder": notes }] },
+        { "name": "Work", "windows": [{ "tab": 1, "terminal": { "folder": notes } }] },
     ] });
     fs::write(&file, saved.to_string()).unwrap();
     env.ok(&["restore", file.to_str().unwrap()]);
@@ -2326,7 +2330,7 @@ fn watch_saves_what_browsers_hold_only_if_its_to_be_opened_again() {
         let session = env.state().join("session-restored.json");
         let saved = json!({ "instance": "test", "spaces": [{ "windows": [
             { "tab": 1, "address": window, "browser":
-                { "window": 7, "profile": "Default", "urls": ["https://a/"] } },
+                { "name": "chromium", "profile": "Default", "urls": ["https://a/"] } },
         ] }] });
         fs::write(&session, saved.to_string()).unwrap();
 
@@ -3027,6 +3031,7 @@ fn install_takes_the_release_of_the_plugins_version() {
     let install = || {
         Command::new(root.join("install.sh"))
             .env("HOME", &home)
+            .env_remove("XDG_STATE_HOME")
             .env(
                 "SPACES_RELEASES",
                 format!("file://{}", tmp.path().display()),
@@ -3069,6 +3074,124 @@ fn install_takes_the_release_of_the_plugins_version() {
     fs::write(&installed, "#!/bin/sh\n").unwrap();
     let said = String::from_utf8_lossy(&install().stderr).into_owned();
     assert!(said.contains("is another program"), "{said}");
+}
+
+#[test]
+fn install_update_replaces_only_its_own_outdated_binary() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let version = env!("CARGO_PKG_VERSION");
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let installed = home.join(".local/bin/space");
+    let plugin = tmp.path().join("plugin");
+    let arch = std::env::consts::ARCH;
+    fs::create_dir_all(&plugin).unwrap();
+    fs::copy(root.join("install.sh"), plugin.join("install.sh")).unwrap();
+    let set_manifest = |ver: &str| {
+        let text = format!("{{\n  \"version\": \"{ver}\",\n  \"id\": \"com.t4t5.spaces\"\n}}\n");
+        fs::write(plugin.join("manifest.json"), text).unwrap();
+    };
+    let pack = |ver: &str, bin: &Path| {
+        let release = tmp.path().join(format!("v{ver}"));
+        let stage = tmp.path().join(format!("stage-{ver}"));
+        fs::create_dir_all(&stage).unwrap();
+        fs::copy(root.join("LICENSE"), stage.join("LICENSE")).unwrap();
+        fs::create_dir_all(stage.join("assets/sounds")).unwrap();
+        fs::copy(
+            root.join("assets/sounds/LICENSE"),
+            stage.join("assets/sounds/LICENSE"),
+        )
+        .unwrap();
+        fs::create_dir_all(stage.join("scripts")).unwrap();
+        fs::copy(
+            root.join("scripts/package.sh"),
+            stage.join("scripts/package.sh"),
+        )
+        .unwrap();
+        fs::write(
+            stage.join("manifest.json"),
+            format!("{{\n  \"version\": \"{ver}\",\n  \"id\": \"com.t4t5.spaces\"\n}}\n"),
+        )
+        .unwrap();
+        let out = Command::new(stage.join("scripts/package.sh"))
+            .arg(bin)
+            .arg(arch)
+            .arg(&release)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    };
+    let run_install = |args: &[&str]| {
+        Command::new(plugin.join("install.sh"))
+            .args(args)
+            .env("HOME", &home)
+            .env_remove("XDG_STATE_HOME")
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    home.join(".local/bin").display(),
+                    std::env::var("PATH").unwrap()
+                ),
+            )
+            .env(
+                "SPACES_RELEASES",
+                format!("file://{}", tmp.path().display()),
+            )
+            .output()
+            .unwrap()
+    };
+
+    // Unmanaged (never installed by install.sh): `--update` does nothing.
+    set_manifest(version);
+    let out = run_install(&["--update"]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(!installed.exists());
+
+    // First install records the marker; `--update` on the same version is a no-op.
+    let old_bin = tmp.path().join("space-old");
+    fs::write(
+        &old_bin,
+        "#!/bin/sh\n# omarchy-spaces\necho 'space 0.0.1'\n",
+    )
+    .unwrap();
+    pack("0.0.1", &old_bin);
+    set_manifest("0.0.1");
+    assert!(run_install(&[]).status.success());
+    let noop = run_install(&["--update"]);
+    assert!(noop.status.success());
+    assert!(
+        noop.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&noop.stdout)
+    );
+
+    // Plugin bumps version: `--update` fetches and installs the matching release.
+    pack(version, Path::new(env!("CARGO_BIN_EXE_space")));
+    set_manifest(version);
+    let updated = run_install(&["--update"]);
+    assert!(updated.status.success(), "{updated:?}");
+    assert!(
+        String::from_utf8_lossy(&updated.stdout).contains(&format!("Installed space {version}"))
+    );
+    let space = Command::new(&installed).arg("--version").output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&space.stdout),
+        format!("space {version}\n")
+    );
+
+    // User replaces `~/.local/bin/space` with a local/source build: `--update` leaves it alone.
+    fs::write(
+        &installed,
+        "#!/bin/sh\n# omarchy-spaces custom build\necho 'space 0.0.9'\n",
+    )
+    .unwrap();
+    set_manifest("0.0.1");
+    let skipped = run_install(&["--update"]);
+    assert!(skipped.status.success());
+    assert!(skipped.stdout.is_empty());
+    let kept = fs::read_to_string(&installed).unwrap();
+    assert!(kept.contains("custom build"), "{kept}");
 }
 
 #[test]

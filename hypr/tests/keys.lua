@@ -130,17 +130,22 @@ equal(dispatched[4][2].workspace, "name:s12:6")
 equal(type(spaces.internal.sync), "function")
 equal(type(spaces.internal.show), "function")
 
--- The README has every helper, and no others.
-local file = assert(io.open(here .. "/../README.md"))
-local readme = file:read("a")
-file:close()
-local documented = {}
-for name in readme:gmatch("spaces%.([a-z_]+)%(") do
-  assert(spaces[name], "the README has spaces." .. name .. ", which isn't there")
-  documented[name] = true
+-- The docs' Keys has every helper, and neither it nor the README has others.
+local function documented(path)
+  local file = assert(io.open(here .. "/../" .. path))
+  local text = file:read("a")
+  file:close()
+  local names = {}
+  for name in text:gmatch("spaces%.([a-z_]+)%(") do
+    assert(spaces[name], path .. " has spaces." .. name .. ", which isn't there")
+    names[name] = true
+  end
+  return names
 end
+documented("README.md")
+local keys = documented("docs/guide/keys.md")
 for name in pairs(spaces) do
-  assert(name == "internal" or documented[name], "the README doesn't have spaces." .. name)
+  assert(name == "internal" or keys[name], "docs/guide/keys.md doesn't have spaces." .. name)
 end
 
 print("ok")

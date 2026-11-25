@@ -40,7 +40,7 @@ pub(crate) fn known_browsers(sessions: &[&Session]) -> HashMap<String, Browser> 
         .rev()
         .flat_map(|session| &session.spaces)
         .flat_map(|space| &space.windows)
-        .filter_map(|w| Some((w.address.clone(), w.browser.clone()?)))
+        .filter_map(|w| Some((w.address.clone(), w.browser()?.clone())))
         .collect()
 }
 
@@ -71,21 +71,23 @@ pub(crate) fn session_of(
                         Some(conversation) => Folder::here(&conversation.folder),
                         None => t.shell.folder.clone(),
                     };
-                    Some(session::Window {
+                    let kind = session::WindowKind::Terminal(session::Terminal {
                         folder: Some(folder),
                         conversation,
-                        ..session_window(snapshot, window, before)?
-                    })
+                    });
+                    session_window(snapshot, window, kind, before)
                 })
                 .collect();
             for window in snapshot.space_windows.iter().filter(|w| w.space == row.id) {
                 if let Some(browser) = browsers.get(&window.address)
-                    && let Some(place) = session_window(snapshot, window, before)
+                    && let Some(saved) = session_window(
+                        snapshot,
+                        window,
+                        session::WindowKind::Browser(browser.clone()),
+                        before,
+                    )
                 {
-                    windows.push(session::Window {
-                        browser: Some(browser.clone()),
-                        ..place
-                    });
+                    windows.push(saved);
                 }
             }
             if windows.is_empty() {
@@ -130,6 +132,7 @@ pub(crate) fn session_of(
 pub(crate) fn session_window(
     snapshot: &Snapshot,
     window: &SpaceWindow,
+    kind: session::WindowKind,
     before: &[&Session],
 ) -> Option<session::Window> {
     let tab = window.tab?;
@@ -139,6 +142,7 @@ pub(crate) fn session_window(
         .map_or((0, 0), |place| place.corner);
     Some(session::Window {
         tab,
+        kind,
         address: window.address.clone(),
         floating: match window.fullscreen {
             _ if !window.floating => None,
@@ -153,7 +157,6 @@ pub(crate) fn session_window(
                 .find_map(|session| session.find(&window.address)?.1.floating),
         },
         fullscreen: window.fullscreen,
-        ..Default::default()
     })
 }
 
@@ -382,7 +385,7 @@ impl Restoring {
         self.saved
             .windows
             .iter()
-            .any(|w| w.browser.is_some() && tab.is_none_or(|tab| w.tab == tab))
+            .any(|w| w.browser().is_some() && tab.is_none_or(|tab| w.tab == tab))
     }
 
     fn tabs(&self) -> BTreeSet<u8> {
@@ -413,12 +416,14 @@ impl Restoring {
         let mut opening = Some(opening);
         for n in 0..self.saved.windows.len() {
             let window = &self.saved.windows[n];
-            if window.browser.is_some() {
+            let Some(terminal) = window.terminal() else {
                 continue;
-            }
+            };
             let token = format!("{}-{}-{n}", std::process::id(), self.id);
             let opening = || opening.take().map_or(Ok(()), |opening| opening());
-            let address = reopen_terminal(hypr, config, &self.id, window, &token, opening)?;
+            let address = reopen_terminal(
+                hypr, config, &self.id, window.tab, terminal, &token, opening,
+            )?;
             self.opened(n, address, opened);
         }
         opening.take().map_or(Ok(()), |opening| opening())
@@ -434,11 +439,7 @@ impl Restoring {
     ) {
         for n in 0..self.saved.windows.len() {
             let window = &self.saved.windows[n];
-            let Some(browser) = window
-                .browser
-                .as_ref()
-                .filter(|b| !broken.contains(&b.name))
-            else {
+            let Some(browser) = window.browser().filter(|b| !broken.contains(&b.name)) else {
                 continue;
             };
             // Nothing it can open: no fault of the browser's.
@@ -471,8 +472,23 @@ impl Restoring {
         let mut restored = self.saved.clone();
         for (window, address) in restored.windows.iter_mut().zip(&self.addresses) {
             window.address = address.clone().unwrap_or_default();
-            if !browsers {
-                window.browser = None;
+        }
+        if !browsers {
+            let mut kept = Vec::new();
+            let mut remap = HashMap::new();
+            for (i, window) in restored.windows.into_iter().enumerate() {
+                if window.browser().is_none() {
+                    remap.insert(i, kept.len());
+                    kept.push(window);
+                }
+            }
+            restored.windows = kept;
+            for layout in restored.layouts.values_mut() {
+                layout.tiles = layout
+                    .tiles
+                    .as_ref()
+                    .and_then(|t| t.filter_map(&|i| remap.get(i).copied()));
+                layout.focused = layout.focused.and_then(|i| remap.get(&i).copied());
             }
         }
         session::add_restored(&paths::state_dir(), &hypr.instance, restored)
@@ -517,15 +533,16 @@ fn reopen_terminal(
     hypr: &Hypr,
     config: &Config,
     id: &str,
-    terminal: &session::Window,
+    tab: u8,
+    terminal: &session::Terminal,
     token: &str,
     opening: impl FnOnce() -> Result<()>,
 ) -> Result<Option<String>> {
-    let workspace = session_workspace(id, terminal.tab);
+    let workspace = session_workspace(id, tab);
     let events = hypr.events()?;
     hypr.dispatch(&hypr::exec_on(
         &restored_command(config, terminal, token),
-        &format!("{} silent", session_selector(id, terminal.tab)),
+        &format!("{} silent", session_selector(id, tab)),
     ))?;
     opening()?;
     // You may be opening windows of your own there by now.
@@ -592,7 +609,7 @@ fn open_browser(
 }
 
 /// The command for a saved terminal.
-fn restored_command(config: &Config, terminal: &session::Window, token: &str) -> String {
+fn restored_command(config: &Config, terminal: &session::Terminal, token: &str) -> String {
     // A folder that's gone gives way to the nearest one still there.
     let dir = terminal
         .folder

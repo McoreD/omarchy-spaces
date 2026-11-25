@@ -29,6 +29,11 @@ use crate::folder::Folder;
 use crate::layout::{Rect, Tree};
 use crate::state;
 
+/// The version of session files (`session.json`, `session-previous.json`,
+/// `sessions/*.json`). Goes up when it changes in a way that an older `space`
+/// would read wrong; a new field that it can do without isn't one.
+const VERSION: u32 = 1;
+
 /// How long the spaces must stay as they are before they're saved.
 const SETTLE: Duration = Duration::from_secs(1);
 /// How long something must have been gone before it's saved as gone.
@@ -76,7 +81,6 @@ pub struct Space {
     #[serde(flatten)]
     pub folder: Option<Folder>,
     /// Its windows, oldest first, then its browser windows.
-    #[serde(alias = "terminals")]
     pub windows: Vec<Window>,
 }
 
@@ -94,17 +98,14 @@ pub struct Layout {
     pub monitor: Option<String>,
 }
 
-/// A terminal, or else a browser's window.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// A saved window: where it sat, and what kind of window it was.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Window {
     /// The tab it's on, by its key.
-    #[serde(alias = "slot")]
     pub tab: u8,
-    /// A terminal's folder.
+    /// What kind of window it is, and what it held.
     #[serde(flatten)]
-    pub folder: Option<Folder>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub browser: Option<Browser>,
+    pub kind: WindowKind,
     /// Its window, under the Hyprland it was saved under.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub address: String,
@@ -114,9 +115,40 @@ pub struct Window {
     /// Hyprland's number for how it's fullscreen: 1 maximized, 2 fullscreen.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub fullscreen: u8,
+}
+
+/// What kind of window was saved: `"terminal": { ... }` or `"browser": { ... }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowKind {
+    Terminal(Terminal),
+    Browser(Browser),
+}
+
+/// A terminal window's folder and any agent conversation in it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Terminal {
+    #[serde(flatten)]
+    pub folder: Option<Folder>,
     /// The agent's conversation in it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation: Option<Conversation>,
+}
+
+impl Window {
+    pub fn terminal(&self) -> Option<&Terminal> {
+        match &self.kind {
+            WindowKind::Terminal(terminal) => Some(terminal),
+            WindowKind::Browser(_) => None,
+        }
+    }
+
+    pub fn browser(&self) -> Option<&Browser> {
+        match &self.kind {
+            WindowKind::Browser(browser) => Some(browser),
+            WindowKind::Terminal(_) => None,
+        }
+    }
 }
 
 fn is_zero(n: &u8) -> bool {
@@ -137,10 +169,12 @@ impl Session {
         self.spaces
             .iter()
             .flat_map(|space| &space.windows)
-            .flat_map(|t| {
-                let talk = t.conversation.as_ref();
-                let talk = talk.map(|c| format!("{} {}", t.address, c.agent));
-                [Some(t.address.clone()), talk]
+            .flat_map(|w| {
+                let talk = w
+                    .terminal()
+                    .and_then(|t| t.conversation.as_ref())
+                    .map(|c| format!("{} {}", w.address, c.agent));
+                [Some(w.address.clone()), talk]
             })
             .flatten()
             .collect()
@@ -191,7 +225,7 @@ fn read(path: &Path) -> Result<Option<Session>> {
     if text.trim().is_empty() {
         return Ok(None);
     }
-    match state::parse(&text) {
+    match state::parse(&text, VERSION) {
         Ok(session) => Ok(Some(session)),
         Err(e) => {
             state::put_aside(path, &e)?;
@@ -210,7 +244,7 @@ fn write(path: &Path, session: &Session) -> Result<()> {
         session: &'a Session,
     }
     let saved = Saved {
-        version: state::VERSION,
+        version: VERSION,
         session,
     };
     let text = serde_json::to_string_pretty(&saved)? + "\n";
@@ -283,8 +317,8 @@ fn backup_due(state_dir: &Path) -> bool {
 pub fn set_previous_from(state_dir: &Path, file: &Path) -> Result<()> {
     let text =
         fs::read_to_string(file).with_context(|| format!("can't read {}", file.display()))?;
-    let wanted: Session =
-        state::parse(&text).with_context(|| format!("can't understand {}", file.display()))?;
+    let wanted: Session = state::parse(&text, VERSION)
+        .with_context(|| format!("can't understand {}", file.display()))?;
     let _lock = state::lock(state_dir, ".session.lock")?;
     let all = match previous(state_dir)? {
         Some(left) => merge(left, wanted),
@@ -489,9 +523,13 @@ mod tests {
                 .map(|folder| Space {
                     windows: vec![Window {
                         tab: 1,
-                        folder: Some(Folder::here(folder)),
+                        kind: WindowKind::Terminal(Terminal {
+                            folder: Some(Folder::here(folder)),
+                            conversation: None,
+                        }),
                         address: format!("0x{folder}"),
-                        ..Default::default()
+                        floating: None,
+                        fullscreen: 0,
                     }],
                     ..Default::default()
                 })
@@ -549,7 +587,10 @@ mod tests {
         // /y closes, while /x goes from folder to folder.
         for secs in 2..=13 {
             let mut now = session("a", &["/x"]);
-            now.spaces[0].windows[0].folder = Some(Folder::here(format!("/x/{}", secs / 2)));
+            now.spaces[0].windows[0].kind = WindowKind::Terminal(Terminal {
+                folder: Some(Folder::here(format!("/x/{}", secs / 2))),
+                conversation: None,
+            });
             saver.update(now, at(secs)).unwrap();
         }
         let saved = read(&path).unwrap().unwrap();
@@ -564,10 +605,13 @@ mod tests {
         let at = |secs| start + Duration::from_secs(secs);
         let mut saver = saver(dir.path());
         let mut talking = session("a", &["/x"]);
-        talking.spaces[0].windows[0].conversation = Some(Conversation {
-            agent: "claude".into(),
-            id: "id".into(),
-            folder: "/x".into(),
+        talking.spaces[0].windows[0].kind = WindowKind::Terminal(Terminal {
+            folder: Some(Folder::here("/x")),
+            conversation: Some(Conversation {
+                agent: "claude".into(),
+                id: "id".into(),
+                folder: "/x".into(),
+            }),
         });
         saver.update(talking.clone(), at(0)).unwrap();
         saver.update(talking.clone(), at(1)).unwrap();
@@ -617,11 +661,11 @@ mod tests {
     }
 
     #[test]
-    fn reads_what_earlier_versions_saved() {
+    fn serializes_windows_by_kind() {
         let dir = tempfile::tempdir().unwrap();
         let path = current_path(dir.path());
-        let saved = r#"{"instance":"a","spaces":[{"terminals":[
-            {"slot":1,"folder":"/x","address":"0x/x"}]}]}"#;
+        let saved = r#"{"version":1,"instance":"a","spaces":[{"windows":[
+            {"tab":1,"terminal":{"folder":"/x"},"address":"0x/x"}]}]}"#;
         fs::write(&path, saved).unwrap();
         assert_eq!(read(&path).unwrap(), Some(session("a", &["/x"])));
     }
@@ -724,7 +768,7 @@ mod tests {
         let folders: Vec<_> = all.spaces[0]
             .windows
             .iter()
-            .map(|t| t.folder.clone())
+            .map(|w| w.terminal().and_then(|t| t.folder.clone()))
             .collect();
         assert_eq!(folders, ["/y", "/x"].map(|dir| Some(Folder::here(dir))));
         assert_eq!(

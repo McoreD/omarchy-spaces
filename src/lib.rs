@@ -1,6 +1,7 @@
 //! Spaces for Omarchy. A space is a place you work, called after
 //! the folder its terminal is in, with its own set of workspaces, `<id>:1` to
-//! `<id>:10` on the first monitor, and as many on each other. See the README.
+//! `<id>:10` on the first monitor, and as many on each other. See
+//! docs/internals/architecture.md.
 
 pub mod agent;
 pub mod browser;

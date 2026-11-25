@@ -22,6 +22,11 @@ use crate::folder::Folder;
 use crate::name;
 use crate::state;
 
+/// The version of `spaces.json`. Goes up when it changes in a way that an
+/// older `space` would read wrong; a new field that it can do without isn't
+/// one.
+const VERSION: u32 = 1;
+
 /// What Spaces remembers about one space.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
@@ -100,7 +105,7 @@ impl Store {
         let file = if text.trim().is_empty() {
             File::default()
         } else {
-            state::parse(&text).unwrap_or_else(|e| {
+            state::parse(&text, VERSION).unwrap_or_else(|e| {
                 // One that's going to be saved over is put aside first. Not
                 // locked, it may be another by now, and stays.
                 if lock.is_ok()
@@ -169,7 +174,7 @@ impl Store {
             bail!("can't save {}: {e:#}", self.path.display());
         }
         let text = serde_json::to_string_pretty(&File {
-            version: state::VERSION,
+            version: VERSION,
             next: self.next,
             spaces: self.spaces.clone(),
         })?;

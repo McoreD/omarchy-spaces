@@ -1,10 +1,10 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { cursorIndex, EMPTY, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, headerOnBar, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs } from "../Spaces.mjs"
+import { cursorIndex, EMPTY, filterIcons, gridMove, isGlyph, isVersionError, needsUpdate, parseEmojis, parseGlyphs, parseManifestVersion, badgeColor, headerOnBar, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs } from "../Spaces.mjs"
 
 // A line of `space watch`, with a tab on each of two monitors.
-const line = (spaces, more) => JSON.stringify({ version: 2, focused: "eDP-1", monitors: [
+const line = (spaces, more) => JSON.stringify({ version: 2, space: "0.1.0", focused: "eDP-1", monitors: [
   { name: "eDP-1", space: "s1", tab: "s1:2", refresh: 120, tiled: true, tabs: [
     { id: "s1:1", slot: 1, label: "server", named: true, status: "waiting", windows: 2, active: false },
     { id: "s1:2", slot: 2, label: "claude", named: false, status: null, windows: 1, active: true },
@@ -24,6 +24,7 @@ const json = JSON.stringify([
 
 test("parses a line of space watch", () => {
   const state = parseState(line(JSON.parse(json)))
+  assert.equal(state.space, "0.1.0")
   assert.equal(state.focused, "eDP-1")
   assert.deepEqual(state.monitors[0].tabs[1], { id: "s1:2", slot: 2, label: "claude", named: false, status: "", windows: 1, active: true })
   assert.deepEqual(state.monitors.map((m) => [m.name, m.space, m.tab, m.refresh, m.tiled]), [["eDP-1", "s1", "s1:2", 120, true], ["DP-1", "s1", "s1:11", 60, false]])
@@ -38,11 +39,20 @@ test("parses a line of space watch", () => {
 })
 
 test("says when space watch isn't one it can read", () => {
-  assert.throws(() => parseState("space: error"), /unexpected/)
-  assert.throws(() => parseState("{}"), /unexpected/)
-  assert.throws(() => parseState("null"), /unexpected/)
-  assert.throws(() => parseState(json), /older than the plugin/)
-  assert.throws(() => parseState(line([], { version: 1 })), /different versions/)
+  assert.throws(() => parseState("space: error"), (e) => /unexpected/.test(e.message) && !isVersionError(e))
+  assert.throws(() => parseState("{}"), (e) => /unexpected/.test(e.message) && !isVersionError(e))
+  assert.throws(() => parseState("null"), (e) => /unexpected/.test(e.message) && !isVersionError(e))
+  assert.throws(() => parseState(json), (e) => /older than the plugin/.test(e.message) && isVersionError(e))
+  assert.throws(() => parseState(line([], { version: 1 })), (e) => /different versions/.test(e.message) && isVersionError(e))
+})
+
+test("tells when the plugin and space are on different versions", () => {
+  assert.equal(parseManifestVersion('{"version":"0.2.0"}'), "0.2.0")
+  assert.equal(parseManifestVersion("nope"), "")
+  assert.equal(needsUpdate("0.2.0", "0.1.0"), true)
+  assert.equal(needsUpdate("0.2.0", "0.2.0"), false)
+  assert.equal(needsUpdate("0.2.0", ""), false)
+  assert.equal(needsUpdate("", "0.1.0"), false)
 })
 
 test("finds monitors and their tabs", () => {

@@ -5,10 +5,11 @@
 const VERSION = 2
 
 // Before there is any.
-export const EMPTY = { focused: "", monitors: [], spaces: [] }
+export const EMPTY = { space: "", focused: "", monitors: [], spaces: [] }
 const NO_MONITOR = { name: "", space: "", tab: "", refresh: 0, tiled: false, tabs: [] }
 
 // A line of `space watch`, or throws with a readable message:
+//   space:    `space`'s version (`Cargo.toml`), "" if omitted
 //   focused:  the monitor you are on, by name
 //   monitors: [{ name, space, tab, refresh, tiled, tabs }], the space and tab
 //             each shows, by their ids (tab "" on a workspace without a
@@ -24,13 +25,14 @@ export function parseState(text) {
   }
   if (!state || typeof state !== "object" || !Array.isArray(state.monitors) || !Array.isArray(state.spaces)) {
     // A list is what it printed before it had a version.
-    if (Array.isArray(state)) throw new Error("The space command is older than the plugin: install it again")
+    if (Array.isArray(state)) throw versionError("The space command is older than the plugin: install it again")
     throw new Error("space watch printed something unexpected")
   }
   if (state.version !== VERSION) {
-    throw new Error("The space command and the plugin are of different versions: update both")
+    throw versionError("The space command and the plugin are of different versions: run install.sh or update both")
   }
   return {
+    space: typeof state.space === "string" ? state.space : "",
     focused: typeof state.focused === "string" ? state.focused : "",
     monitors: state.monitors
       .filter((monitor) => monitor && typeof monitor.name === "string" && typeof monitor.space === "string")
@@ -65,6 +67,34 @@ export function parseState(text) {
         status: status(row.status),
       })),
   }
+}
+
+function versionError(message) {
+  const err = new Error(message)
+  err.versionMismatch = true
+  return err
+}
+
+// Whether `parseState` failed because `space` and the plugin are on different
+// wire versions.
+export function isVersionError(error) {
+  return !!error && error.versionMismatch === true
+}
+
+// The plugin's version from manifest.json, or "" when it can't be read.
+export function parseManifestVersion(text) {
+  try {
+    const data = JSON.parse(String(text || ""))
+    return data && typeof data.version === "string" ? data.version : ""
+  } catch (e) {
+    return ""
+  }
+}
+
+// Whether `space` should be brought to `pluginVersion`: both are known and
+// they differ.
+export function needsUpdate(pluginVersion, spaceVersion) {
+  return !!pluginVersion && !!spaceVersion && pluginVersion !== spaceVersion
 }
 
 function number(value) {

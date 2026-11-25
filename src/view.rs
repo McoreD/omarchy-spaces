@@ -21,6 +21,9 @@ const VERSION: u32 = 2;
 #[derive(Debug, Serialize)]
 pub(crate) struct State<'a> {
     version: u32,
+    /// `space`'s version (`Cargo.toml`), so the plugin can tell when one
+    /// updated without the other.
+    space: &'static str,
     /// The monitor you are on, by name.
     focused: Option<&'a str>,
     monitors: Vec<Monitor<'a>>,
@@ -73,6 +76,7 @@ pub(crate) fn state<'a>(snapshot: &'a Snapshot, live: &Live, rows: &'a [Row]) ->
     let focused = snapshot.screens.iter().find(|screen| screen.focused);
     State {
         version: VERSION,
+        space: env!("CARGO_PKG_VERSION"),
         focused: focused.map(|screen| screen.name.as_str()),
         monitors: snapshot
             .screens

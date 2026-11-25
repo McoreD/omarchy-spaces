@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import "Spaces.mjs" as Spaces
 
@@ -16,9 +17,22 @@ import "Spaces.mjs" as Spaces
 //
 // `space watch` ends when Hyprland restarts or its binary is replaced, so it
 // is started again, a little later each time it fails in a row. So is one that
-// couldn't start, as when `space` isn't installed yet.
+// couldn't start, as when `space` isn't installed yet. When `omarchy plugin
+// update` changes `manifest.json` to a new version (or the plugin starts ahead
+// of `space`), it runs `install.sh --update`, which fetches the matching
+// binary if `install.sh` installed the current one.
 Item {
   id: root
+
+  // The version the shell loaded this service with.
+  property string loadedVersion: ""
+  // The version currently in `manifest.json` on disk.
+  property string manifestVersion: root.loadedVersion
+  // The version we already tried running `install.sh --update` for, so an
+  // offline machine or missing release doesn't loop.
+  property string attemptedVersion: ""
+  // Whether `space watch` reported a wire-version mismatch.
+  property bool wireMismatch: false
 
   // The last line, as Spaces.parseState gives it.
   property var now: Spaces.EMPTY
@@ -31,6 +45,17 @@ Item {
   // What it exited with. One that couldn't start never exits.
   property var exitCode: null
 
+  readonly property string installScript: String(Qt.resolvedUrl("../install.sh")).replace(/^file:\/\//, "")
+
+  function maybeUpdate() {
+    var want = root.manifestVersion
+    if (!want || want === root.attemptedVersion || updater.running) return
+    if (!root.wireMismatch && !Spaces.needsUpdate(want, root.now.space)) return
+    root.attemptedVersion = want
+    updater.command = [root.installScript, "--update"]
+    updater.running = true
+  }
+
   function ended() {
     root.ready = false
     root.failures++
@@ -38,6 +63,41 @@ Item {
     else if (root.failures > 1 && !root.error) root.error = "space watch exited with " + root.exitCode
     again.interval = Math.min(10000, 250 * Math.pow(2, Math.min(root.failures, 6)))
     again.restart()
+  }
+
+  FileView {
+    path: String(Qt.resolvedUrl("../manifest.json")).replace(/^file:\/\//, "")
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      var version = Spaces.parseManifestVersion(text())
+      if (version) root.manifestVersion = version
+      root.maybeUpdate()
+    }
+  }
+
+  Process {
+    id: updater
+    stdout: StdioCollector {
+      onStreamFinished: {
+        if (!text.includes("Installed space ")) return
+        // `space watch` exits on its own within a couple seconds when its
+        // binary is replaced; stop it now if it was stuck on a wire mismatch.
+        if (root.wireMismatch && proc.running) {
+          root.failures = 0
+          proc.running = false
+        }
+        if (root.loadedVersion && root.manifestVersion && root.manifestVersion !== root.loadedVersion) {
+          Quickshell.execDetached([
+            "notify-send",
+            "--app-name=Spaces",
+            "Spaces updated to " + root.manifestVersion,
+            "Run 'omarchy restart shell' to reload the plugin.",
+          ])
+        }
+      }
+    }
   }
 
   Process {
@@ -52,8 +112,14 @@ Item {
           root.ready = true
           root.error = ""
           root.failures = 0
+          root.wireMismatch = false
+          root.maybeUpdate()
         } catch (e) {
           root.error = String(e.message || e)
+          if (Spaces.isVersionError(e)) {
+            root.wireMismatch = true
+            root.maybeUpdate()
+          }
         }
       }
     }

@@ -14,11 +14,6 @@ use serde::de::DeserializeOwned;
 
 use crate::name;
 
-/// The version of `spaces.json` and of sessions. Goes up when one changes in a
-/// way that an older `space` would read wrong; a new field that it can do
-/// without isn't one.
-pub const VERSION: u32 = 1;
-
 /// Replaces a file in one step, so a reader never sees half of it. Writing
 /// back what was read takes a lock too (`lock`), so two `space` processes
 /// racing on a keypress don't undo each other's change.
@@ -45,13 +40,13 @@ pub fn read_optional(path: &Path) -> Result<String> {
 
 /// Reads the JSON of a file that says its version. One that doesn't is from
 /// before they did, which is the first.
-pub fn parse<T: DeserializeOwned>(text: &str) -> Result<T> {
+pub fn parse<T: DeserializeOwned>(text: &str, max_version: u32) -> Result<T> {
     let value: serde_json::Value = serde_json::from_str(text)?;
     let version = value.get("version").map_or(Some(1), |v| v.as_u64());
     let version = version.context("its version isn't a number")?;
     ensure!(
-        version <= u64::from(VERSION),
-        "it's version {version}, made by a newer space than this one, which reads {VERSION}"
+        version <= u64::from(max_version),
+        "it's version {version}, made by a newer space than this one, which reads {max_version}"
     );
     Ok(serde_json::from_value(value)?)
 }
@@ -255,12 +250,12 @@ mod tests {
     #[test]
     fn reads_the_versions_it_knows() {
         type Read = BTreeMap<String, u32>;
-        assert_eq!(parse::<Read>(r#"{"a":2}"#).unwrap()["a"], 2);
-        assert_eq!(parse::<Read>(r#"{"version":1,"a":2}"#).unwrap()["a"], 2);
-        let newer = parse::<Read>(r#"{"version":2,"a":2}"#).unwrap_err();
+        assert_eq!(parse::<Read>(r#"{"a":2}"#, 1).unwrap()["a"], 2);
+        assert_eq!(parse::<Read>(r#"{"version":1,"a":2}"#, 1).unwrap()["a"], 2);
+        let newer = parse::<Read>(r#"{"version":2,"a":2}"#, 1).unwrap_err();
         assert!(newer.to_string().contains("newer space"), "{newer}");
-        assert!(parse::<Read>(r#"{"version":"1"}"#).is_err());
-        assert!(parse::<Read>("{ half").is_err());
+        assert!(parse::<Read>(r#"{"version":"1"}"#, 1).is_err());
+        assert!(parse::<Read>("{ half", 1).is_err());
     }
 
     #[test]

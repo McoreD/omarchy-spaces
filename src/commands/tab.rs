@@ -601,7 +601,14 @@ impl MovingTab {
         });
         let saved: Vec<session::Window> = shown
             .iter()
-            .filter_map(|w| session_window(snapshot, w, &[]))
+            .filter_map(|w| {
+                session_window(
+                    snapshot,
+                    w,
+                    session::WindowKind::Terminal(Default::default()),
+                    &[],
+                )
+            })
             .collect();
         let layout = session_layout(snapshot, space, key, &saved, &[]);
         let address = |n: &usize| saved.get(*n).map(|w| w.address.clone());
