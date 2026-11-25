@@ -151,6 +151,10 @@ BarWidget {
   onHasHeaderChanged: root.tellHeader()
   onServiceChanged: root.tellHeader()
 
+  // Either side of a tab's label, and of the `+`. Tighter than a row's, so
+  // the tabs stand about as close as Omarchy's workspaces do.
+  readonly property real tabPadding: Style.spacing.lg
+
   // Where the tabs start: at the space's part of the bar, so a tab's hover
   // background stands as far from the space's side as from its top.
   readonly property real tabsX: Math.max(root.padding, root.edge - root.origin.x)
@@ -181,7 +185,7 @@ BarWidget {
       var tab = tabRepeater.itemAt(i)
       if (tab) widths.push(tab.natural)
     }
-    return Math.max(Style.spacing.rowPaddingX * 2 + root.fontSize * 2, Spaces.fairCap(widths, room))
+    return Math.max(root.tabPadding * 2 + root.fontSize * 2, Spaces.fairCap(widths, room))
   }
 
   function startDrag(index) {
@@ -274,7 +278,7 @@ BarWidget {
     if (root.vertical) return number || "·"
     // Its number and what you last used on it: a new tab, with nothing open
     // on it yet, is just its number.
-    return number + (number && tab.label ? "  " : "") + (tab.label || (number ? "" : "·"))
+    return number + (number && tab.label ? " " : "") + (tab.label || (number ? "" : "·"))
   }
 
   // Opens a tab's menu at a point on the bar's window, which need not start
@@ -484,7 +488,7 @@ BarWidget {
     visible: !root.vertical
     x: root.tabsX
     height: root.barSize
-    spacing: Style.spacing.xs
+    spacing: Style.space(1)
 
     Repeater {
       id: tabRepeater
@@ -582,7 +586,7 @@ BarWidget {
 
     // A share of the room before the bar's centre caps a tab, not the `+`.
     property real cap: Infinity
-    readonly property real natural: Math.min((button.editing ? editor.implicitWidth : label.implicitWidth) + button.dotRoom + Style.spacing.rowPaddingX * 2, Style.space(220))
+    readonly property real natural: Math.min((button.editing ? editor.implicitWidth : label.implicitWidth) + button.dotRoom + root.tabPadding * 2, Style.space(220))
     // Uncapped while you type a name, so you see all of it.
     width: root.vertical ? root.barSize : (button.editing ? button.natural : Math.min(button.natural, button.cap))
     height: root.vertical ? Style.space(26) : root.barSize
@@ -602,8 +606,8 @@ BarWidget {
       id: label
       visible: !button.editing
       anchors.fill: parent
-      anchors.leftMargin: root.vertical ? 0 : Style.spacing.rowPaddingX
-      anchors.rightMargin: root.vertical ? 0 : Style.spacing.rowPaddingX + button.dotRoom
+      anchors.leftMargin: root.vertical ? 0 : root.tabPadding
+      anchors.rightMargin: root.vertical ? 0 : root.tabPadding + button.dotRoom
       verticalAlignment: Text.AlignVCenter
       horizontalAlignment: Text.AlignHCenter
       textFormat: Text.PlainText
@@ -621,20 +625,20 @@ BarWidget {
     Row {
       id: editor
       visible: button.editing && !root.vertical
-      x: Style.spacing.rowPaddingX
+      x: root.tabPadding
       anchors.verticalCenter: parent.verticalCenter
 
       Text {
         id: editNumber
         textFormat: Text.PlainText
-        text: button.number + "  "
+        text: button.number + " "
         color: label.color
         font: label.font
       }
 
       Text {
         id: editName
-        readonly property real room: Style.space(220) - Style.spacing.rowPaddingX * 2 - editNumber.implicitWidth - caret.width - 1
+        readonly property real room: Style.space(220) - root.tabPadding * 2 - editNumber.implicitWidth - caret.width - 1
         // Wide enough for the placeholder while there's no name.
         width: text === "" ? placeholder.x + placeholder.implicitWidth : Math.min(implicitWidth, room)
         textFormat: Text.PlainText

@@ -22,6 +22,8 @@ setup:
     omarchy plugin disable omarchy.workspaces
     ln -sfn {{justfile_directory()}}/hypr/omarchy-spaces.lua ~/.config/hypr/omarchy-spaces.lua
     grep -qs 'require("hypr.omarchy-spaces")' ~/.config/hypr/*.lua || echo 'if package.searchpath("hypr.omarchy-spaces", package.path) then require("hypr.omarchy-spaces").bind_tab_keys() end' >> ~/.config/hypr/bindings.lua
+    # Hyprland doesn't notice the link by itself.
+    hyprctl reload
 
 # Undo `just install` and `just setup`, to try the real install. Your spaces' windows go to the plain workspaces; what Spaces has saved is set aside, and `just setup` brings it back
 uninstall:
