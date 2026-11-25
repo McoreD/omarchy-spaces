@@ -59,10 +59,11 @@ Item {
     id: watchItem
   }
 
-  // The spaces from before the last restart open again by themselves. It does
-  // nothing when they already have, as when only the shell restarts; detached,
-  // so restarting the shell doesn't stop it halfway.
-  Component.onCompleted: Quickshell.execDetached(["space", "restore"])
+  // The spaces from before the last restart open again by themselves, unless
+  // `[restore]` sets `enabled = false`. It does nothing when they already
+  // have, as when only the shell restarts; detached, so restarting the shell
+  // doesn't stop it halfway.
+  Component.onCompleted: Quickshell.execDetached(["space", "restore", "--auto"])
 
   Sidebar {
     id: sidebarItem

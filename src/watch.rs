@@ -105,7 +105,7 @@ pub fn watch(sounds: bool) -> Result<()> {
     // What each agent last reported `(word, turn)`, to ring on a change.
     let mut words: HashMap<String, (String, u64)> = HashMap::new();
     let mut initial = true;
-    let mut config = Config::load().unwrap_or_default();
+    let mut config = Config::load_or_default();
     let mut config_seen = stamp(&paths::config_file());
     let mut focused = hypr.active_window_address()?;
     let mut read_all = true;
@@ -153,7 +153,7 @@ pub fn watch(sounds: bool) -> Result<()> {
         }
         let configured = stamp(&paths::config_file());
         if configured != config_seen {
-            config = Config::load().unwrap_or_default();
+            config = Config::load_or_default();
             config_seen = configured;
         }
 

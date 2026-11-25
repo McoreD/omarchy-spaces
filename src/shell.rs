@@ -38,7 +38,7 @@ pub fn shell() -> Result<()> {
         .and_then(|resume| agent::parse_resume(&resume))
         .map(|command| agent_shell(&command))
         .unwrap_or_default();
-    let wanted = Config::load().unwrap_or_default().use_herdr_core();
+    let wanted = Config::load_or_default().use_herdr_core();
     let error = if !wanted || !config::on_path("hc") {
         own_shell(&argv)
     } else {

@@ -1115,12 +1115,12 @@ fn layout_before(
 /// kept in `file`. Each is struck off as it opens, so none opens twice. It
 /// takes you back to the space you were in, unless you have started on
 /// something else. The plugin runs it as it starts.
-pub fn restore(file: Option<PathBuf>) -> Result<()> {
+pub fn restore(file: Option<PathBuf>, auto: bool) -> Result<()> {
     // A mistake in the config shouldn't cost you your spaces.
-    let config = Config::load().unwrap_or_else(|e| {
-        eprintln!("space: warning: {e:#}");
-        Config::default()
-    });
+    let config = Config::load_or_default();
+    if auto && !config.restore.enabled {
+        return Ok(());
+    }
     let hypr = Hypr::from_env()?;
     let state_dir = paths::state_dir();
     let Some(_lock) = session::lock_restore(&state_dir)? else {
@@ -1175,7 +1175,7 @@ pub fn restore(file: Option<PathBuf>) -> Result<()> {
     let active = spaces.iter().find(|space| space.saved.active);
     let back = active.and_then(Restoring::back);
     let mut landed = go_back(&hypr, &start, &opened, back.as_deref(), false)?;
-    let mut browser_works = config.restore_browser.unwrap_or(true);
+    let mut browser_works = config.restore.browser;
     for space in spaces.iter_mut().filter(|s| s.has_browser(None)) {
         space.open_browsers(&hypr, &mut opened, &mut browser_works);
         space.note_restored(&hypr)?;
@@ -1479,7 +1479,7 @@ fn restored_command(config: &Config, terminal: &session::Window, token: &str) ->
         .conversation
         .as_ref()
         // Its conversations are by folder.
-        .filter(|c| config.resume_agents.unwrap_or(true) && dir == c.folder)
+        .filter(|c| config.restore.agents && dir == c.folder)
         .filter(|c| c.command().is_some())
         .map(|c| format!("{} {}", c.agent, c.id));
     let mut env = vec![(shell::RESTORE, token)];

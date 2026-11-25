@@ -1311,7 +1311,7 @@ fn restore_picks_up_conversations_where_they_were() {
         let env = Env::new();
         let notes = env.dir("notes");
         let log = env.home().join("resumed");
-        env.write_config(&format!("resume_agents = {resume}"));
+        env.write_config(&format!("[restore]\nagents = {resume}\n"));
         let config = env.home().join(".config/omarchy-spaces/config.toml");
         let text = fs::read_to_string(&config).unwrap();
         let noting = text.replace(
@@ -1345,7 +1345,7 @@ fn restore_opens_the_browsers_windows_among_the_terminals() {
         let env = Env::new();
         let notes = env.dir("notes");
         env.hypr.lock().unwrap().layouts = true;
-        env.write_config(&format!("restore_browser = {wanted}"));
+        env.write_config(&format!("[restore]\nbrowser = {wanted}\n"));
         fs::create_dir_all(env.state()).unwrap();
         let saved = json!({ "instance": "before", "spaces": [
             {
@@ -1392,6 +1392,26 @@ fn restore_gets_by_without_a_config_it_can_read() {
     // Omarchy's own terminal, which here is a stub.
     let launched = fs::read_to_string(env.home().join("launched-for-real")).unwrap();
     assert_eq!(launched.trim(), notes.display().to_string());
+}
+
+#[test]
+fn restore_auto_skips_when_disabled_but_manual_still_works() {
+    let env = Env::new();
+    let notes = env.dir("notes");
+    env.write_config("[restore]\nenabled = false\n");
+    fs::create_dir_all(env.state()).unwrap();
+    let saved = json!({ "instance": "before", "spaces": [
+        { "name": "Work", "terminals": [{ "slot": 1, "folder": notes }] },
+    ] });
+    fs::write(env.state().join("session.json"), saved.to_string()).unwrap();
+
+    // Startup restore (`--auto`) leaves the session alone.
+    env.ok(&["restore", "--auto"]);
+    assert!(env.windows().is_empty());
+
+    // Running `space restore` by hand still restores it.
+    env.ok(&["restore"]);
+    assert_eq!(env.ls_json()[1]["label"], "Work");
 }
 
 #[test]
@@ -2362,10 +2382,37 @@ fn shell_without_core_runs_your_own() {
         );
     }
 
-    // With `hc` on PATH but core unreachable: warns and falls back to own shell.
+    // With an unrelated `hc` on PATH (e.g. herbstclient): runs your shell quietly.
+    let other_bin = env.root.path().join("other-bin");
+    fs::create_dir_all(&other_bin).unwrap();
+    fs::write(other_bin.join("hc"), "#!/bin/sh\necho herbstclient\n").unwrap();
+    fs::set_permissions(
+        other_bin.join("hc"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let out = env
+        .command(&["shell"])
+        .env("PATH", &other_bin)
+        .env("SHELL", "/usr/bin/true")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(
+        out.stderr.is_empty(),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // With herdr-core's `hc` on PATH but core unreachable: warns and falls back to own shell.
     let bin = env.root.path().join("bin");
     fs::create_dir_all(&bin).unwrap();
-    fs::write(bin.join("hc"), "#!/bin/sh\nexit 1\n").unwrap();
+    fs::write(
+        bin.join("hc"),
+        "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo 'herdr-core'; exit 0; fi\nexit 1\n",
+    )
+    .unwrap();
     fs::set_permissions(
         bin.join("hc"),
         std::os::unix::fs::PermissionsExt::from_mode(0o755),

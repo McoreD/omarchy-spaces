@@ -44,17 +44,17 @@ pub fn alert(before: &str, now: &str, looking: bool) -> Option<Status> {
 /// Plays the sound for `alert`, unless the config turns sounds off. It
 /// plays on its own, so this returns at once.
 pub fn play(config: &Config, alert: Status) {
-    let sounds = config.sounds.clone().unwrap_or_default();
+    let sounds = &config.sounds;
     if !sounds.enabled {
         return;
     }
     let (chosen, name, bundled) = match alert {
-        Status::Waiting => (sounds.waiting, "request.mp3", WAITING),
-        Status::Done => (sounds.done, "done.mp3", DONE),
+        Status::Waiting => (sounds.waiting.as_deref(), "request.mp3", WAITING),
+        Status::Done => (sounds.done.as_deref(), "done.mp3", DONE),
         Status::Working => return,
     };
     let file = match chosen {
-        Some(file) => crate::paths::expand(&file),
+        Some(file) => crate::paths::expand(file),
         None => match write_bundled(&paths::runtime_dir(), name, bundled) {
             Ok(file) => file,
             Err(e) => {

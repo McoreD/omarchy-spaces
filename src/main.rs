@@ -72,6 +72,10 @@ enum Cmd {
         /// An earlier session to open instead, from
         /// ~/.local/state/omarchy-spaces/sessions/.
         file: Option<PathBuf>,
+        /// Run by the plugin on startup: does nothing when `[restore]` sets
+        /// `enabled = false`.
+        #[arg(long, hide = true)]
+        auto: bool,
     },
     /// Open a terminal in the folder you are in, or the active space's.
     Terminal,
@@ -246,7 +250,7 @@ fn main() -> ExitCode {
         },
         Cmd::Reorder { space, position } => commands::reorder(space, position),
         Cmd::Close { space } => commands::close(space),
-        Cmd::Restore { file } => commands::restore(file),
+        Cmd::Restore { file, auto } => commands::restore(file, auto),
         Cmd::Terminal => commands::open_terminal(),
         Cmd::Status { state, window, pid } => commands::status(&state, window, pid),
         Cmd::Watch { sounds } => watch::watch(sounds),
