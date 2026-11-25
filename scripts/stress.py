@@ -55,7 +55,7 @@ def check(what):
 
 def main():
     rounds = int(sys.argv[1]) if len(sys.argv) > 1 else 20
-    spaces = json.loads(run("space", "ls", "--json"))
+    spaces = json.loads(run("space", "ls", "--json"))["spaces"]
     if len(spaces) < 2:
         sys.exit("There's only one space to go to.")
     start = hyprland()

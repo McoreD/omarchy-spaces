@@ -105,6 +105,7 @@ fn read_report(path: &Path) -> Option<Report> {
 /// Saves a native status report for `window`, or clears it on `"idle"`.
 pub fn write_report(dir: &Path, window: &str, word: &str, owner_pid: Option<u32>) -> Result<()> {
     let address = normalize_address(window)?;
+    let _lock = state::lock(dir, ".lock")?;
     let path = report_path(dir, &address);
     if word == "idle" {
         match fs::remove_file(&path) {
@@ -132,6 +133,7 @@ pub fn write_report(dir: &Path, window: &str, word: &str, owner_pid: Option<u32>
 /// cleared across restarts of `space watch` and in `space ls`.
 pub fn mark_seen(dir: &Path, window: &str, turn: u64) -> Result<()> {
     let address = normalize_address(window)?;
+    let _lock = state::lock(dir, ".lock")?;
     let path = report_path(dir, &address);
     let Some(mut report) = read_report(&path) else {
         return Ok(());
@@ -187,10 +189,17 @@ pub fn prune_reports(dir: &Path, live_windows: &HashSet<String>) {
         let Some(address) = name.strip_suffix(".json") else {
             continue;
         };
-        let remove = !live_windows.contains(address)
-            || read_report(&path).is_none_or(|report| report.is_stale());
-        if remove {
-            let _ = fs::remove_file(&path);
+        let stale = |path: &Path| {
+            !live_windows.contains(address)
+                || read_report(path).is_none_or(|report| report.is_stale())
+        };
+        if stale(&path) {
+            let Ok(_lock) = state::lock(dir, ".lock") else {
+                continue;
+            };
+            if stale(&path) {
+                let _ = fs::remove_file(&path);
+            }
         }
     }
 }
