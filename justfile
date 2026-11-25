@@ -50,6 +50,19 @@ uninstall:
     ./uninstall.sh
     cargo uninstall omarchy-spaces
 
+# Give the plugin that `omarchy plugin add` put there its `space`, built here, while its version has no release to download
+install-unreleased:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    plugin=~/.config/omarchy/plugins/com.t4t5.spaces
+    [[ -d $plugin && ! -L $plugin ]] || { echo "Add it first: omarchy plugin add https://github.com/t4t5/omarchy-spaces.git --enable" >&2; exit 1; }
+    releases={{quote(justfile_directory())}}/target/releases
+    cargo build --release --locked
+    scripts/package.sh target/release/space "$(uname -m)" "$releases/v$(jq -r .version manifest.json)"
+    SPACES_RELEASES="file://$releases" "$plugin/install.sh"
+    # It carries on with its setup as it starts.
+    omarchy restart shell
+
 # Make the icon picker's glyphs again, from a Nerd Fonts release's glyph names
 glyphs version="v3.4.0":
     mkdir -p target

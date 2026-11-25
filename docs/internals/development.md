@@ -6,6 +6,7 @@ The [justfile](../../justfile) has the commands for a clone you work in:
 just install   # build `space` into ~/.cargo/bin
 just setup     # link and enable the plugin, and load the Hyprland part
 just uninstall # undo both, to try the real install; `just setup` brings back what was saved
+just install-unreleased # after adding the real plugin: give it a `space` built here, while there's no release to download
 just reload    # after changing the plugin; the shell doesn't reload it by itself
 just stress    # go between your spaces quickly, and check that what shows keeps up
 just glyphs    # make the icon picker's glyphs again, for a newer Nerd Fonts
