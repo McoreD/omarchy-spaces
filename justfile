@@ -1,3 +1,5 @@
+state := env("XDG_STATE_HOME", env("HOME") / ".local/state") / "omarchy-spaces"
+
 default:
     @just --list
 
@@ -6,6 +8,10 @@ install:
 
 # Add the tabs to the bar and the sidebar to the Omarchy shell, and load the Hyprland part
 setup:
+    # Not into one that `omarchy plugin add` put there.
+    [ -L ~/.config/omarchy/plugins/com.t4t5.spaces ] || [ ! -e ~/.config/omarchy/plugins/com.t4t5.spaces ]
+    # What `just uninstall` set aside.
+    [ -e {{state}} ] || [ ! -e {{state}}.dev ] || mv {{state}}.dev {{state}}
     ln -sfn {{justfile_directory()}} ~/.config/omarchy/plugins/com.t4t5.spaces
     omarchy-shell shell rescanPlugins
     # The rescan finishes after the call returns; wait until the shell lists the plugin.
@@ -15,7 +21,34 @@ setup:
     omarchy plugin disable omarchy.menu
     omarchy plugin disable omarchy.workspaces
     ln -sfn {{justfile_directory()}}/hypr/omarchy-spaces.lua ~/.config/hypr/omarchy-spaces.lua
-    grep -q 'require("hypr.omarchy-spaces")' ~/.config/hypr/bindings.lua || echo 'local spaces = require("hypr.omarchy-spaces")' >> ~/.config/hypr/bindings.lua
+    grep -qs 'require("hypr.omarchy-spaces")' ~/.config/hypr/*.lua || echo 'if package.searchpath("hypr.omarchy-spaces", package.path) then require("hypr.omarchy-spaces").bind_tab_keys() end' >> ~/.config/hypr/bindings.lua
+
+# Undo `just install` and `just setup`, to try the real install. Your spaces' windows go to the plain workspaces; what Spaces has saved is set aside, and `just setup` brings it back
+uninstall:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    plugin=~/.config/omarchy/plugins/com.t4t5.spaces
+    link=~/.config/hypr/omarchy-spaces.lua
+    [[ -L $plugin ]] || { echo "Not linked by \`just setup\`: use omarchy plugin remove com.t4t5.spaces" >&2; exit 1; }
+    [[ ! -e {{state}}.dev ]] || { echo "{{state}}.dev is there from before: move it first" >&2; exit 1; }
+    for file in $(grep -ls 'require("hypr.omarchy-spaces")' ~/.config/hypr/*.lua || true); do
+      grep -q 'searchpath("hypr.omarchy-spaces"' "$file" && continue
+      echo "$file needs this before its require, or Hyprland's config fails without Spaces:" >&2
+      echo '  if not package.searchpath("hypr.omarchy-spaces", package.path) then return end' >&2
+      exit 1
+    done
+    omarchy plugin remove com.t4t5.spaces --yes
+    rm -f "$link"
+    if [[ -d {{state}} ]]; then
+      # `space watch` saves over it once it's back, without the spaces.
+      cp {{state}}/session.json {{state}}/before-uninstall.json || true
+      mv {{state}} {{state}}.dev
+    fi
+    # The rest as a removed plugin does it, with the bar `just setup` replaced.
+    mkdir -p {{state}}
+    echo replace > {{state}}/bar
+    ./uninstall.sh
+    cargo uninstall omarchy-spaces
 
 # Make the icon picker's glyphs again, from a Nerd Fonts release's glyph names
 glyphs version="v3.4.0":
