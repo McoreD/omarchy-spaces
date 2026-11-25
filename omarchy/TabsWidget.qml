@@ -94,13 +94,15 @@ BarWidget {
   function placeLater() {
     Qt.callLater(root.place)
   }
-  // The items it sits in, followed.
+  // The items it sits in, followed. The bar loads the widget before it puts
+  // what holds it in its slot, so any of them can move to another parent.
   property var followed: []
   function unfollow() {
     for (var item of root.followed) {
       if (!item) continue
       item.xChanged.disconnect(root.placeLater)
       item.yChanged.disconnect(root.placeLater)
+      item.parentChanged.disconnect(root.follow)
     }
     root.followed = []
   }
@@ -110,6 +112,7 @@ BarWidget {
     for (var item = root; item; item = item.parent) {
       item.xChanged.connect(root.placeLater)
       item.yChanged.connect(root.placeLater)
+      item.parentChanged.connect(root.follow)
       items.push(item)
     }
     root.followed = items
@@ -123,7 +126,6 @@ BarWidget {
     root.unfollow()
     if (root.service) root.service.setHeader(root, false)
   }
-  onParentChanged: root.follow()
 
   readonly property string screenName: {
     var window = root.QsWindow.window
