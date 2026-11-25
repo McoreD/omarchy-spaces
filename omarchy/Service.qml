@@ -18,6 +18,15 @@ Item {
   // The sidebar, which the tabs on the bar line up beside while it shows.
   readonly property var sidebar: sidebarItem
 
+  // The tabs' widgets with the sidebar's header on their bar, or null until
+  // one has said whether it has.
+  property var headerBars: null
+  function setHeader(widget, on) {
+    var bars = (root.headerBars || []).filter(function(bar) { return bar && bar !== widget })
+    if (on) bars.push(widget)
+    root.headerBars = bars
+  }
+
   function search() { sidebarItem.search() }
   function endSearch() { sidebarItem.endSearch() }
   function toggleSidebar(screen) { sidebarItem.toggleSidebar(screen) }
@@ -68,7 +77,10 @@ Item {
   Sidebar {
     id: sidebarItem
     watch: watchItem
-    headerOnBar: Spaces.headerOnBar(root.shell ? root.shell.barConfig : null, (root.manifest && root.manifest.id) || "com.t4t5.spaces")
+    // As the tabs' widgets have it, or as the config does until they load,
+    // so the list doesn't start with a header that then goes.
+    headerOnBar: root.headerBars ? root.headerBars.length > 0
+      : Spaces.headerOnBar(root.shell ? root.shell.barConfig : null, (root.manifest && root.manifest.id) || "com.t4t5.spaces")
     // Ended from inside (a pick, Escape), so the shell stops counting the
     // overlay as open and the next toggle searches again.
     onSearchEnded: {

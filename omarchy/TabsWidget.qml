@@ -86,18 +86,43 @@ BarWidget {
     var content = root.QsWindow.contentItem
     if (content) root.origin = content.mapFromItem(root, 0, 0)
   }
-  // The widget moves when something before it on the bar changes size, which
-  // moves one of the items it sits in. Read once the bar has laid itself out:
-  // resizing, the widget's slot centres it in room that catches up a moment
-  // later, which would otherwise move it for that moment.
+  // The widget moves when something before it on the bar changes size, or its
+  // slot gets its own, which moves one of the items it sits in. Read once the
+  // bar has laid itself out: resizing, the widget's slot centres it in room
+  // that catches up a moment later, which would otherwise move it for that
+  // moment.
   function placeLater() {
     Qt.callLater(root.place)
   }
+  // The items it sits in, followed.
+  property var followed: []
+  function unfollow() {
+    for (var item of root.followed) {
+      if (!item) continue
+      item.xChanged.disconnect(root.placeLater)
+      item.yChanged.disconnect(root.placeLater)
+    }
+    root.followed = []
+  }
   function follow() {
-    for (var item = root; item; item = item.parent) item.xChanged.connect(root.placeLater)
+    root.unfollow()
+    var items = []
+    for (var item = root; item; item = item.parent) {
+      item.xChanged.connect(root.placeLater)
+      item.yChanged.connect(root.placeLater)
+      items.push(item)
+    }
+    root.followed = items
     root.placeLater()
   }
-  Component.onCompleted: root.follow()
+  Component.onCompleted: {
+    root.follow()
+    root.tellHeader()
+  }
+  Component.onDestruction: {
+    root.unfollow()
+    if (root.service) root.service.setHeader(root, false)
+  }
   onParentChanged: root.follow()
 
   readonly property string screenName: {
@@ -113,6 +138,15 @@ BarWidget {
     return here ? root.sidebar.edge : root.sidebar.railEdge
   }
   onPartsChanged: root.placeLater()
+  // Whether the sidebar's header is on this bar, from the bar's own layout:
+  // the shell's copy of its config for plugins can be a change behind.
+  readonly property bool hasHeader: root.parts && !!root.bar
+    && Spaces.headerOnBar({ position: root.bar.position, layout: root.bar.layoutConfig }, root.moduleName)
+  function tellHeader() {
+    if (root.service) root.service.setHeader(root, root.hasHeader)
+  }
+  onHasHeaderChanged: root.tellHeader()
+  onServiceChanged: root.tellHeader()
 
   // Where the tabs start: at the space's part of the bar, so a tab's hover
   // background stands as far from the space's side as from its top.
@@ -300,7 +334,7 @@ BarWidget {
   // rides the cut, coming out from behind the logo as the sidebar slides
   // open, and the title is uncovered in the room it leaves.
   Loader {
-    active: root.parts && root.sidebar.headerOnBar
+    active: root.hasHeader
     x: -root.origin.x
     y: -root.origin.y
     width: root.edge
