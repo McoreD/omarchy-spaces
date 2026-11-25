@@ -155,9 +155,9 @@ BarWidget {
   // the tabs stand about as close as Omarchy's workspaces do.
   readonly property real tabPadding: Style.spacing.lg
 
-  // Where the tabs start: at the space's part of the bar, so a tab's hover
-  // background stands as far from the space's side as from its top.
-  readonly property real tabsX: Math.max(root.padding, root.edge - root.origin.x)
+  // Where the tabs start: a little into the space's part of the bar, so the
+  // first tab's label doesn't look closer to its side than to the next tab's.
+  readonly property real tabsX: Math.max(root.padding, root.edge - root.origin.x + Style.spacing.sm)
 
   // Where the bar's centre starts, its clock, as the bar window keeps it. Past
   // the sidebar the tabs have less room before it, so when they would reach
