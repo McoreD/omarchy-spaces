@@ -43,8 +43,9 @@ BarWidget {
 
   // The tabs shown: while one is dragged, as they were when it began, so the
   // drag isn't cut short when an agent's status changes; and once dropped, as
-  // they will be, until Hyprland has them so.
-  readonly property var model: root.heldTabs || tabs.model
+  // they will be, until `space watch` has them so.
+  readonly property var model: root.heldTabs || root.live
+  readonly property var live: Spaces.monitorNamed(root.service && root.service.watch ? root.service.watch.now : Spaces.EMPTY, root.screenName)
   property var heldTabs: null
   // The tab being dragged, where it would drop, and how far it has moved.
   property int dragFrom: -1
@@ -173,7 +174,7 @@ BarWidget {
   }
 
   // Drops the dragged tab. The bar shows the new order at once rather than
-  // waiting for Hyprland to have it, so the tab doesn't jump back first.
+  // waiting for `space watch` to have it, so the tab doesn't jump back first.
   function drop() {
     var from = root.dragFrom
     var to = root.dragTo
@@ -193,18 +194,16 @@ BarWidget {
   }
 
   // A drag doesn't outlive the tabs it's among: going to another space, or a
-  // tab opening or closing, ends it. A drop is over once Hyprland has it.
-  Connections {
-    target: tabs
-    function onModelChanged() {
-      if (!root.heldTabs) return
-      if (root.dragFrom < 0) {
-        if (Spaces.sameTabs(root.heldTabs, tabs.model)) root.settle()
-        return
-      }
-      var slots = function(model) { return model.space + model.tabs.map(function(tab) { return ":" + tab.key }).join("") }
-      if (slots(root.heldTabs) !== slots(tabs.model)) Qt.callLater(root.endDrag)
+  // tab opening or closing, ends it. A drop is over once `space watch` has it,
+  // or you are in another space.
+  onLiveChanged: {
+    if (!root.heldTabs) return
+    if (root.dragFrom < 0) {
+      if (root.heldTabs.space !== root.live.space || Spaces.sameTabs(root.heldTabs, root.live)) root.settle()
+      return
     }
+    var slots = function(model) { return model.space + model.tabs.map(function(tab) { return ":" + tab.key }).join("") }
+    if (slots(root.heldTabs) !== slots(root.live)) Qt.callLater(root.endDrag)
   }
 
   function settle() {
@@ -212,7 +211,7 @@ BarWidget {
     if (root.dragFrom < 0) root.heldTabs = null
   }
 
-  // Hyprland might never have it, if something else changed meanwhile or the
+  // It might never have it, if something else changed meanwhile or the
   // tab couldn't move.
   Timer {
     id: settling
@@ -248,12 +247,6 @@ BarWidget {
     if (!root.sidebar || !window || !window.screen) return
     var top = root.bar && root.bar.position === "bottom" ? window.screen.height - window.height : 0
     root.sidebar.openTabMenu(key, x, top + y, window.screen)
-  }
-
-  Tabs {
-    id: tabs
-    monitorName: root.screenName
-    rows: root.service && root.service.watch ? root.service.watch.rows : []
   }
 
   // The background, from the screen's edge to where the windows begin, over

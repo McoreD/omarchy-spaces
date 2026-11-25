@@ -1,54 +1,95 @@
-// The sidebar's logic, kept out of QML so Node can test it. Everything here
-// works on the rows `space ls --json` prints.
+// The plugin's logic, kept out of QML so Node can test it. Everything the bar
+// and the sidebar show of the spaces comes from one line of `space watch`.
 
-// Rows from `space ls --json`, or throws with a readable message.
-export function parseRows(text) {
-  let rows
+// The version of its lines this reads (src/view.rs).
+const VERSION = 1
+
+// Before there is any.
+export const EMPTY = { focused: "", monitors: [], spaces: [] }
+const NO_MONITOR = { name: "", space: "", key: 0, refresh: 0, tiled: false, tabs: [] }
+
+// A line of `space watch`, or throws with a readable message:
+//   focused:  the monitor you are on, by name
+//   monitors: [{ name, space, key, refresh, tiled, tabs }], the space and tab
+//             each shows (key 0 on a workspace without a number), and the
+//             tabs its bar does: [{ key, slot, label, named, status, windows,
+//             active }], slot 0 for no number
+//   spaces:   the rows, in the sidebar's order
+export function parseState(text) {
+  let state
   try {
-    rows = JSON.parse(String(text || ""))
+    state = JSON.parse(String(text || ""))
   } catch (e) {
-    throw new Error("space ls --json printed something unexpected")
+    throw new Error("space watch printed something unexpected")
   }
-  if (!Array.isArray(rows)) throw new Error("space ls --json printed something unexpected")
-  return rows
-    .filter((row) => row && typeof row.id === "string" && row.id !== "")
-    .map((row) => ({
-      id: row.id,
-      label: typeof row.label === "string" && row.label ? row.label : row.id,
-      named: row.named === true,
-      icon: typeof row.icon === "string" ? row.icon : "",
-      folder: typeof row.folder === "string" ? row.folder : "",
-      active: row.active === true,
-      windows: typeof row.windows === "number" ? row.windows : -1,
-      leftAt: typeof row.left_at === "number" ? row.left_at : 0,
-      status: status(row.status),
-      tabs: tabNames(row.tabs),
-      guests: guestSlots(row.guests),
-      terminals: (Array.isArray(row.terminals) ? row.terminals : [])
-        .filter((t) => t && typeof t.address === "string" && typeof t.label === "string")
-        .map((t) => ({ address: t.address, label: t.label, status: status(t.status) })),
-    }))
+  if (!state || typeof state !== "object" || !Array.isArray(state.monitors) || !Array.isArray(state.spaces)) {
+    // A list is what it printed before it had a version.
+    if (Array.isArray(state)) throw new Error("The space command is older than the plugin: install it again")
+    throw new Error("space watch printed something unexpected")
+  }
+  if (state.version !== VERSION) {
+    throw new Error("The space command and the plugin are of different versions: update both")
+  }
+  return {
+    focused: typeof state.focused === "string" ? state.focused : "",
+    monitors: state.monitors
+      .filter((monitor) => monitor && typeof monitor.name === "string" && typeof monitor.space === "string")
+      .map((monitor) => ({
+        name: monitor.name,
+        space: monitor.space,
+        key: number(monitor.tab),
+        refresh: number(monitor.refresh),
+        tiled: monitor.tiled === true,
+        tabs: (Array.isArray(monitor.tabs) ? monitor.tabs : [])
+          .filter((tab) => tab && number(tab.key) > 0)
+          .map((tab) => ({
+            key: tab.key,
+            slot: number(tab.slot),
+            label: typeof tab.label === "string" ? tab.label : "",
+            named: tab.named === true,
+            status: status(tab.status),
+            windows: number(tab.windows),
+            active: tab.active === true,
+          })),
+      })),
+    spaces: state.spaces
+      .filter((row) => row && typeof row.id === "string" && row.id !== "")
+      .map((row) => ({
+        id: row.id,
+        label: typeof row.label === "string" && row.label ? row.label : row.id,
+        named: row.named === true,
+        icon: typeof row.icon === "string" ? row.icon : "",
+        folder: typeof row.folder === "string" ? row.folder : "",
+        active: row.active === true,
+        windows: typeof row.windows === "number" ? row.windows : -1,
+        leftAt: number(row.left_at),
+        status: status(row.status),
+      })),
+  }
 }
 
-// The names you gave a space's tabs, by key: `{ 2: "server" }`.
-function tabNames(value) {
-  const names = {}
-  if (!value || typeof value !== "object") return names
-  for (const [key, name] of Object.entries(value)) {
-    if (/^[1-9][0-9]{0,2}$/.test(key) && typeof name === "string" && name) names[key] = name
-  }
-  return names
+function number(value) {
+  return typeof value === "number" ? value : 0
 }
 
-// The slots a space's tabs from an unplugged monitor show as, by key:
-// `{ 11: 4 }`, 0 for none.
-function guestSlots(value) {
-  const slots = {}
-  if (!value || typeof value !== "object") return slots
-  for (const [key, slot] of Object.entries(value)) {
-    if (/^[1-9][0-9]{0,2}$/.test(key) && Number.isInteger(slot) && slot >= 0 && slot <= SLOTS) slots[key] = slot
+// A monitor by its name, one without tabs when there's none.
+export function monitorNamed(state, name) {
+  return state.monitors.find((monitor) => monitor.name === name) || NO_MONITOR
+}
+
+// The monitor you are on.
+export function focusedMonitor(state) {
+  return monitorNamed(state, state.focused)
+}
+
+// The monitor that shows a tab, given as its workspace (`s1:2`), and the tab:
+// `{ monitor, tab }`, or null when none does.
+export function findTab(state, workspace) {
+  for (const monitor of state.monitors) {
+    const tab = monitor.tabs.find((t) => monitor.space + ":" + t.key === workspace)
+    if (tab) return { monitor, tab }
   }
-  return slots
+  return null
 }
 
 // What an agent is doing, least to most in need of you; "" when idle.
@@ -56,11 +97,6 @@ const STATUSES = ["", "working", "done", "waiting"]
 
 function status(value) {
   return STATUSES.includes(value) ? value : ""
-}
-
-// Whichever of two statuses needs you more.
-export function moreUrgent(a, b) {
-  return STATUSES.indexOf(status(b)) > STATUSES.indexOf(status(a)) ? status(b) : status(a)
 }
 
 // The colours of the statuses from the theme's colors.toml: waiting in its
@@ -93,7 +129,7 @@ export function score(query, name) {
 }
 
 // The rows matching `query` by what they're called, best first. With no
-// query, every row in the order `space ls` gives (home, then the order they
+// query, every row in the order `space watch` gives (home, then the order they
 // were made in), so each space keeps its place.
 export function filterRows(rows, query) {
   const q = String(query || "").trim()
@@ -129,7 +165,7 @@ export function rowActions(row) {
   return actions
 }
 
-// A tab's right-click menu on the bar, of `tabsFor`'s `model`: name it, as
+// A tab's right-click menu on the bar, of its monitor (`model`): name it, as
 // double-clicking it does, move it to another space, of which there may be
 // none (`elsewhere`), or close it. An empty tab is only there while
 // you're on it, so closing it takes another to go to, or a space to end:
@@ -274,6 +310,14 @@ export function gridMove(from, count, columns, dx, dy) {
   return Math.max(0, Math.min(count - 1, next))
 }
 
+// Where the cursor is: on the row with the id you moved it to (`picked`),
+// while it's there, and otherwise where it starts, or, searching, on the best.
+export function cursorIndex(rows, query, picked) {
+  const index = picked ? rows.findIndex((row) => row.id === picked) : -1
+  if (index >= 0) return index
+  return String(query || "").trim() ? 0 : initialIndex(rows)
+}
+
 // Where the cursor starts: on the space you left most recently, so opening
 // the sidebar and pressing Enter goes back. Failing that, the active one.
 export function initialIndex(rows) {
@@ -285,120 +329,6 @@ export function initialIndex(rows) {
   if (best >= 0) return best
   const active = rows.findIndex((row) => row.active)
   return active >= 0 ? active : 0
-}
-
-// ---------------------------------------------------------------- tabs
-//
-// A space's workspaces are its tabs: `ren:1`, `ren:2`, ... The rules match
-// `space` (src/name.rs): a strict `name:n`, anything else is `home`, whose
-// tabs are the plain numbered workspaces. A tab's key is that number. Every
-// monitor has tabs of its own, 1-10 on the first, 11-20 on the next, and
-// shows each as its slot, 1-10.
-
-const SLOTS = 10
-const LAST_KEY = 250
-const SPACE_WORKSPACE = /^([a-z0-9][a-z0-9-]*):(\d+)$/
-
-// `{ space, key, slot }` for a workspace; key and slot are 0 when it has none.
-export function locate(id, name) {
-  const at = (space, key) => ({ space, key, slot: key > 0 ? ((key - 1) % SLOTS) + 1 : 0 })
-  const match = SPACE_WORKSPACE.exec(String(name || ""))
-  if (match && match[1] !== "home") {
-    const key = Number(match[2])
-    if (String(key) === match[2] && key >= 1 && key <= LAST_KEY) return at(match[1], key)
-  }
-  return at("home", id > 0 ? id : 0)
-}
-
-// A short app name from a window class: `org.omarchy.quick-terminal` is
-// `Quick-terminal`, Omarchy's `chrome-app.hey.com__-Default` web apps are
-// `Hey.com`.
-export function appName(windowClass) {
-  let name = String(windowClass || "")
-  const webApp = /^(?:chrome|chromium|brave)-(.+?)__/.exec(name)
-  if (webApp) name = webApp[1].replace(/^(app|www)\./, "")
-  else if (name.includes(".")) name = name.slice(name.lastIndexOf(".") + 1)
-  return name ? name[0].toUpperCase() + name.slice(1) : ""
-}
-
-// The terminal windows by address, from the rows: what each one's tab shows
-// (what it runs, or its folder) and what the agent in it is doing.
-export function terminalsByAddress(rows) {
-  const terminals = {}
-  for (const row of rows || []) {
-    for (const terminal of row.terminals || []) terminals[terminal.address] = terminal
-  }
-  return terminals
-}
-
-// The active space's tabs on a monitor, from Hyprland's workspaces and windows.
-//   workspaces: [{ id, name, monitor }]
-//   windows:    [{ workspaceId, address, windowClass, focus }]  (focus: lower is more recent)
-//   active:     { id, name, monitor } of the workspace the monitor shows
-//   terminals:  terminalsByAddress(rows), which name terminals better than
-//               their class, and say what their agents are doing
-//   names:      the names you gave the space's tabs, by key (its row's tabs)
-//   guests:     the slots those left by an unplugged monitor show as, by key
-//               (its row's guests); 0 for none
-// Returns { space, tabs: [{ key, slot, label, named, status, windows, active }] }
-// in order, those an unplugged monitor left here included, a tab's status the
-// one most in need of you among its windows. A name you gave a tab is its label, and makes it `named`.
-// `home`'s tabs are just their numbers until you name them.
-export function tabsFor(workspaces, windows, active, terminals, names, guests) {
-  const here = locate(active ? active.id : 0, active ? active.name : "")
-  const tabs = new Map()
-  const add = (workspace, where) => {
-    if (where.space !== here.space || where.key === 0 || tabs.has(where.key)) return
-    const guest = where.space !== "home" && guests && Object.prototype.hasOwnProperty.call(guests, where.key)
-    const slot = guest ? guests[where.key] : where.slot
-    tabs.set(where.key, { id: workspace.id, key: where.key, slot, label: "", status: "", windows: 0, focus: Infinity })
-  }
-  for (const workspace of workspaces || []) {
-    if (workspace.monitor === active?.monitor) add(workspace, locate(workspace.id, workspace.name))
-  }
-  if (active) add(active, here)
-
-  const byId = new Map([...tabs.values()].map((tab) => [tab.id, tab]))
-  for (const window of windows || []) {
-    const tab = byId.get(window.workspaceId)
-    if (!tab) continue
-    tab.windows++
-    const terminal = terminals && Object.prototype.hasOwnProperty.call(terminals, window.address)
-      ? terminals[window.address] : null
-    if (terminal) tab.status = moreUrgent(tab.status, terminal.status)
-    const focus = typeof window.focus === "number" ? window.focus : Infinity
-    // The most recently focused window names the tab.
-    if (!tab.label || focus < tab.focus) {
-      tab.label = (terminal && terminal.label) || appName(window.windowClass)
-      tab.focus = focus
-    }
-  }
-
-  // Until the rows say how guests show, they go last, without a number.
-  const taken = new Set()
-  for (const tab of [...tabs.values()].sort((a, b) => a.key - b.key)) {
-    if (taken.has(tab.slot)) tab.slot = 0
-    taken.add(tab.slot)
-  }
-
-  return {
-    space: here.space,
-    tabs: [...tabs.values()]
-      .sort((a, b) => (a.slot || SLOTS + 1) - (b.slot || SLOTS + 1) || a.key - b.key)
-      .map((tab) => {
-        const home = here.space === "home"
-        const name = names && Object.prototype.hasOwnProperty.call(names, tab.key) ? names[tab.key] : ""
-        return {
-          key: tab.key,
-          slot: tab.slot,
-          label: name || (home ? "" : tab.label),
-          named: !!name,
-          status: tab.status,
-          windows: tab.windows,
-          active: tab.key === here.key,
-        }
-      }),
-  }
 }
 
 // ---------------------------------------------------------------- motion
@@ -589,19 +519,6 @@ export function barLook(config) {
   return config && config.transparent === true ? "none" : "opaque"
 }
 
-// The rows from the last time the sidebar was open, brought up to date with
-// the space you are in now, so the cursor starts in the right place before
-// `space ls` answers: `here` (an id) is the active one, and the one that was
-// active before was left just now.
-export function freshen(rows, here, now) {
-  return rows.map((row) => {
-    const active = row.id === here
-    const leftAt = row.active && !active ? now : row.leftAt
-    // Not `{ ...row }`: QML's JavaScript has no object spread, and Node does.
-    return Object.assign({}, row, { active, leftAt })
-  })
-}
-
 // Dragging a space up or down the sidebar. A press becomes a drag only once
 // it has moved `threshold` up or down, so a click that wobbles stays a click.
 // `home` stays first: nothing drags it, and nothing drops above it.
@@ -652,7 +569,7 @@ export function tabDropIndex(widths, from, dx, spacing) {
   return to
 }
 
-// The tabs (tabsFor) once `space tab reorder` has moved the one at `from` to
+// The tabs once `space tab reorder` has moved the one at `from` to
 // `to`: the same numbers, with what's on them moved along.
 export function reorderTabs(model, from, to) {
   return {
@@ -668,6 +585,19 @@ export function sameTabs(a, b) {
     return tab.slot === other.slot && tab.label === other.label && tab.windows === other.windows
       && tab.active === other.active
   })
+}
+
+// The rows in an order they were dragged into, by their ids, that `space
+// watch` hasn't printed yet. An order of other spaces than these says nothing.
+export function ordered(rows, order) {
+  if (!order || order.length !== rows.length) return rows
+  const out = order.map((id) => rows.find((row) => row.id === id))
+  return out.every(Boolean) ? out : rows
+}
+
+// Whether the rows are in that order, or no longer can be.
+export function orderSettled(rows, order) {
+  return ordered(rows, order).every((row, i) => row === rows[i])
 }
 
 // The rows with the one at `from` moved to `to`.

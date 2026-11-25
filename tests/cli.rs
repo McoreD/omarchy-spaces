@@ -50,6 +50,10 @@ struct Hyprland {
     classes: std::collections::HashMap<u32, String>,
     /// Whether it says how windows are laid out, as 0.56 does.
     layouts: bool,
+    /// Whether it answers with something unreadable.
+    garbled: bool,
+    /// How long going to a workspace takes it.
+    slow: Duration,
     next_named_id: i64,
 }
 
@@ -150,6 +154,13 @@ impl Hyprland {
 
     fn handle(&mut self, request: &str) -> String {
         self.show_started();
+        if let Some(batch) = request.strip_prefix("[[BATCH]]") {
+            if self.garbled {
+                return "unknown request".into();
+            }
+            let replies: Vec<String> = batch.split(';').map(|r| self.handle(r)).collect();
+            return replies.join("\n\n\n");
+        }
         match request {
             "j/activeworkspace" => {
                 let active = self.active.clone();
@@ -161,9 +172,12 @@ impl Hyprland {
             }
             "j/monitors" => {
                 let shown = [Some(self.active.clone()), self.elsewhere.clone()];
+                let unplugged = self.unplugged;
                 let monitors = shown.into_iter().flatten().map(|name| {
                     let id = self.ensure(&name);
-                    json!({ "name": monitor_of(&name), "x": 0, "y": 0, "width": 1920.0, "height": 1080.0, "scale": 1.0, "activeWorkspace": { "id": id, "name": name } })
+                    let monitor = if unplugged { "eDP-1" } else { monitor_of(&name) };
+                    let focused = name == self.active;
+                    json!({ "name": monitor, "focused": focused, "refreshRate": 60.0, "x": 0, "y": 0, "width": 1920.0, "height": 1080.0, "scale": 1.0, "activeWorkspace": { "id": id, "name": name } })
                 });
                 Value::Array(monitors.collect()).to_string()
             }
@@ -326,6 +340,7 @@ impl Hyprland {
                 return "ok".into();
             }
             let target = selector(quoted(expression).unwrap());
+            thread::sleep(self.slow);
             self.go(target);
         } else if expression.starts_with("hl.dsp.window.close(") {
             let address = field(expression, "window").unwrap();
@@ -2613,14 +2628,33 @@ impl Watch {
             .collect()
     }
 
-    /// The next list it prints within `within`.
+    /// The spaces in the next line it prints within `within`.
     #[track_caller]
     fn next_rows(&self, within: std::time::Duration) -> Vec<Value> {
+        self.next_state(within)["spaces"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    /// The next line it prints within `within`.
+    #[track_caller]
+    fn next_state(&self, within: std::time::Duration) -> Value {
         let line = self
             .lines
             .recv_timeout(within)
             .expect("space watch printed nothing new in time");
         serde_json::from_str(&line).unwrap()
+    }
+
+    /// The last line it prints before saying nothing for `quiet`.
+    #[track_caller]
+    fn settled(&self, quiet: std::time::Duration) -> Value {
+        let mut last = None;
+        while let Ok(line) = self.lines.recv_timeout(quiet) {
+            last = Some(line);
+        }
+        serde_json::from_str(&last.expect("space watch printed nothing")).unwrap()
     }
 
     /// Waits for its listener to join, so events reach it.
@@ -2698,6 +2732,202 @@ fn watch_prints_the_spaces_again_as_they_change() {
             .recv_timeout(Duration::from_millis(500))
             .is_err()
     );
+}
+
+/// The space each monitor shows, and the one that's active, in a line of
+/// `space watch`.
+fn places(state: &Value) -> (Vec<(String, String)>, Vec<String>) {
+    let text = |v: &Value| v.as_str().unwrap().to_string();
+    let monitors = state["monitors"].as_array().unwrap().iter();
+    let spaces = state["spaces"].as_array().unwrap().iter();
+    (
+        monitors
+            .map(|m| (text(&m["name"]), text(&m["space"])))
+            .collect(),
+        spaces
+            .filter(|row| row["active"] == true)
+            .map(|row| text(&row["id"]))
+            .collect(),
+    )
+}
+
+#[test]
+fn watch_shows_where_you_are_after_switching_quickly() {
+    let env = Env::new();
+    env.add_window("s1:1");
+    env.add_window("s2:1");
+    env.add_window("s3:1");
+    env.set_active("s1:1");
+    let watch = Watch::start(&env);
+    watch.joined(&env);
+    let _ = watch.settled(Duration::from_millis(400));
+
+    for round in 0..10 {
+        let to = ["s2:1", "s3:1", "s1:1"];
+        for name in to {
+            env.set_active(name);
+            env.event(&format!("workspacev2>>-1,{name}"));
+            thread::sleep(Duration::from_millis(round * 5));
+        }
+        // Each line is right in itself, and the last one is where you are.
+        let mut last = None;
+        while let Ok(line) = watch.lines.recv_timeout(Duration::from_millis(300)) {
+            let state: Value = serde_json::from_str(&line).unwrap();
+            let (monitors, active) = places(&state);
+            assert_eq!(monitors, [("eDP-1".to_string(), active[0].clone())]);
+            assert_eq!(active.len(), 1);
+            last = Some(active[0].clone());
+        }
+        // Nothing printed is nothing changed: back before it looked.
+        if let Some(last) = last {
+            assert_eq!(last, "s1");
+        }
+    }
+}
+
+#[test]
+fn watch_shows_a_switch_and_the_space_it_left_at_once() {
+    let env = Env::new();
+    env.add_window("s1:1");
+    env.add_window("s2:1");
+    env.set_active("s1:1");
+    let watch = Watch::start(&env);
+    watch.joined(&env);
+    let _ = watch.settled(Duration::from_millis(400));
+
+    env.ok(&["go", "s2"]);
+    env.event("workspacev2>>-1,s2:1");
+    let state = watch.next_state(Duration::from_secs(1));
+    assert_eq!(places(&state).1, ["s2"]);
+    let left = |i: usize| state["spaces"][i]["left_at"].as_u64().unwrap();
+    assert!(
+        left(1) > 0,
+        "the space you left, for the search to start on"
+    );
+    assert!(left(1) > left(2));
+}
+
+#[test]
+fn watch_keeps_what_it_knew_when_hyprland_cant_be_read() {
+    let env = Env::new();
+    env.add_window("s1:1");
+    env.add_window("s2:1");
+    env.set_active("s1:1");
+    let mut watch = Watch::start(&env);
+    watch.joined(&env);
+    let _ = watch.settled(Duration::from_millis(400));
+
+    env.hypr.lock().unwrap().garbled = true;
+    env.set_active("s2:1");
+    env.event("workspacev2>>-1,s2:1");
+    let quiet = watch.lines.recv_timeout(Duration::from_millis(400));
+    assert!(quiet.is_err(), "{quiet:?}");
+    assert!(watch.child.try_wait().unwrap().is_none(), "and goes on");
+
+    // The slow round catches up without another event.
+    env.hypr.lock().unwrap().garbled = false;
+    let state = watch.next_state(Duration::from_secs(4));
+    assert_eq!(places(&state).1, ["s2"]);
+}
+
+#[test]
+fn watch_shows_each_monitors_tabs() {
+    let env = Env::new();
+    let (ren, notes) = (env.dir("ren"), env.dir("notes"));
+    env.add_terminal("s1:1", &ren);
+    env.add_terminal("s1:3", &notes);
+    env.add_window("s1:12");
+    env.add_window("s2:1");
+    env.add_window("2");
+    env.set_active("s1:3");
+    env.plug_in("s1:12");
+    let class = |address: u32, class: &str| {
+        let mut hypr = env.hypr.lock().unwrap();
+        hypr.classes.insert(address, class.into());
+    };
+    class(3, "org.mozilla.firefox");
+    env.ok(&["tab", "rename", "s1:1", "server"]);
+
+    let tabs = |state: &Value, monitor: usize| -> Vec<Value> {
+        let tabs = state["monitors"][monitor]["tabs"].as_array().unwrap();
+        tabs.iter()
+            .map(|t| {
+                json!([
+                    t["key"],
+                    t["slot"],
+                    t["label"],
+                    t["named"],
+                    t["windows"],
+                    t["active"]
+                ])
+            })
+            .collect()
+    };
+    let watch = Watch::start(&env);
+    let state = watch.settled(Duration::from_millis(400));
+    assert_eq!(state["version"], 1);
+    assert_eq!(state["focused"], "eDP-1");
+    assert_eq!(state["monitors"][0]["space"], "s1");
+    assert_eq!(state["monitors"][0]["tab"], 3);
+    assert_eq!(state["monitors"][0]["tiled"], true);
+    assert_eq!(
+        tabs(&state, 0),
+        [
+            json!([1, 1, "server", true, 1, false]),
+            json!([3, 3, "notes", false, 1, true]),
+        ]
+    );
+    assert_eq!(state["monitors"][1]["name"], "DP-1");
+    assert_eq!(
+        tabs(&state, 1),
+        [json!([12, 2, "Firefox", false, 1, true])],
+        "another monitor's are its own"
+    );
+
+    // A new tab is empty until something opens on it.
+    watch.joined(&env);
+    env.set_active("s1:4");
+    env.event("workspacev2>>-1,s1:4");
+    let state = watch.settled(Duration::from_millis(400));
+    assert_eq!(tabs(&state, 0)[2], json!([4, 4, "", false, 0, true]));
+    assert_eq!(state["monitors"][0]["tiled"], false);
+
+    // `home`'s are numbers until named.
+    env.set_active("2");
+    env.event("workspacev2>>2,2");
+    let state = watch.settled(Duration::from_millis(400));
+    assert_eq!(state["monitors"][0]["space"], "home");
+    assert_eq!(tabs(&state, 0)[1], json!([2, 2, "", false, 1, true]));
+
+    // Unplugged, its tabs come after the ones left.
+    env.set_active("s1:3");
+    env.unplug();
+    env.event("monitorremoved>>DP-1");
+    let state = watch.settled(Duration::from_millis(400));
+    assert_eq!(state["monitors"].as_array().unwrap().len(), 1);
+    let keys: Vec<Value> = tabs(&state, 0)
+        .iter()
+        .map(|t| json!([t[0], t[1]]))
+        .filter(|t| t[0] != 4)
+        .collect();
+    assert_eq!(keys, [json!([1, 1]), json!([12, 2]), json!([3, 3])]);
+}
+
+#[test]
+fn stepping_twice_at_once_goes_two_spaces_on() {
+    let env = Env::new();
+    for name in ["s1:1", "s2:1", "s3:1", "s4:1"] {
+        env.add_window(name);
+    }
+    env.set_active("s1:1");
+    env.hypr.lock().unwrap().slow = Duration::from_millis(30);
+    let mut steps: Vec<_> = (0..3)
+        .map(|_| env.command(&["next"]).spawn().unwrap())
+        .collect();
+    for step in &mut steps {
+        assert!(step.wait().unwrap().success());
+    }
+    assert_eq!(env.active(), "s4:1");
 }
 
 #[test]

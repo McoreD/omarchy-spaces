@@ -44,4 +44,10 @@ Item {
   function sendTab(arg) {
     if (service) service.sendTab()
   }
+
+  // What shows, for `just stress`. Called through `omarchy-shell shell call
+  // com.t4t5.spaces shown`.
+  function shown(arg) {
+    return service ? service.shown() : ""
+  }
 }

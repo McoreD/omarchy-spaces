@@ -42,6 +42,9 @@ pub enum Target {
 /// so it never shows empty; `home`'s is Omarchy's next workspace, empty.
 pub fn go_to_tab(target: Target) -> Result<()> {
     let hypr = Hypr::from_env()?;
+    let _turn = matches!(target, Target::Next | Target::Prev)
+        .then(take_turn)
+        .transpose()?;
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
     let space = here.space();
@@ -78,12 +81,12 @@ pub fn go_to_named_tab(tab: String) -> Result<()> {
     if is_tab(&id, key, active.id, &active.name) {
         return Ok(());
     }
-    hypr.dispatch(&hypr::focus_workspace(&session_selector(&id, key)))?;
     if here.space() != id
         && let Some(left_at) = here.key()
     {
         remember(here.space(), left_at);
     }
+    hypr.dispatch(&hypr::focus_workspace(&session_selector(&id, key)))?;
     remember(&id, key);
     Ok(())
 }
@@ -203,29 +206,44 @@ pub(crate) struct SpaceWindow {
     pub pid: u32,
     pub space: String,
     /// The tab it's on, by its key.
-    tab: Option<u8>,
+    pub tab: Option<u8>,
+    pub class: String,
     rect: Rect,
-    floating: bool,
+    pub floating: bool,
     fullscreen: u8,
     grouped: Vec<String>,
     /// How long ago it had focus.
-    focus: i64,
+    pub focus: i64,
+}
+
+/// A monitor and the workspace it shows.
+#[derive(Debug, Clone)]
+pub(crate) struct Screen {
+    pub name: String,
+    /// Whether it's the one you are on.
+    pub focused: bool,
+    pub refresh: f64,
+    pub shows: Location,
 }
 
 /// What a session saves about a tab, besides its windows.
 #[derive(Debug, Default)]
-struct TabPlace {
-    monitor: String,
+pub(crate) struct TabPlace {
+    pub monitor: String,
     /// Its monitor's top left corner.
     corner: (i32, i32),
     dwindle: bool,
 }
 
 /// What Hyprland says about every space, before any terminal's folder is
-/// read: the active one, and the windows and workspaces each holds.
+/// read: the monitors, and the windows and workspaces each space holds, all
+/// as of one moment. Where you are follows from it rather than being kept
+/// beside it.
 #[derive(Debug, Default)]
 pub(crate) struct Snapshot {
-    pub active: Option<String>,
+    pub screens: Vec<Screen>,
+    /// Which block of ten tabs is each monitor's.
+    pub blocks: Blocks,
     windows: BTreeMap<String, u32>,
     /// Each space's tabs, by their keys.
     workspaces: BTreeMap<String, BTreeSet<u8>>,
@@ -236,10 +254,8 @@ pub(crate) struct Snapshot {
     pub space_windows: Vec<SpaceWindow>,
     /// Every window, spaces' or not, for the browser's to be told apart.
     pub browser_windows: Vec<browser::Window>,
-    /// The tab you're on.
-    active_tab: Option<u8>,
     /// Where the tabs are, by space and key.
-    places: BTreeMap<(String, u8), TabPlace>,
+    pub places: BTreeMap<(String, u8), TabPlace>,
     /// How far a window keeps from its tile's edge.
     border: i32,
     /// What grouped windows give up at the top for the group's bar.
@@ -305,6 +321,21 @@ impl Live {
 }
 
 impl Snapshot {
+    /// The workspace you are on.
+    fn here(&self) -> Option<&Location> {
+        self.screens.iter().find(|s| s.focused).map(|s| &s.shows)
+    }
+
+    /// The space you are in.
+    pub fn active(&self) -> Option<&str> {
+        self.here().map(Location::space)
+    }
+
+    /// The tab you are on.
+    fn active_tab(&self) -> Option<u8> {
+        self.here().and_then(Location::key)
+    }
+
     /// The spaces Hyprland has, `home` aside.
     fn spaces(&self) -> BTreeSet<String> {
         space_ids(&self.workspaces, &self.windows)
@@ -325,14 +356,29 @@ fn space_ids<A, B>(
 }
 
 pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
-    let mut snapshot = Snapshot::default();
-    let active = hypr.active_workspace()?;
-    let here = name::locate(active.id, &active.name);
-    snapshot.active = Some(here.space().to_string());
-    snapshot.active_tab = here.key();
-    snapshot.border = hypr.option("general:border_size").unwrap_or(0);
-    let monitors = hypr.monitors().unwrap_or_default();
-    for ws in hypr.workspaces()? {
+    let mut snapshot = Snapshot {
+        border: hypr.option("general:border_size").unwrap_or(0),
+        blocks: Blocks::load(),
+        ..Default::default()
+    };
+    let hypr::Everything {
+        monitors,
+        workspaces,
+        clients,
+    } = hypr.everything()?;
+    snapshot.screens = monitors
+        .iter()
+        .filter_map(|monitor| {
+            let shows = monitor.shows.as_ref()?;
+            Some(Screen {
+                name: monitor.name.clone(),
+                focused: monitor.focused,
+                refresh: monitor.refresh,
+                shows: name::locate(shows.id, &shows.name),
+            })
+        })
+        .collect();
+    for ws in workspaces {
         // Special workspaces (scratchpad and the like) belong to no space.
         if ws.name.starts_with("special:") {
             continue;
@@ -355,8 +401,7 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
             );
         }
     }
-    snapshot.guests = guests(&snapshot.places);
-    let clients = hypr.clients()?;
+    snapshot.guests = guests(&snapshot.places, &snapshot.blocks);
     if clients.iter().any(|c| c.grouped.len() > 1) {
         snapshot.group_bar = group_bar(hypr);
     }
@@ -365,7 +410,7 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
             snapshot.browser_windows.push(browser::Window {
                 address: client.address.clone(),
                 pid,
-                class: client.class,
+                class: client.class.clone(),
                 title: client.title,
                 opened: u64::from_str_radix(&client.stable_id, 16).unwrap_or(0),
             });
@@ -385,6 +430,7 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
                 pid,
                 space: location.space().to_string(),
                 tab: location.key(),
+                class: client.class,
                 rect: Rect {
                     x: client.at.0,
                     y: client.at.1,
@@ -402,8 +448,10 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
 }
 
 /// The tabs that show as another number than their own.
-fn guests(places: &BTreeMap<(String, u8), TabPlace>) -> BTreeMap<String, BTreeMap<u8, u8>> {
-    let blocks = Blocks::load();
+fn guests(
+    places: &BTreeMap<(String, u8), TabPlace>,
+    blocks: &Blocks,
+) -> BTreeMap<String, BTreeMap<u8, u8>> {
     let mut strips: BTreeMap<(&str, u8), Vec<u8>> = BTreeMap::new();
     for ((space, key), place) in places {
         if space != HOME
@@ -482,7 +530,7 @@ pub(crate) fn live_from(
         list.sort_by_key(|t| (t.tab, t.pid));
     }
     Live {
-        active: snapshot.active.clone(),
+        active: snapshot.active().map(str::to_string),
         windows: snapshot.windows.clone(),
         workspaces: snapshot.workspaces.clone(),
         guests: snapshot.guests.clone(),
@@ -923,7 +971,7 @@ pub(crate) fn session_of(
                 })
                 .collect();
             let last = if row.active {
-                snapshot.active_tab
+                snapshot.active_tab()
             } else {
                 (row.id != HOME).then_some(row.last)
             };
@@ -1686,11 +1734,19 @@ pub fn go(target: Option<String>) -> Result<()> {
 /// left it. It wraps around at either end.
 pub fn step(forward: bool) -> Result<()> {
     let hypr = Hypr::from_env()?;
+    let _turn = take_turn()?;
     let (rows, _) = load_rows(Some(&hypr))?;
     match neighbour(&rows, forward) {
         Some(id) => switch(&hypr, &id),
         None => Ok(()),
     }
+}
+
+/// Waits for any other step to the next or previous space or tab to finish,
+/// until it's dropped. Each is from where you are, so two keypresses handled
+/// at once would both go from the same place, and one be lost.
+fn take_turn() -> Result<std::fs::File> {
+    state::lock(&paths::state_dir(), ".step.lock")
 }
 
 /// The space next to the active one, or `None` when there's no other.
@@ -1706,7 +1762,8 @@ fn neighbour(rows: &[Row], forward: bool) -> Option<String> {
 }
 
 /// Leaves the active space, remembering where, for the target's last
-/// workspace.
+/// workspace. Remembered first, so that whoever is told of the switch
+/// (`watch.rs`) already finds what you left.
 fn switch(hypr: &Hypr, target: &str) -> Result<()> {
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
@@ -1716,12 +1773,10 @@ fn switch(hypr: &Hypr, target: &str) -> Result<()> {
 
     let last = Last::load(&paths::state_dir())?;
     let key = landing_tab(hypr, &last, &active, target)?;
-    focus(hypr, target, key)?;
-
     if let Some(left_at) = here.key() {
         remember(here.space(), left_at);
     }
-    Ok(())
+    focus(hypr, target, key)
 }
 
 /// The tab you land on going to a space, on the monitor you are on: where you
@@ -1784,6 +1839,9 @@ impl SpaceTarget {
 /// silently, a tab it leaves empty gives way as closing its last window does.
 pub fn send_window(target: SpaceTarget, silent: bool) -> Result<()> {
     let hypr = Hypr::from_env()?;
+    let _turn = matches!(target, SpaceTarget::Next | SpaceTarget::Prev)
+        .then(take_turn)
+        .transpose()?;
     if !hypr.has_active_window()? {
         return Ok(());
     }
@@ -2275,6 +2333,9 @@ fn tab_beside(
 /// you gave it. A space whose only tab it was ends.
 pub fn send_tab(tab: Option<String>, to: SpaceTarget) -> Result<()> {
     let hypr = Hypr::from_env()?;
+    let _turn = matches!(to, SpaceTarget::Next | SpaceTarget::Prev)
+        .then(take_turn)
+        .transpose()?;
     let (rows, _) = load_rows(Some(&hypr))?;
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);

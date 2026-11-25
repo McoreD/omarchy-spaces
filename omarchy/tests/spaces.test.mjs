@@ -1,7 +1,19 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, barToggle, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, tabsFor, terminalsByAddress, moreUrgent, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs } from "../Spaces.mjs"
+import { cursorIndex, EMPTY, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, barToggle, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs } from "../Spaces.mjs"
+
+// A line of `space watch`, with a tab on each of two monitors.
+const line = (spaces, more) => JSON.stringify({ version: 1, focused: "eDP-1", monitors: [
+  { name: "eDP-1", space: "s1", tab: 2, refresh: 120, tiled: true, tabs: [
+    { key: 1, slot: 1, label: "server", named: true, status: "waiting", windows: 2, active: false },
+    { key: 2, slot: 2, label: "claude", named: false, status: null, windows: 1, active: true },
+  ] },
+  { name: "DP-1", space: "s1", tab: 11, refresh: 60, tiled: false, tabs: [
+    { key: 11, slot: 1, label: "", named: false, status: null, windows: 0, active: true },
+  ] },
+], spaces, ...more })
+const rowsOf = (spaces) => parseState(line(spaces)).spaces
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -10,16 +22,66 @@ const json = JSON.stringify([
   { id: "s3", label: "Tax 2026", named: true, folder: "/home/me/tax", active: false, windows: null, workspaces: null, last: 1, left_at: 0 },
 ])
 
-test("parses space ls --json", () => {
-  const rows = parseRows(json)
+test("parses a line of space watch", () => {
+  const state = parseState(line(JSON.parse(json)))
+  assert.equal(state.focused, "eDP-1")
+  assert.deepEqual(state.monitors[0].tabs[1], { key: 2, slot: 2, label: "claude", named: false, status: "", windows: 1, active: true })
+  assert.deepEqual(state.monitors.map((m) => [m.name, m.space, m.key, m.refresh, m.tiled]), [["eDP-1", "s1", 2, 120, true], ["DP-1", "s1", 11, 60, false]])
+  const rows = state.spaces
   assert.equal(rows.length, 4)
-  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, icon: "", folder: "", active: false, windows: 4, leftAt: 1000, status: "", tabs: {}, guests: {}, terminals: [] })
+  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, icon: "", folder: "", active: false, windows: 4, leftAt: 1000, status: "" })
   assert.equal(rows[3].windows, -1, "no count without Hyprland")
   assert.equal(rows[3].named, true)
-  assert.throws(() => parseRows("space: error"), /unexpected/)
-  assert.throws(() => parseRows("{}"), /unexpected/)
-  assert.deepEqual(parseRows("[{\"folder\":\"/x\"}]"), [], "rows without an id are dropped")
-  assert.equal(parseRows("[{\"id\":\"s9\"}]")[0].label, "s9", "no label: the id")
+  assert.deepEqual(rowsOf([{ folder: "/x" }]), [], "rows without an id are dropped")
+  assert.equal(rowsOf([{ id: "s9" }])[0].label, "s9", "no label: the id")
+  assert.deepEqual(rowsOf([{ id: "s1", status: "waiting" }, { id: "s2", status: "asleep" }]).map((r) => r.status), ["waiting", ""], "an unknown status is idle")
+})
+
+test("says when space watch isn't one it can read", () => {
+  assert.throws(() => parseState("space: error"), /unexpected/)
+  assert.throws(() => parseState("{}"), /unexpected/)
+  assert.throws(() => parseState("null"), /unexpected/)
+  assert.throws(() => parseState(json), /older than the plugin/)
+  assert.throws(() => parseState(line([], { version: 2 })), /different versions/)
+})
+
+test("finds monitors and their tabs", () => {
+  const state = parseState(line([]))
+  assert.equal(focusedMonitor(state).name, "eDP-1")
+  assert.equal(monitorNamed(state, "DP-1").key, 11)
+  assert.deepEqual(monitorNamed(state, "HDMI-1").tabs, [], "unknown yet: no tabs")
+  assert.equal(focusedMonitor(EMPTY).space, "")
+  assert.equal(findTab(state, "s1:1").tab.label, "server")
+  assert.equal(findTab(state, "s1:11").monitor.name, "DP-1", "on whichever monitor it is")
+  assert.equal(findTab(state, "s2:1"), null)
+})
+
+test("the cursor stays on the space it was moved to, else where it starts", () => {
+  const rows = rowsOf(JSON.parse(json))
+  assert.equal(cursorIndex(rows, "", ""), 2, "the one left last")
+  assert.equal(cursorIndex(rows, "", "s3"), 3)
+  assert.equal(cursorIndex(rows.slice().reverse(), "", "s3"), 0, "wherever it goes")
+  assert.equal(cursorIndex(rows, "", "gone"), 2)
+  assert.equal(cursorIndex(rows, "ren", ""), 0, "searching, on the best")
+  assert.equal(cursorIndex([], "", "s1"), 0)
+})
+
+test("shows spaces where they were dropped until space watch agrees or can't", () => {
+  const rows = rowsOf([{ id: "home" }, { id: "s1" }, { id: "s2" }])
+  const ids = (list) => list.map((row) => row.id)
+  const order = ["home", "s2", "s1"]
+  assert.deepEqual(ids(ordered(rows, order)), order)
+  assert.deepEqual(ids(ordered(rows, null)), ["home", "s1", "s2"])
+  assert.equal(orderSettled(rows, order), false)
+  // What else changed meanwhile shows, as only the order is laid over.
+  const busy = rowsOf([{ id: "home" }, { id: "s1", active: true }, { id: "s2" }])
+  assert.equal(ordered(busy, order)[2].active, true)
+  assert.equal(orderSettled(rowsOf([{ id: "home" }, { id: "s2" }, { id: "s1" }]), order), true)
+  // A space came or went: the order is of other spaces.
+  const more = rowsOf([{ id: "home" }, { id: "s1" }, { id: "s2" }, { id: "s3" }])
+  assert.deepEqual(ids(ordered(more, order)), ["home", "s1", "s2", "s3"])
+  assert.equal(orderSettled(more, order), true)
+  assert.equal(orderSettled(rowsOf([{ id: "home" }, { id: "s1" }, { id: "s9" }]), order), true)
 })
 
 test("scores prefix over word start over substring over letters in order", () => {
@@ -33,7 +95,7 @@ test("scores prefix over word start over substring over letters in order", () =>
 })
 
 test("filters and ranks, keeping the list order with no query", () => {
-  const rows = parseRows(json)
+  const rows = rowsOf(JSON.parse(json))
   const names = (query) => filterRows(rows, query).map((row) => row.label)
   assert.deepEqual(names(""), ["home", "ren", "renspace", "Tax 2026"])
   assert.deepEqual(names("  "), ["home", "ren", "renspace", "Tax 2026"])
@@ -45,186 +107,16 @@ test("filters and ranks, keeping the list order with no query", () => {
 })
 
 test("starts on the space left most recently", () => {
-  const rows = parseRows(json)
+  const rows = rowsOf(JSON.parse(json))
   assert.equal(rows[initialIndex(rows)].label, "renspace", "ren is active, so not it")
   const fresh = rows.map((row) => ({ ...row, leftAt: 0 }))
   assert.equal(fresh[initialIndex(fresh)].label, "ren", "nothing left yet: the active one")
   assert.equal(initialIndex([]), 0)
 })
 
-test("locates workspaces like space does", () => {
-  assert.deepEqual(locate(-1337, "ren:3"), { space: "ren", key: 3, slot: 3 })
-  assert.deepEqual(locate(-1338, "tax-2026:10"), { space: "tax-2026", key: 10, slot: 10 })
-  assert.deepEqual(locate(-1339, "ren:13"), { space: "ren", key: 13, slot: 3 }, "the second monitor's")
-  assert.deepEqual(locate(13, "13"), { space: "home", key: 13, slot: 3 })
-  for (const name of ["chat", "Ren:1", "ren:0", "ren:251", "ren:01", "home:1"]) {
-    assert.deepEqual(locate(-5, name), { space: "home", key: 0, slot: 0 }, name)
-  }
-})
-
-test("names apps from window classes", () => {
-  assert.equal(appName("chromium"), "Chromium")
-  assert.equal(appName("org.omarchy.quick-terminal"), "Quick-terminal")
-  assert.equal(appName("com.mitchellh.ghostty"), "Ghostty")
-  assert.equal(appName("chrome-app.hey.com__-Default"), "Hey.com")
-  assert.equal(appName(""), "")
-})
-
-test("builds the active space's tabs", () => {
-  const workspaces = [
-    { id: 1, name: "1" },
-    { id: -1337, name: "ren:1" },
-    { id: -1338, name: "ren:3" },
-    { id: -1339, name: "tax:1" },
-  ]
-  const windows = [
-    { workspaceId: -1337, windowClass: "kitty", focus: 4 },
-    { workspaceId: -1337, windowClass: "chromium", focus: 1 },
-    { workspaceId: -1338, windowClass: "nvim", focus: 2 },
-    { workspaceId: 1, windowClass: "Slack", focus: 0 },
-  ]
-  assert.deepEqual(tabsFor(workspaces, windows, { id: -1338, name: "ren:3" }), {
-    space: "ren",
-    tabs: [
-      { key: 1, slot: 1, label: "Chromium", named: false, status: "", windows: 2, active: false },
-      { key: 3, slot: 3, label: "Nvim", named: false, status: "", windows: 1, active: true },
-    ],
-  })
-})
-
-test("a name you gave a tab wins over its window's", () => {
-  const rows = parseRows(JSON.stringify([
-    { id: "ren", tabs: { 3: "server", 0: "bad", 4: 7 } },
-  ]))
-  assert.deepEqual(rows[0].tabs, { 3: "server" })
-  const workspaces = [{ id: -1337, name: "ren:1" }, { id: -1338, name: "ren:3" }]
-  const windows = [
-    { workspaceId: -1337, windowClass: "kitty", focus: 1 },
-    { workspaceId: -1338, windowClass: "nvim", focus: 0 },
-  ]
-  const tabs = tabsFor(workspaces, windows, { id: -1338, name: "ren:3" }, {}, rows[0].tabs).tabs
-  assert.deepEqual(tabs.map((t) => [t.label, t.named]), [["Kitty", false], ["server", true]])
-})
-
-test("names a terminal's tab by what it runs, else its folder", () => {
-  const rows = parseRows(JSON.stringify([
-    { id: "home", terminals: [{ address: "0xa", slot: 1, folder: "/home/me", program: null, label: "~" }] },
-    { id: "s1", terminals: [
-      { address: "0xb", slot: 1, folder: "/p/ren", program: "claude", label: "claude" },
-      { address: "0xc", slot: 2, folder: "/p/ren/src", program: null, label: "src" },
-      { address: 7, label: "broken" },
-    ] },
-  ]))
-  const labels = terminalsByAddress(rows)
-  assert.deepEqual(Object.keys(labels), ["0xa", "0xb", "0xc"])
-  assert.equal(labels["0xb"].label, "claude")
-
-  const workspaces = [{ id: -1337, name: "s1:1" }, { id: -1338, name: "s1:2" }, { id: -1339, name: "s1:3" }]
-  const windows = [
-    { workspaceId: -1337, address: "0xb", windowClass: "kitty", focus: 0 },
-    { workspaceId: -1338, address: "0xc", windowClass: "kitty", focus: 1 },
-    // Not a terminal, or not read yet: its class.
-    { workspaceId: -1339, address: "0xd", windowClass: "kitty", focus: 2 },
-  ]
-  const tabs = tabsFor(workspaces, windows, { id: -1337, name: "s1:1" }, labels).tabs
-  assert.deepEqual(tabs.map((t) => t.label), ["claude", "src", "Kitty"])
-  assert.equal(tabsFor(workspaces, windows, { id: -1337, name: "s1:1" }).tabs[0].label, "Kitty", "no labels: classes")
-})
-
-test("shows what most needs you among a tab's and a space's agents", () => {
-  const rows = parseRows(JSON.stringify([
-    { id: "s1", status: "waiting", terminals: [
-      { address: "0xa", label: "claude", status: "working" },
-      { address: "0xb", label: "claude", status: "waiting" },
-      { address: "0xc", label: "claude", status: "done" },
-      { address: "0xd", label: "nvim", status: null },
-      { address: "0xe", label: "x", status: "bogus" },
-    ] },
-    { id: "s2", status: "asleep" },
-  ]))
-  assert.equal(rows[0].status, "waiting")
-  assert.equal(rows[1].status, "", "an unknown status is idle")
-  assert.equal(rows[0].terminals[4].status, "")
-
-  const workspaces = [{ id: -1, name: "s1:1" }, { id: -2, name: "s1:2" }, { id: -3, name: "s1:3" }]
-  const windows = [
-    { workspaceId: -1, address: "0xa", windowClass: "kitty", focus: 0 },
-    { workspaceId: -1, address: "0xb", windowClass: "kitty", focus: 1 },
-    { workspaceId: -2, address: "0xc", windowClass: "kitty", focus: 2 },
-    { workspaceId: -2, address: "0xa1", windowClass: "chromium", focus: 3 },
-    { workspaceId: -3, address: "0xd", windowClass: "kitty", focus: 4 },
-  ]
-  const tabs = tabsFor(workspaces, windows, { id: -1, name: "s1:1" }, terminalsByAddress(rows)).tabs
-  assert.deepEqual(tabs.map((t) => t.status), ["waiting", "done", ""])
-
-  assert.equal(moreUrgent("working", "done"), "done")
-  assert.equal(moreUrgent("waiting", "done"), "waiting")
-  assert.equal(moreUrgent("", "working"), "working")
+test("reads the statuses' colours from the theme", () => {
   assert.deepEqual(statusColors('red = "#F7768E"\ngreen = "#9ece6a"\nyellow = "#e0af68"\n'), { waiting: "#f7768e", done: "#9ece6a", working: "#e0af68" })
   assert.deepEqual(statusColors(""), { waiting: "", done: "", working: "" })
-})
-
-test("a new tab is empty until something opens on it", () => {
-  const tabs = tabsFor([{ id: -1337, name: "ren:1" }], [], { id: -1340, name: "ren:2" })
-  assert.deepEqual(tabs.tabs.map((t) => [t.slot, t.label, t.active]), [
-    [1, "", false],
-    [2, "", true],
-  ])
-})
-
-test("each monitor has its own tabs", () => {
-  const workspaces = [
-    { id: -1, name: "ren:1", monitor: "eDP-1" },
-    { id: -2, name: "ren:2", monitor: "eDP-1" },
-    { id: -3, name: "ren:11", monitor: "DP-1" },
-    { id: -4, name: "tax:12", monitor: "DP-1" },
-  ]
-  const tabs = (active) => tabsFor(workspaces, [], active, {}, { 2: "server", 11: "logs" }).tabs
-  assert.deepEqual(tabs({ id: -2, name: "ren:2", monitor: "eDP-1" }).map((t) => [t.key, t.slot, t.label, t.active]), [
-    [1, 1, "", false],
-    [2, 2, "server", true],
-  ])
-  assert.deepEqual(tabs({ id: -3, name: "ren:11", monitor: "DP-1" }).map((t) => [t.key, t.slot, t.label, t.active]), [
-    [11, 1, "logs", true],
-  ])
-  // Unplugged, its tabs are on the one that's left.
-  workspaces[2].monitor = "eDP-1"
-  assert.deepEqual(tabs({ id: -2, name: "ren:2", monitor: "eDP-1" }).map((t) => t.key), [1, 2, 11])
-  const shown = (guests) => tabsFor(workspaces, [], { id: -2, name: "ren:2", monitor: "eDP-1" }, {}, {}, guests)
-    .tabs.map((t) => [t.slot, t.key])
-  assert.deepEqual(shown({ 11: 3 }), [[1, 1], [2, 2], [3, 11]], "numbered after its own")
-  assert.deepEqual(shown({ 11: 0 }), [[1, 1], [2, 2], [0, 11]], "or last, without one")
-  assert.deepEqual(parseRows('[{"id":"s1","guests":{"11":4,"x":2,"12":11}}]')[0].guests, { 11: 4 })
-})
-
-test("home's tabs are the monitor's plain workspaces", () => {
-  const workspaces = [
-    { id: 1, name: "1", monitor: "eDP-1" },
-    { id: 2, name: "2", monitor: "eDP-1" },
-    { id: 12, name: "12", monitor: "DP-1" },
-    { id: -1337, name: "ren:1", monitor: "eDP-1" },
-  ]
-  const tabs = tabsFor(workspaces, [], { id: 2, name: "2", monitor: "eDP-1" })
-  assert.equal(tabs.space, "home")
-  assert.deepEqual(tabs.tabs.map((t) => t.slot), [1, 2])
-  assert.deepEqual(tabsFor(workspaces, [], { id: 12, name: "12", monitor: "DP-1" }).tabs.map((t) => t.slot), [2])
-})
-
-test("home's tabs are just numbers until named, by workspace id", () => {
-  const workspaces = [
-    { id: 2, name: "2", monitor: "eDP-1" },
-    { id: 3, name: "3", monitor: "eDP-1" },
-    { id: 13, name: "13", monitor: "DP-1" },
-  ]
-  const windows = [{ workspaceId: 3, address: "0x1", windowClass: "firefox", focus: 0 }]
-  const names = { 2: "notes", 13: "music" }
-  const tabs = tabsFor(workspaces, windows, { id: 3, name: "3", monitor: "eDP-1" }, {}, names)
-  assert.deepEqual(tabs.tabs.map((t) => [t.slot, t.label, t.named]), [
-    [2, "notes", true],
-    [3, "", false],
-  ])
-  const other = tabsFor(workspaces, [], { id: 13, name: "13", monitor: "DP-1" }, {}, names)
-  assert.deepEqual(other.tabs.map((t) => [t.slot, t.label]), [[3, "music"]])
 })
 
 test("reads Hyprland's window motion", () => {
@@ -348,20 +240,8 @@ test("reads whether the sidebar's header is on the bar", () => {
   assert.equal(barToggle(null, id), false)
 })
 
-test("freshens the last rows for the space you are in now", () => {
-  const rows = parseRows(json)
-  // The last list was taken in ren (s1); since then you went to renspace (s2).
-  const fresh = freshen(rows, "s2", 9000)
-  assert.deepEqual(fresh.map((row) => row.active), [false, false, true, false])
-  assert.equal(fresh[1].leftAt, 9000, "ren was left just now")
-  assert.equal(fresh[0].leftAt, 1000)
-  assert.equal(rows[initialIndex(fresh)].label, "ren", "the cursor starts on the space you came from")
-  assert.equal(rows[initialIndex(rows)].label, "renspace", "the stale rows would start on the space you are in")
-  assert.deepEqual(freshen(rows, "s1", 9000), rows, "nothing changed while it was closed")
-})
-
 test("offers rename, an icon and close, saying why close doesn't apply", () => {
-  const rows = parseRows(json)
+  const rows = rowsOf(JSON.parse(json))
   const actions = (row) => rowActions(row).map((a) => [a.id, a.enabled, a.hint])
   const close = (row) => actions(row).find((a) => a[0] === "close")
   assert.deepEqual(rowActions(rows[0]), [], "home has none")

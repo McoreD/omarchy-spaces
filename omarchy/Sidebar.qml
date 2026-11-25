@@ -45,8 +45,11 @@ Item {
   // window), so the service can tell the shell.
   signal searchEnded()
 
-  // The spaces as `space watch` keeps them (Watch.qml).
+  // What `space watch` says (Watch.qml), which what shows is bound to, and
+  // the monitor you are on in it, with the space and tab it shows.
   property var watch: null
+  readonly property var now: root.watch ? root.watch.now : Spaces.EMPTY
+  readonly property var here: Spaces.focusedMonitor(root.now)
 
   // Whether the sidebar is expanded, and whether you are searching it, which
   // holds the keyboard. `searchOnly` marks one expanded only for the search.
@@ -62,8 +65,6 @@ Item {
   property bool nameSelected: false
   property string nameFrom: ""
   property bool nameWasSet: false
-  // The active space's tabs (Tabs.qml), for what a tab is called.
-  property var tabs: null
   property double renamedAt: 0
   // Whether it was expanded only for the rename, to collapse once it ends.
   property bool renameOnly: false
@@ -76,14 +77,11 @@ Item {
   property string menuFor: ""
   readonly property var menuRow: menuFor ? rows.find(function(row) { return row.id === menuFor }) || null : null
   property string menuTabFor: ""
-  readonly property var menuTab: {
-    var model = root.tabs ? root.tabs.model : null
-    if (!root.menuTabFor || !model) return null
-    return model.tabs.find(function(tab) { return model.space + ":" + tab.key === root.menuTabFor }) || null
-  }
+  readonly property var menuTabAt: root.menuTabFor ? Spaces.findTab(root.now, root.menuTabFor) : null
+  readonly property var menuTab: root.menuTabAt ? root.menuTabAt.tab : null
   // Gone to another space, or the tab ended: the menu doesn't come back.
   onMenuTabChanged: if (!root.menuTab && root.menuTabFor) root.closeMenu()
-  readonly property var menuActions: root.menuTabFor ? Spaces.tabActions(root.menuTab, root.tabs.model, root.moveTargets.length > 0) : Spaces.rowActions(root.menuRow)
+  readonly property var menuActions: root.menuTabFor ? Spaces.tabActions(root.menuTab, root.menuTabAt ? root.menuTabAt.monitor : root.here, root.moveTargets.length > 0) : Spaces.rowActions(root.menuRow)
   // Whether the tab's menu has given way to asking whether to close it, and
   // what it asks.
   property bool confirmingClose: false
@@ -93,10 +91,7 @@ Item {
   // screen; and the spaces to pick from.
   property bool movingTab: false
   property bool moveCentered: false
-  readonly property var moveTargets: {
-    var space = root.tabs && root.tabs.model ? root.tabs.model.space : ""
-    return root.rows.filter(function(row) { return row.id !== space })
-  }
+  readonly property var moveTargets: root.rows.filter(function(row) { return row.id !== root.here.space })
   property real menuX: 0
   property real menuY: 0
   property var menuScreen: null
@@ -111,14 +106,17 @@ Item {
   // Hyprland's window motion, read from `hyprctl animations -j`.
   property var motion: ({ duration: 379, bezier: [0.23, 1, 0.32, 1] })
   property string filterText: ""
-  property int selectedIndex: 0
-  property var rows: []
-  property var shownRows: []
-  property string error: ""
+  // The order the spaces were dragged into, by their ids, until `space watch`
+  // has them so.
+  property var pendingOrder: null
+  readonly property var rows: Spaces.ordered(root.now.spaces, root.pendingOrder)
+  readonly property var shownRows: Spaces.filterRows(root.rows, root.filterText)
+  // The space you moved the cursor to, by its id, which a fresh list then
+  // keeps it on; "" while it's where it starts.
+  property string picked: ""
+  readonly property int selectedIndex: Spaces.cursorIndex(root.shownRows, root.filterText, root.picked)
+  readonly property string error: root.watch && root.rows.length === 0 ? root.watch.error : ""
   property double searchedAt: 0
-  // Whether you have moved the cursor since the search began, which a fresh
-  // list then keeps where it is rather than placing it again.
-  property bool touched: false
   // Enter pressed before there was a list, to act on once it arrives.
   property bool pending: false
   readonly property string home: Quickshell.env("HOME") || ""
@@ -188,8 +186,7 @@ Item {
   property bool leading: true
   readonly property int lead: {
     if (!root.leading) return 0
-    var monitor = root.screen ? Hyprland.monitorFor(root.screen) : null
-    var rate = monitor && monitor.lastIpcObject ? Number(monitor.lastIpcObject.refreshRate) : 0
+    var rate = root.screen ? Spaces.monitorNamed(root.now, root.screen.name).refresh : 0
     return rate > 0 ? Math.round(1000 / rate) : 8
   }
   // Turned around partway, Hyprland slides the windows from where they are,
@@ -231,7 +228,7 @@ Item {
     root.screen = screen || root.focusedScreen()
     root.leading = root.windowsToMove()
     root.opened = true
-    root.take()
+    root.picked = ""
   }
 
   function hide() {
@@ -261,12 +258,10 @@ Item {
     root.searchOnly = !root.opened
     root.show()
     root.filterText = ""
-    root.error = ""
     root.searchedAt = Date.now()
-    root.touched = false
+    root.picked = ""
     root.pending = false
     root.searching = true
-    root.take()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -289,69 +284,30 @@ Item {
     if (root.filterText) root.setFilter("")
   }
 
-  // The list `space watch` last printed, put in place as the sidebar shows:
-  // the cursor starts on the space you left last. Switching only just now,
-  // the watch may not have printed it yet, so the active space comes from
-  // Hyprland: Enter can come first, and must not pick the space you're in.
-  function take() {
-    root.rows = root.watch ? root.watch.rows : []
-    root.error = root.watch && root.rows.length === 0 ? root.watch.error : ""
-    var workspace = root.tabs ? root.tabs.shown : null
-    if (workspace) root.rows = Spaces.freshen(root.rows, Spaces.locate(workspace.id, workspace.name).space, Date.now())
-    root.applyFilter(true)
-  }
-
-  // A new list while it shows: keep the cursor on the space it was on if you
-  // moved it, and act on an Enter pressed before there was a list.
-  function update() {
-    var selected = root.shownRows[root.selectedIndex]
-    var keep = root.touched && selected ? selected.id : ""
-    root.rows = root.watch.rows
-    root.error = root.rows.length === 0 ? root.watch.error : ""
-    root.applyFilter(!keep)
-    if (keep) {
-      var index = root.shownRows.findIndex(function(row) { return row.id === keep })
-      if (index >= 0) root.selectedIndex = index
-    }
-    if (root.pending) {
+  onNowChanged: {
+    if (root.pendingOrder && Spaces.orderSettled(root.now.spaces, root.pendingOrder)) root.settleOrder()
+    // An Enter pressed before there was a list, once all that follows from it
+    // is in place.
+    if (root.pending) Qt.callLater(function() {
+      if (!root.pending || root.shownRows.length === 0) return
       root.pending = false
       root.activate(root.selectedIndex)
-    }
-  }
-
-  // The rail shows the spaces too, so the list keeps up while collapsed.
-  Connections {
-    target: root.watch
-    function onRowsChanged() {
-      if (root.opened) root.update()
-      else root.take()
-    }
-    function onErrorChanged() { if (root.rows.length === 0) root.error = root.watch.error }
-  }
-
-  function applyFilter(resetCursor) {
-    root.shownRows = Spaces.filterRows(root.rows, root.filterText)
-    if (resetCursor) {
-      root.selectedIndex = root.filterText ? 0 : Spaces.initialIndex(root.shownRows)
-    }
-    if (root.selectedIndex >= root.shownRows.length) root.selectedIndex = Math.max(0, root.shownRows.length - 1)
+    })
   }
 
   function setFilter(next) {
     root.filterText = next
-    root.applyFilter(true)
+    root.picked = ""
   }
 
   function move(delta) {
     var count = root.shownRows.length
     if (count === 0) return
-    root.touched = true
-    root.selectedIndex = (root.selectedIndex + delta + count) % count
+    root.picked = root.shownRows[(root.selectedIndex + delta + count) % count].id
   }
 
   function select(index) {
-    root.touched = true
-    root.selectedIndex = index
+    if (index >= 0 && index < root.shownRows.length) root.picked = root.shownRows[index].id
   }
 
   function activate(index) {
@@ -375,11 +331,24 @@ Item {
     if (from === to || root.filterText !== "") return
     var row = root.shownRows[from]
     if (!row || row.id === "home" || to < 1) return
-    root.rows = Spaces.moveRow(root.rows, from, to)
-    root.applyFilter(false)
-    root.selectedIndex = to
+    root.pendingOrder = Spaces.moveRow(root.rows, from, to).map(function(r) { return r.id })
+    root.picked = row.id
+    ordering.restart()
     // Positions count from the first space below home.
     root.run(["space", "reorder", row.id, String(to)])
+  }
+
+  function settleOrder() {
+    ordering.stop()
+    root.pendingOrder = null
+  }
+
+  // `space watch` might never have it, if something else changed meanwhile or
+  // the space couldn't move.
+  Timer {
+    id: ordering
+    interval: 1000
+    onTriggered: root.settleOrder()
   }
 
   // The `+`: a new space with a terminal in the folder you are in.
@@ -398,7 +367,7 @@ Item {
 
   // Opens the menu of a tab of the space you are in, as it does a space's.
   function openTabMenu(key, x, y, screen) {
-    var space = root.tabs && root.tabs.model ? root.tabs.model.space : ""
+    var space = screen ? Spaces.monitorNamed(root.now, screen.name).space : ""
     if (!space) return
     root.placeMenu(x, y, screen)
     root.menuTabFor = space + ":" + key
@@ -441,9 +410,8 @@ Item {
       root.closeMenu()
       return
     }
-    var workspace = root.tabs ? root.tabs.shown : null
-    var here = workspace ? Spaces.locate(workspace.id, workspace.name) : null
-    if (!here || !here.key) return
+    var here = root.here
+    if (!here.key) return
     root.placeMenu(0, 0, root.focusedScreen())
     // Before the tab, so its menu doesn't flash up first.
     root.moveCentered = true
@@ -519,16 +487,13 @@ Item {
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
-  // Names a tab of the space you are in, by its key, or the one you are on: the
+  // Names a tab of the space you are in, by its key, or (0) the one you are on: the
   // bar shows the name as you type it. A sidebar shown just for a search goes.
   function renameTab(key) {
-    var workspace = root.tabs ? root.tabs.shown : null
-    var here = workspace ? Spaces.locate(workspace.id, workspace.name) : null
-    if (!here || !here.key) return
-    var tabs = root.tabs && root.tabs.model ? root.tabs.model.tabs : []
-    var tab = tabs.find(function(t) { return t.key === (key || here.key) })
-    if (!tab) return
-    var target = here.space + ":" + tab.key
+    var target = root.here.space + ":" + (key || root.here.key)
+    var found = Spaces.findTab(root.now, target)
+    if (!found) return
+    var tab = found.tab
     if (root.renaming === target) return
     if (root.searching && root.searchOnly) root.hide()
     root.closeMenu()
@@ -539,12 +504,10 @@ Item {
   // change. A sidebar collapsed, or expanded just for a search, is expanded
   // just for the rename.
   function renameSpace() {
-    var workspace = root.tabs ? root.tabs.shown : null
-    var id = workspace ? Spaces.locate(workspace.id, workspace.name).space : ""
+    var id = root.here.space
     if (!id || id === "home" || root.renaming === id) return
     var only = !root.opened || (root.searching && root.searchOnly)
-    if (root.opened) root.take()
-    else root.show()
+    if (!root.opened) root.show()
     var row = root.rows.find(function(r) { return r.id === id })
     if (!row) {
       if (only) root.hide()
@@ -581,17 +544,10 @@ Item {
     Quickshell.execDetached(args)
   }
 
-  // Whether the focused workspace has tiled windows, which Hyprland moves
-  // when the sidebar claims or returns its width. Floating ones stay put.
+  // Whether there are tiled windows on its screen, which Hyprland moves when
+  // the sidebar claims or returns its width. Floating ones stay put.
   function windowsToMove() {
-    var shown = root.tabs ? root.tabs.shown : null
-    var workspace = shown ? Hyprland.workspaces.values.find(function(ws) { return ws.id === shown.id }) : null
-    var toplevels = workspace && workspace.toplevels ? workspace.toplevels.values : []
-    for (var i = 0; i < toplevels.length; i++) {
-      var ipc = toplevels[i].lastIpcObject || {}
-      if (!ipc.floating) return true
-    }
-    return false
+    return !!root.screen && Spaces.monitorNamed(root.now, root.screen.name).tiled
   }
 
   function focusedScreen() {
@@ -645,7 +601,6 @@ Item {
   Component.onCompleted: {
     motionProc.running = true
     gapsProc.running = true
-    root.take()
   }
 
   // A click on a window or a switch of tab during a search or a rename moves

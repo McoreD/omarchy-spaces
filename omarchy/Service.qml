@@ -25,6 +25,15 @@ Item {
   function renameTab() { sidebarItem.renameTab(0) }
   function sendTab() { sidebarItem.sendTab() }
 
+  // What the sidebar and the bars show, for `just stress` to check.
+  function shown() {
+    return JSON.stringify({
+      space: sidebarItem.shownRows.filter(function(row) { return row.active }).map(function(row) { return row.id }),
+      focused: watchItem.now.focused,
+      monitors: watchItem.now.monitors.map(function(m) { return { name: m.name, space: m.space, key: m.key } }),
+    })
+  }
+
   Base {
     sidebar: sidebarItem
     look: Spaces.barLook(root.shell ? root.shell.barConfig : null)
@@ -44,8 +53,8 @@ Item {
     omarchyPath: root.omarchyPath
   }
 
-  // The spaces, kept current by `space watch`: the sidebar's list, and what
-  // the bar calls each space (TabsWidget.qml reaches it through the shell).
+  // What the sidebar and the bar show, kept current by `space watch`
+  // (TabsWidget.qml reaches it through the shell).
   Watch {
     id: watchItem
   }
@@ -55,17 +64,9 @@ Item {
   // so restarting the shell doesn't stop it halfway.
   Component.onCompleted: Quickshell.execDetached(["space", "restore"])
 
-  // The active space's tabs, for what the one being renamed is called. The
-  // bar's widget keeps its own.
-  Tabs {
-    id: tabsItem
-    rows: watchItem.rows
-  }
-
   Sidebar {
     id: sidebarItem
     watch: watchItem
-    tabs: tabsItem
     headerOnBar: Spaces.barToggle(root.shell ? root.shell.barConfig : null, (root.manifest && root.manifest.id) || "com.t4t5.spaces")
     // Ended from inside (a pick, Escape), so the shell stops counting the
     // overlay as open and the next toggle searches again.

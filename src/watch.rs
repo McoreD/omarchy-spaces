@@ -1,10 +1,15 @@
-//! `space watch`: the spaces as `space ls --json` lists them, printed again,
-//! one line of JSON each time, whenever they change. The shell plugin reads
-//! it for the bar and the sidebar instead of asking `space ls` over and over.
+//! `space watch`: the monitors with their tabs, and the spaces as `space ls
+//! --json` lists them (`view.rs`), printed again, one line of JSON each time,
+//! whenever they change. The shell plugin draws the bar and the sidebar from
+//! it and nothing else, so where you are is decided here alone, each line
+//! being the whole of it: the plugin must not put it together from Hyprland's
+//! events too, which reach it in another order.
 //!
 //! Hyprland says when windows and workspaces change, on its event socket, so
 //! its state is read again then, and every `SLOW` for what it doesn't say: a
-//! window resized, which the saved session (`session.rs`) has. herdr-core says what runs in its
+//! window resized, which the saved session (`session.rs`) has. Going somewhere
+//! shows at once, and again once the burst it's part of has settled. When
+//! Hyprland can't be read, what it last said stands. herdr-core says what runs in its
 //! terminals, their folders and what their agents report (`core.rs`), so
 //! windows showing its terminals are kept current from its events. Nothing
 //! says what other terminals' shells do, so those are read from `/proc`,
@@ -40,7 +45,7 @@ use crate::paths;
 use crate::session;
 use crate::spaces::Store;
 use crate::state::Last;
-use crate::{sound, status, terminal};
+use crate::{sound, status, terminal, view};
 
 /// How often the active space's terminals' shells are read.
 const FAST: Duration = Duration::from_millis(200);
@@ -105,6 +110,8 @@ pub fn watch(sounds: bool) -> Result<()> {
     let mut focused = hypr.active_window_address()?;
     let mut read_all = true;
     let mut slow_at = Instant::now();
+    // When to read again after a switch shown before its burst settled.
+    let mut again_at: Option<Instant> = None;
     let mut printed = String::new();
     let mut out = std::io::stdout().lock();
 
@@ -117,19 +124,22 @@ pub fn watch(sounds: bool) -> Result<()> {
                 return Ok(());
             }
             // Hyprland has no event for a window resized or a split turned.
-            snapshot = commands::snapshot(&hypr)?;
+            refresh(&hypr, &mut snapshot);
             browsers.refresh(&snapshot.browser_windows, now);
             if !subscribed {
                 subscribed = core::subscribe(send.clone(), Message::Core).is_ok();
             }
         }
 
-        // What the terminals' shells are doing: the active space's now, the
-        // rest when due. Core's are in memory.
+        // What the terminals' shells are doing: the active space's now, and
+        // new ones', the rest when due. Core's are in memory.
         let pids: HashSet<u32> = snapshot.space_windows.iter().map(|w| w.pid).collect();
         shells.retain(|pid, _| pids.contains(pid));
         for window in &snapshot.space_windows {
-            if read_all || snapshot.active.as_deref() == Some(window.space.as_str()) {
+            if read_all
+                || snapshot.active() == Some(window.space.as_str())
+                || !shells.contains_key(&window.pid)
+            {
                 shells.insert(window.pid, terminal::shell_of(window.pid, core.as_ref()));
             }
         }
@@ -249,7 +259,7 @@ pub fn watch(sounds: bool) -> Result<()> {
         {
             eprintln!("space: warning: {e:#}");
         }
-        let json = serde_json::to_string(&rows)?;
+        let json = serde_json::to_string(&view::state(&snapshot, &live, &rows))?;
         if json != printed {
             // Nobody reading any more: done.
             if writeln!(out, "{json}").and_then(|()| out.flush()).is_err() {
@@ -260,12 +270,17 @@ pub fn watch(sounds: bool) -> Result<()> {
 
         // Wait for something to happen, then let the burst settle.
         let mut changed = Change::Nothing;
+        let idle_until = Instant::now() + FAST;
+        let idle_until = again_at.map_or(idle_until, |at| at.min(idle_until));
         let mut settled_at: Option<Instant> = None;
         loop {
-            let wait = match settled_at {
-                None => FAST,
-                Some(at) => at.saturating_duration_since(Instant::now()),
+            // A switch takes in only what has already come with it.
+            let until = match settled_at {
+                Some(_) if changed == Change::Place => Instant::now(),
+                Some(at) => at,
+                None => idle_until,
             };
+            let wait = until.saturating_duration_since(Instant::now());
             let message = match messages.recv_timeout(wait) {
                 Ok(message) => message,
                 Err(RecvTimeoutError::Timeout) => break,
@@ -303,14 +318,30 @@ pub fn watch(sounds: bool) -> Result<()> {
                 }
             }
         }
-        match changed {
-            Change::Nothing => {}
-            Change::Folders => read_all = true,
-            Change::Windows => {
-                snapshot = commands::snapshot(&hypr)?;
-                read_all = true;
-            }
+        let now = Instant::now();
+        let again = again_at.is_some_and(|at| at <= now);
+        if again {
+            again_at = None;
         }
+        if again || changed >= Change::Windows {
+            refresh(&hypr, &mut snapshot);
+        }
+        // Of a switch, only where you are now is read, to show it at once.
+        if changed == Change::Place {
+            again_at = Some(now + SETTLE);
+        } else if again || changed != Change::Nothing {
+            read_all = true;
+        }
+    }
+}
+
+/// Reads Hyprland again. When it can't be, what it last said stands, rather
+/// than half of it: the next event or slow round reads it anew, and if it has
+/// gone, its events end.
+fn refresh(hypr: &Hypr, snapshot: &mut commands::Snapshot) {
+    match commands::snapshot(hypr) {
+        Ok(read) => *snapshot = read,
+        Err(e) => eprintln!("space: warning: {e:#}"),
     }
 }
 
@@ -323,6 +354,8 @@ enum Change {
     Folders,
     /// Windows or workspaces came, went or moved: read Hyprland's state.
     Windows,
+    /// You, or a monitor, went to another workspace: the same, at once.
+    Place,
 }
 
 impl Change {
@@ -330,10 +363,12 @@ impl Change {
         let name = event.split_once(">>").map_or(event, |(name, _)| name);
         match name {
             "windowtitle" | "windowtitlev2" => Change::Folders,
-            "openwindow" | "closewindow" | "movewindow" | "movewindowv2" | "workspace"
-            | "workspacev2" | "createworkspace" | "createworkspacev2" | "destroyworkspace"
-            | "destroyworkspacev2" | "renameworkspace" | "moveworkspace" | "moveworkspacev2"
-            | "focusedmon" | "focusedmonv2" | "configreloaded" => Change::Windows,
+            "workspace" | "workspacev2" | "focusedmon" | "focusedmonv2" => Change::Place,
+            "openwindow" | "closewindow" | "movewindow" | "movewindowv2" | "createworkspace"
+            | "createworkspacev2" | "destroyworkspace" | "destroyworkspacev2"
+            | "renameworkspace" | "moveworkspace" | "moveworkspacev2" | "monitoradded"
+            | "monitoraddedv2" | "monitorremoved" | "monitorremovedv2" | "changefloatingmode"
+            | "configreloaded" => Change::Windows,
             _ => Change::Nothing,
         }
     }
@@ -373,10 +408,13 @@ mod tests {
             Change::of("openwindow>>55a4,s1:1,kitty,zsh"),
             Change::Windows
         );
-        assert_eq!(Change::of("workspacev2>>-1337,s1:2"), Change::Windows);
+        assert_eq!(Change::of("workspacev2>>-1337,s1:2"), Change::Place);
+        assert_eq!(Change::of("focusedmonv2>>DP-1,11"), Change::Place);
+        assert_eq!(Change::of("monitorremoved>>DP-1"), Change::Windows);
         assert_eq!(Change::of("activewindowv2>>55a4"), Change::Nothing);
         assert_eq!(Change::of("garbage"), Change::Nothing);
-        assert!(Change::Windows > Change::Folders && Change::Folders > Change::Nothing);
+        assert!(Change::Place > Change::Windows && Change::Windows > Change::Folders);
+        assert!(Change::Folders > Change::Nothing);
     }
 
     #[test]

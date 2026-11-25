@@ -27,3 +27,7 @@ glyphs version="v3.4.0":
 # plugins isn't enough: it keeps keepLoaded services, which the sidebar is.
 reload:
     omarchy restart shell
+
+# Go between spaces quickly, here, and check that the sidebar and bars keep up
+stress rounds="20":
+    python3 scripts/stress.py {{rounds}}

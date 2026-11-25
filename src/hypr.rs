@@ -72,6 +72,12 @@ pub struct Monitor {
     /// Turned a quarter when odd.
     #[serde(default)]
     pub transform: u8,
+    /// Whether it's the one you are on.
+    #[serde(default)]
+    pub focused: bool,
+    /// How many frames it shows a second.
+    #[serde(default, rename = "refreshRate")]
+    pub refresh: f64,
     /// The workspace it shows.
     #[serde(default, rename = "activeWorkspace")]
     pub shows: Option<WorkspaceRef>,
@@ -95,6 +101,14 @@ impl Monitor {
 pub struct WorkspaceRef {
     pub id: i64,
     pub name: String,
+}
+
+/// What Hyprland has, as of one moment.
+#[derive(Debug)]
+pub struct Everything {
+    pub monitors: Vec<Monitor>,
+    pub workspaces: Vec<Workspace>,
+    pub clients: Vec<Client>,
 }
 
 pub struct Hypr {
@@ -178,6 +192,22 @@ impl Hypr {
 
     pub fn monitors(&self) -> Result<Vec<Monitor>> {
         self.query("monitors")
+    }
+
+    /// The monitors, workspaces and windows, all as of one moment: Hyprland
+    /// answers a batch in one go, so nothing changes between them.
+    pub fn everything(&self) -> Result<Everything> {
+        let reply = self.request("[[BATCH]]j/monitors;j/workspaces;j/clients")?;
+        // The answers follow each other, blank lines between.
+        let mut answers = serde_json::Deserializer::from_str(&reply);
+        let mut read = || -> serde_json::Result<Everything> {
+            Ok(Everything {
+                monitors: Deserialize::deserialize(&mut answers)?,
+                workspaces: Deserialize::deserialize(&mut answers)?,
+                clients: Deserialize::deserialize(&mut answers)?,
+            })
+        };
+        read().context("unexpected reply from Hyprland to a batch")
     }
 
     /// A number from Hyprland's config, `None` when it has none by that name.

@@ -87,7 +87,8 @@ enum Cmd {
         #[arg(long)]
         pid: Option<u32>,
     },
-    /// Print the spaces as `ls --json` does, a line each time they change.
+    /// Print the monitors and the spaces, with each monitor's tabs, as a line
+    /// of JSON each time they change.
     Watch {
         /// Play a sound when an agent needs you or finishes unseen.
         #[arg(long)]
