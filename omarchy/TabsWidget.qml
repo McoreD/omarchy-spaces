@@ -11,7 +11,8 @@ import "Spaces.mjs" as Spaces
 // The active space's tabs on Omarchy's bar, in place of its workspaces: a tab
 // per workspace. Clicks on tabs run `space ws`, which stays the only thing
 // that changes workspaces. Double-clicking a tab names it: the sidebar holds
-// the keyboard (Sidebar.qml) and the tab shows what you type. On a vertical bar there is room only for the tabs'
+// the keyboard (Sidebar.qml) and the tab shows what you type. So does Rename in the menu a right-click on a tab
+// opens (SpaceMenu.qml). On a vertical bar there is room only for the tabs'
 // numbers.
 //
 // The bar parts where the windows begin, by the sidebar's rail or by the
@@ -131,6 +132,15 @@ BarWidget {
     // Its number and what you last used on it: a new tab, with nothing open
     // on it yet, is just its number.
     return tab.slot + (tab.label ? "  " + tab.label : "")
+  }
+
+  // Opens a tab's menu at a point on the bar's window, which need not start
+  // at its screen's top when the bar is at the bottom.
+  function openTabMenu(slot, x, y) {
+    var window = root.QsWindow.window
+    if (!root.sidebar || !window || !window.screen) return
+    var top = root.bar && root.bar.position === "bottom" ? window.screen.height - window.height : 0
+    root.sidebar.openTabMenu(slot, x, top + y, window.screen)
   }
 
   Tabs {
@@ -351,7 +361,11 @@ BarWidget {
         current: modelData.active
         cap: root.tabCap
         onClicked: root.run(["space", "ws", String(modelData.slot)])
+        hasMenu: true
+        menuOpen: !!root.sidebar && root.sidebar.menuTabFor === root.model.space + ":" + modelData.slot
+          && !!root.sidebar.menuScreen && root.sidebar.menuScreen.name === root.screenName
         onDoubleClicked: if (root.sidebar) root.sidebar.renameTab(modelData.slot)
+        onMenuRequested: function(x, y) { root.openTabMenu(modelData.slot, x, y) }
       }
     }
 
@@ -391,6 +405,12 @@ BarWidget {
     property bool editing: false
     signal clicked()
     signal doubleClicked()
+    // Whether a right-click opens its menu: not the `+`'s, nor on a vertical
+    // bar, which has no room to type a name. Where on the bar's window it was
+    // right-clicked, and whether its menu is open.
+    property bool hasMenu: false
+    signal menuRequested(real x, real y)
+    property bool menuOpen: false
 
     // Room after the label for the status's dot, on a horizontal bar.
     readonly property real dotRoom: button.status !== "" && !root.vertical ? dot.width + Style.spacing.sm : 0
@@ -408,7 +428,7 @@ BarWidget {
       anchors.margins: Style.spacing.xs
       radius: Style.cornerRadius
       color: button.editing ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.08)
-        : mouse.containsMouse && !button.current ? root.hover : "transparent"
+        : button.menuOpen || (mouse.containsMouse && !button.current) ? root.hover : "transparent"
       border.width: button.editing ? Math.max(1, Style.space(1)) : 0
       border.color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.6)
     }
@@ -526,8 +546,19 @@ BarWidget {
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: button.editing ? Qt.IBeamCursor : Qt.PointingHandCursor
-      onClicked: if (!button.editing) button.clicked()
-      onDoubleClicked: if (!button.editing) button.doubleClicked()
+      acceptedButtons: button.hasMenu ? Qt.LeftButton | Qt.RightButton : Qt.LeftButton
+      onClicked: function(event) {
+        if (button.editing) return
+        if (event.button !== Qt.RightButton) {
+          button.clicked()
+          return
+        }
+        var at = mouse.mapToItem(null, event.x, event.y)
+        button.menuRequested(at.x, at.y)
+      }
+      onDoubleClicked: function(event) {
+        if (!button.editing && event.button === Qt.LeftButton) button.doubleClicked()
+      }
     }
   }
 }

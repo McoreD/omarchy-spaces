@@ -117,6 +117,12 @@ export function rowActions(row) {
   return actions
 }
 
+// A tab's right-click menu on the bar: name it, as double-clicking it does.
+export function tabActions(tab) {
+  if (!tab) return []
+  return [{ id: "rename-tab", icon: "\u{f0cb6}", label: "Rename", enabled: true, hint: "", separatorBefore: false }]
+}
+
 // The next enabled action going `by` (1 or -1) from `from`, wrapping; from
 // nothing (-1), the first or the last. -1 when none is enabled.
 export function stepAction(actions, from, by) {

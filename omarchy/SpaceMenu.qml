@@ -9,7 +9,8 @@ import qs.Ui
 import "Spaces.mjs" as Spaces
 
 // A space's menu, floating where you right-clicked it in the sidebar: rename
-// it, close its windows, or remove it (Spaces.rowActions). The sidebar is
+// it, change its icon, or close it (Spaces.rowActions); or a tab's, where you
+// right-clicked it on the bar: name it (Spaces.tabActions). The sidebar is
 // drawn under the windows, so the menu gets a surface of its own above them,
 // covering the screen while it is open: a click anywhere outside the card
 // closes it, as does Escape. Up and Down (or j and k) move through it, and
@@ -19,8 +20,7 @@ PanelWindow {
 
   property var sidebar: null
 
-  readonly property var row: sidebar ? sidebar.menuRow : null
-  readonly property var actions: Spaces.rowActions(row)
+  readonly property var actions: sidebar ? sidebar.menuActions : []
   property int current: -1
 
   readonly property color foreground: Commons.Color.popups.text
@@ -45,7 +45,7 @@ PanelWindow {
 
   function pick(index) {
     var action = root.actions[index]
-    if (action && action.enabled) root.sidebar.act(action.id, root.row)
+    if (action && action.enabled) root.sidebar.pickAction(action.id)
   }
 
   // Anywhere outside the card closes the menu.
@@ -78,7 +78,8 @@ PanelWindow {
       var at = root.sidebar ? root.sidebar.menuY : 0
       return at + height + root.edge <= root.height ? at : Math.max(root.edge, at - height)
     }
-    width: Style.space(240)
+    // A tab's has only a short label, with nothing to say beside it.
+    width: Style.space(root.sidebar && root.sidebar.menuTabFor ? 120 : 240)
     height: items.implicitHeight + contentTopInset + contentBottomInset
     color: Commons.Color.popups.background
     borderSpec: root.borderSpec

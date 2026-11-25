@@ -34,8 +34,8 @@ import "Spaces.mjs" as Spaces
 // does, to type the name in place; an empty name has the space called after
 // its folder again. `super+shift+r` renames the space you are in the same way,
 // expanding the sidebar for it if it's collapsed, as the search does.
-// `super+,`, or double-clicking a tab on the bar, names the tab the same
-// way, typed on the bar (TabsWidget.qml) with the keyboard held here; an empty
+// `super+,`, double-clicking a tab on the bar, or its right-click menu, names
+// the tab the same way, typed on the bar (TabsWidget.qml) with the keyboard held here; an empty
 // name has it called after its window again. Each runs `space`, which says why in a notification if it
 // can't.
 Item {
@@ -71,9 +71,19 @@ Item {
   // Whatever holds the keyboard: the search or a name being typed.
   readonly property bool typing: searching || naming
   // The id of the space whose menu is open, its row, and where on the screen
-  // it opens.
+  // it opens; or, opened on a tab, its workspace (`s1:2`) and the tab, which
+  // is only there while you are in its space.
   property string menuFor: ""
   readonly property var menuRow: menuFor ? rows.find(function(row) { return row.id === menuFor }) || null : null
+  property string menuTabFor: ""
+  readonly property var menuTab: {
+    var model = root.tabs ? root.tabs.model : null
+    if (!root.menuTabFor || !model) return null
+    return model.tabs.find(function(tab) { return model.space + ":" + tab.slot === root.menuTabFor }) || null
+  }
+  // Gone to another space, or the tab ended: the menu doesn't come back.
+  onMenuTabChanged: if (!root.menuTab && root.menuTabFor) root.closeMenu()
+  readonly property var menuActions: root.menuTabFor ? Spaces.tabActions(root.menuTab) : Spaces.rowActions(root.menuRow)
   property real menuX: 0
   property real menuY: 0
   property var menuScreen: null
@@ -369,6 +379,20 @@ Item {
   // Opens a space's menu at a point on `screen`. The menu takes the keyboard,
   // so a search ends, leaving the sidebar open.
   function openMenu(id, x, y, screen) {
+    root.placeMenu(x, y, screen)
+    root.menuFor = id
+  }
+
+  // Opens the menu of a tab of the space you are in, as it does a space's.
+  function openTabMenu(slot, x, y, screen) {
+    var space = root.tabs && root.tabs.model ? root.tabs.model.space : ""
+    if (!space) return
+    root.placeMenu(x, y, screen)
+    root.menuTabFor = space + ":" + slot
+  }
+
+  function placeMenu(x, y, screen) {
+    root.closeMenu()
     root.endNaming(false)
     root.closeIconPicker()
     if (root.searching) {
@@ -379,17 +403,24 @@ Item {
     root.menuX = x
     root.menuY = y
     root.menuScreen = screen || root.screen || root.focusedScreen()
-    root.menuFor = id
   }
 
   function closeMenu() {
     root.menuFor = ""
+    root.menuTabFor = ""
   }
 
-  // An action from a space's menu (Spaces.rowActions).
+  // Acts on whatever the menu is open on.
+  function pickAction(id) {
+    root.act(id, root.menuTabFor ? root.menuTab : root.menuRow)
+  }
+
+  // An action from a space's menu (Spaces.rowActions), or a tab's
+  // (Spaces.tabActions).
   function act(id, row) {
     root.closeMenu()
     if (id === "rename") root.startRename(row)
+    else if (id === "rename-tab") root.renameTab(row.slot)
     else if (id === "icon") root.openIconPicker(row)
     else if (id === "clear-icon") root.run(["space", "icon", row.id, ""])
     else if (id === "close") root.run(["space", "close", row.id])
