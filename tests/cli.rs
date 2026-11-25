@@ -1550,6 +1550,56 @@ fn close_closes_the_spaces_windows_and_leaves_it() {
 }
 
 #[test]
+fn close_closes_a_tabs_windows_and_moves_on_to_another() {
+    let env = Env::new();
+    env.add_window("1");
+    env.add_terminal("s1:1", &env.dir("ren"));
+    env.add_window("s1:2");
+    env.add_window("s1:2");
+    env.add_window("s1:4");
+    env.set_active("s1:1");
+
+    assert_eq!(env.ok(&["close", "s1:2"]), "Closed 2 windows on tab 2\n");
+    assert_eq!(env.windows(), ["1", "s1:1", "s1:4"]);
+    assert_eq!(env.active(), "s1:1", "you stay where you are");
+
+    // The one you're on: the next tab, or with none after it, the one before.
+    assert_eq!(env.ok(&["close", "ren:1"]), "Closed 1 window on tab 1\n");
+    assert_eq!(env.active(), "s1:4");
+    let err = env.fails(&["close", "s1:9"]);
+    assert!(err.contains("has no tab 9"), "{err}");
+
+    // Empty, it's only left.
+    env.set_active("s1:6");
+    assert_eq!(env.ok(&["close", "s1:6"]), "No windows open on tab 6\n");
+    assert_eq!(env.active(), "s1:4");
+
+    // Its only tab: the space ends.
+    env.ok(&["close", "s1:4"]);
+    assert_eq!(env.windows(), ["1"]);
+    assert_eq!(env.active(), "1");
+    assert_eq!(env.ls_json().len(), 1);
+}
+
+#[test]
+fn close_closes_a_home_tab_on_this_monitor() {
+    let env = Env::new();
+    env.add_window("1");
+    env.add_window("3");
+    env.add_window("13");
+    env.set_active("3");
+
+    assert_eq!(env.ok(&["close", "home:3"]), "Closed 1 window on tab 3\n");
+    assert_eq!(env.windows(), ["1", "13"], "not the other monitor's");
+    assert_eq!(env.active(), "1");
+
+    // Its last tab on this monitor: home doesn't end.
+    assert_eq!(env.ok(&["close", "home:1"]), "Closed 1 window on tab 1\n");
+    assert_eq!(env.windows(), ["13"]);
+    assert_eq!(env.active(), "1");
+}
+
+#[test]
 fn terminal_opens_in_the_focused_terminals_folder_or_the_spaces() {
     let env = Env::new();
     let (ren, docs) = (env.dir("ren"), env.dir("ren/docs"));

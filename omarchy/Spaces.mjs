@@ -117,10 +117,32 @@ export function rowActions(row) {
   return actions
 }
 
-// A tab's right-click menu on the bar: name it, as double-clicking it does.
-export function tabActions(tab) {
+// A tab's right-click menu on the bar, of `tabsFor`'s `model`: name it, as
+// double-clicking it does, or close it. An empty tab is only there while
+// you're on it, so closing it takes another to go to, or a space to end:
+// `home` doesn't.
+export function tabActions(tab, model) {
   if (!tab) return []
-  return [{ id: "rename-tab", icon: "\u{f0cb6}", label: "Rename", enabled: true, hint: "", separatorBefore: false }]
+  const leavable = model.space !== "home" || model.tabs.some((t) => t.slot !== tab.slot && t.windows > 0)
+  return [
+    { id: "rename-tab", icon: "\u{f0cb6}", label: "Rename", enabled: true, hint: "", separatorBefore: false },
+    {
+      id: "close-tab",
+      icon: "\u{f0156}",
+      label: "Close tab",
+      enabled: tab.windows > 0 || (tab.active && leavable),
+      hint: "",
+      separatorBefore: true,
+    },
+  ]
+}
+
+// What to ask before closing a tab, for the windows that go with it; "" when
+// it has none, and there is nothing to ask.
+export function closeTabWarning(tab) {
+  if (!tab || !(tab.windows > 0)) return ""
+  const what = tab.label ? `tab ${tab.slot} (${tab.label})` : `tab ${tab.slot}`
+  return `Close ${what}? ${tab.windows === 1 ? "Its window closes" : `Its ${tab.windows} windows close`} too.`
 }
 
 // The next enabled action going `by` (1 or -1) from `from`, wrapping; from

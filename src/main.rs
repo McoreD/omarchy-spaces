@@ -65,7 +65,9 @@ enum Cmd {
         space: String,
         position: usize,
     },
-    /// Close every window of a space, the active one unless you say which.
+    /// Close every window of a space, the active one unless you say which, or
+    /// of a tab, as `<space>:<n>`.
+    #[command(override_usage = "space close [SPACE | SPACE:N]")]
     Close { space: Option<String> },
     /// Open the spaces that were up before Hyprland last restarted, with
     /// their terminals arranged as they were.

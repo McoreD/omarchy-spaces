@@ -12,7 +12,7 @@ import "Spaces.mjs" as Spaces
 // per workspace. Clicks on tabs run `space ws`, which stays the only thing
 // that changes workspaces. Double-clicking a tab names it: the sidebar holds
 // the keyboard (Sidebar.qml) and the tab shows what you type. So does Rename in the menu a right-click on a tab
-// opens (SpaceMenu.qml). On a vertical bar there is room only for the tabs'
+// opens (SpaceMenu.qml), which also closes the tab. On a vertical bar there is room only for the tabs'
 // numbers.
 //
 // The bar parts where the windows begin, by the sidebar's rail or by the

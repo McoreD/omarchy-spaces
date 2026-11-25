@@ -83,7 +83,11 @@ Item {
   }
   // Gone to another space, or the tab ended: the menu doesn't come back.
   onMenuTabChanged: if (!root.menuTab && root.menuTabFor) root.closeMenu()
-  readonly property var menuActions: root.menuTabFor ? Spaces.tabActions(root.menuTab) : Spaces.rowActions(root.menuRow)
+  readonly property var menuActions: root.menuTabFor ? Spaces.tabActions(root.menuTab, root.tabs.model) : Spaces.rowActions(root.menuRow)
+  // Whether the tab's menu has given way to asking whether to close it, and
+  // what it asks.
+  property bool confirmingClose: false
+  readonly property string closeWarning: Spaces.closeTabWarning(root.menuTab)
   property real menuX: 0
   property real menuY: 0
   property var menuScreen: null
@@ -408,11 +412,21 @@ Item {
   function closeMenu() {
     root.menuFor = ""
     root.menuTabFor = ""
+    root.confirmingClose = false
   }
 
-  // Acts on whatever the menu is open on.
+  // Acts on whatever the menu is open on. A tab with windows asks first.
   function pickAction(id) {
-    root.act(id, root.menuTabFor ? root.menuTab : root.menuRow)
+    if (id === "close-tab" && root.closeWarning !== "") root.confirmingClose = true
+    else if (id === "close-tab") root.closeTab()
+    else root.act(id, root.menuTabFor ? root.menuTab : root.menuRow)
+  }
+
+  // Closes the tab whose menu is open, and its windows.
+  function closeTab() {
+    var target = root.menuTabFor
+    root.closeMenu()
+    if (target) root.run(["space", "close", target])
   }
 
   // An action from a space's menu (Spaces.rowActions), or a tab's

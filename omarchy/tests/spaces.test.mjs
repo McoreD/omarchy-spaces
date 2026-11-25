@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, barToggle, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, statusColors, tabActions, tabsFor, terminalsByAddress, moreUrgent, windowMotion, startsDrag, dropIndex, dragShift, moveRow } from "../Spaces.mjs"
+import { appName, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, barToggle, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, statusColors, tabActions, tabsFor, terminalsByAddress, moreUrgent, windowMotion, startsDrag, dropIndex, dragShift, moveRow } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -337,9 +337,23 @@ test("offers rename, an icon and close, saying why close doesn't apply", () => {
   assert.deepEqual(rowActions(rows[1]).map((a) => a.separatorBefore), [false, false, true])
 })
 
-test("offers to rename a tab, home's too", () => {
-  assert.deepEqual(tabActions({ slot: 2, label: "" }).map((a) => [a.id, a.enabled]), [["rename-tab", true]])
-  assert.deepEqual(tabActions(null), [], "the tab has gone")
+test("offers to rename or close a tab", () => {
+  const tab = (slot, windows, active) => ({ slot, label: "", windows, active })
+  const closes = (space, tabs) => tabActions(tabs[0], { space, tabs }).map((a) => [a.id, a.enabled])[1]
+  assert.deepEqual(tabActions(tab(2, 1, true), { space: "s1", tabs: [] }).map((a) => a.id), ["rename-tab", "close-tab"])
+  assert.deepEqual(closes("home", [tab(1, 2, true)]), ["close-tab", true], "its windows")
+  assert.deepEqual(closes("home", [tab(1, 0, true), tab(2, 1, false)]), ["close-tab", true], "another to go to")
+  assert.deepEqual(closes("home", [tab(1, 0, true)]), ["close-tab", false], "home doesn't end")
+  assert.deepEqual(closes("s1", [tab(1, 0, true)]), ["close-tab", true], "a space does")
+  assert.deepEqual(closes("s1", [tab(1, 0, false)]), ["close-tab", false], "empty, shown on another monitor")
+  assert.deepEqual(tabActions(null, { space: "s1", tabs: [] }), [], "the tab has gone")
+})
+
+test("warns before closing a tab with windows", () => {
+  assert.equal(closeTabWarning({ slot: 2, label: "server", windows: 3 }), "Close tab 2 (server)? Its 3 windows close too.")
+  assert.equal(closeTabWarning({ slot: 1, label: "", windows: 1 }), "Close tab 1? Its window closes too.")
+  assert.equal(closeTabWarning({ slot: 1, label: "", windows: 0 }), "")
+  assert.equal(closeTabWarning(null), "")
 })
 
 test("steps through the enabled actions", () => {

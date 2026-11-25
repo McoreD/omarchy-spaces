@@ -10,7 +10,8 @@ import "Spaces.mjs" as Spaces
 
 // A space's menu, floating where you right-clicked it in the sidebar: rename
 // it, change its icon, or close it (Spaces.rowActions); or a tab's, where you
-// right-clicked it on the bar: name it (Spaces.tabActions). The sidebar is
+// right-clicked it on the bar: name it, or close it (Spaces.tabActions), which
+// asks first when it has windows, in the menu's place. The sidebar is
 // drawn under the windows, so the menu gets a surface of its own above them,
 // covering the screen while it is open: a click anywhere outside the card
 // closes it, as does Escape. Up and Down (or j and k) move through it, and
@@ -38,6 +39,11 @@ PanelWindow {
   WlrLayershell.layer: WlrLayer.Overlay
   WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 
+  // It starts on Cancel, so Enter alone, or held from picking "Close tab",
+  // closes nothing.
+  readonly property bool confirming: !!sidebar && sidebar.confirmingClose
+  onConfirmingChanged: if (confirming) confirm.selectedIndex = 0
+
   onVisibleChanged: {
     root.current = -1
     if (visible) Qt.callLater(function() { keys.forceActiveFocus() })
@@ -60,6 +66,11 @@ PanelWindow {
     anchors.fill: parent
     focus: true
     Keys.onPressed: function(event) {
+      if (root.confirming) {
+        if (!event.isAutoRepeat) confirm.handleKey(event)
+        event.accepted = true
+        return
+      }
       if (event.key === Qt.Key_Escape) root.sidebar.closeMenu()
       else if (event.key === Qt.Key_Down || event.text === "j" || event.key === Qt.Key_Tab) root.current = Spaces.stepAction(root.actions, root.current, 1)
       else if (event.key === Qt.Key_Up || event.text === "k" || event.key === Qt.Key_Backtab) root.current = Spaces.stepAction(root.actions, root.current, -1)
@@ -71,6 +82,7 @@ PanelWindow {
 
   BorderSurface {
     id: card
+    visible: !root.confirming
     // Where you clicked, kept on the screen: above the pointer when there
     // isn't room below it.
     x: Math.max(root.edge, Math.min(root.sidebar ? root.sidebar.menuX : 0, root.width - width - root.edge))
@@ -78,8 +90,8 @@ PanelWindow {
       var at = root.sidebar ? root.sidebar.menuY : 0
       return at + height + root.edge <= root.height ? at : Math.max(root.edge, at - height)
     }
-    // A tab's has only a short label, with nothing to say beside it.
-    width: Style.space(root.sidebar && root.sidebar.menuTabFor ? 120 : 240)
+    // A tab's has only short labels, with nothing to say beside them.
+    width: Style.space(root.sidebar && root.sidebar.menuTabFor ? 140 : 240)
     height: items.implicitHeight + contentTopInset + contentBottomInset
     color: Commons.Color.popups.background
     borderSpec: root.borderSpec
@@ -186,5 +198,17 @@ PanelWindow {
         }
       }
     }
+  }
+
+  ConfirmDialog {
+    id: confirm
+    anchors.fill: parent
+    opened: root.confirming
+    message: root.sidebar ? root.sidebar.closeWarning : ""
+    confirmText: "Close tab"
+    background: Commons.Color.popups.background
+    foreground: root.foreground
+    onCanceled: root.sidebar.closeMenu()
+    onConfirmed: root.sidebar.closeTab()
   }
 }
