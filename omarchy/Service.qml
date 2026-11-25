@@ -13,6 +13,12 @@ Item {
   property var shell: null
   property var manifest: null
 
+  // Only the first time: the shell hands a kept service the new manifest after
+  // an update, while this is still the old one's QML.
+  onManifestChanged: {
+    if (!watchItem.loadedVersion && root.manifest) watchItem.loadedVersion = root.manifest.version || ""
+  }
+
   readonly property bool searching: sidebarItem.searching
   readonly property var watch: watchItem
   // The sidebar, which the tabs on the bar line up beside while it shows.
@@ -69,7 +75,6 @@ Item {
   // (TabsWidget.qml reaches it through the shell).
   Watch {
     id: watchItem
-    loadedVersion: (root.manifest && root.manifest.version) || ""
   }
 
   Controller {
