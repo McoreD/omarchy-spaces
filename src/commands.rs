@@ -205,7 +205,8 @@ pub(crate) struct Terminal {
 #[derive(Debug, Clone)]
 pub(crate) struct SpaceWindow {
     pub address: String,
-    pub pid: u32,
+    /// The process that runs it, and which of its windows it is.
+    pub place: terminal::Place,
     pub space: String,
     /// The tab it's on, by its key.
     pub tab: Option<u8>,
@@ -407,14 +408,15 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
     if clients.iter().any(|c| c.grouped.len() > 1) {
         snapshot.group_bar = group_bar(hypr);
     }
+    let mut whose = terminal::places(&clients);
     for client in clients {
         if let Ok(pid) = u32::try_from(client.pid) {
             snapshot.browser_windows.push(browser::Window {
                 address: client.address.clone(),
                 pid,
                 class: client.class.clone(),
-                title: client.title,
-                opened: u64::from_str_radix(&client.stable_id, 16).unwrap_or(0),
+                title: client.title.clone(),
+                opened: client.opened(),
             });
         }
         // Windows not on any workspace yet report id -1 and no name.
@@ -426,10 +428,10 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
             .windows
             .entry(location.space().to_string())
             .or_default() += 1;
-        if let Ok(pid) = u32::try_from(client.pid) {
+        if let Some(place) = whose.remove(&client.address) {
             snapshot.space_windows.push(SpaceWindow {
                 address: client.address,
-                pid,
+                place,
                 space: location.space().to_string(),
                 tab: location.key(),
                 class: client.class,
@@ -517,7 +519,7 @@ pub(crate) fn live_from(
                 .push(Terminal {
                     address: window.address.clone(),
                     tab: window.tab.unwrap_or(0),
-                    pid: window.pid,
+                    pid: window.place.pid,
                     shell,
                 });
         } else if let Some(report) = report {
@@ -548,7 +550,7 @@ fn live(hypr: &Hypr) -> Result<Live> {
     let reports = status::load_reports(&paths::status_dir());
     let mut live = live_from(
         &snapshot(hypr)?,
-        |window| terminal::shell_of(window.pid, core.as_ref()),
+        |window| terminal::shell_of(window.place, core.as_ref(), None),
         &reports,
     );
     // What you've seen, as `watch` notes it on core's terminals and native reports.
@@ -826,8 +828,9 @@ fn resolve(rows: &[Row], target: &str) -> Result<String> {
 /// The folder you are in: the focused terminal's, else the active space's,
 /// else home. One on another machine is passed over.
 fn here_folder(hypr: &Hypr) -> Result<PathBuf> {
-    if let Some(pid) = hypr.active_window_pid()?
-        && let Some(folder) = terminal::shell_folder(pid)
+    if let Some(address) = hypr.active_window_address()?
+        && let Some(place) = terminal::places(&hypr.clients()?).get(&address)
+        && let Some(folder) = terminal::shell_folder(*place)
         && let Some(dir) = folder.local()
     {
         return Ok(dir.to_path_buf());
@@ -1681,10 +1684,11 @@ pub fn status(raw_word: &str, window: Option<String>, pid: Option<u32>) -> Resul
         let start = pid.unwrap_or_else(std::process::id);
         let chain = terminal::ancestors(start);
         let matched = chain.iter().find_map(|&anc| {
-            let hits: Vec<&hypr::Client> = clients
+            let mut hits: Vec<&hypr::Client> = clients
                 .iter()
                 .filter(|c| u32::try_from(c.pid).ok() == Some(anc))
                 .collect();
+            hits.sort_by_key(|c| c.opened());
             (!hits.is_empty()).then_some((anc, hits))
         });
         let Some((window_pid, hits)) = matched else {
@@ -1695,6 +1699,8 @@ pub fn status(raw_word: &str, window: Option<String>, pid: Option<u32>) -> Resul
         };
         let address = if hits.len() == 1 {
             hits[0].address.clone()
+        } else if let Some(nth) = terminal::window_with(window_pid, hits.len(), &chain) {
+            hits[nth].address.clone()
         } else {
             let active = hypr.active_window_address().ok().flatten();
             active
@@ -2789,6 +2795,7 @@ mod tests {
             tab,
             pid,
             shell: terminal::Shell {
+                pid: None,
                 folder: Folder::here(cwd),
                 program: None,
                 agent: None,

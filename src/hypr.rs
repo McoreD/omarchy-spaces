@@ -83,6 +83,13 @@ pub struct Monitor {
     pub shows: Option<WorkspaceRef>,
 }
 
+impl Client {
+    /// Goes up with each window opened.
+    pub fn opened(&self) -> u64 {
+        u64::from_str_radix(&self.stable_id, 16).unwrap_or(0)
+    }
+}
+
 impl Monitor {
     /// Its size in logical pixels.
     pub fn size(&self) -> (i32, i32) {
@@ -243,16 +250,6 @@ impl Hypr {
             .get("address")
             .and_then(serde_json::Value::as_str)
             .map(String::from))
-    }
-
-    /// The process of the focused window, if a window has focus.
-    pub fn active_window_pid(&self) -> Result<Option<u32>> {
-        let window: serde_json::Value = self.query("activewindow")?;
-        Ok(window
-            .get("pid")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|pid| u32::try_from(pid).ok())
-            .filter(|&pid| pid > 0))
     }
 
     /// Runs a Lua dispatch expression, such as

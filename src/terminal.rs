@@ -4,6 +4,7 @@
 //! A window's shell is herdr-core's when the window shows one of its
 //! terminals (`core.rs`), and is found in `/proc` otherwise.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -11,12 +12,15 @@ use anyhow::{Context, Result};
 
 use crate::agent::{self, Conversation};
 use crate::folder::Folder;
-use crate::{core, status};
+use crate::{core, hypr, status};
 
 /// What the shell of a terminal window is doing: the folder it's in, and
 /// the program it's running, unless it's at its prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shell {
+    /// Its process, to tell it from others of the same terminal app's. `None`
+    /// for core's.
+    pub pid: Option<u32>,
     pub folder: Folder,
     /// The command running in the terminal's foreground (`claude`, `nvim`),
     /// or `None` at the prompt.
@@ -88,20 +92,86 @@ impl Shell {
     }
 }
 
-/// The folder the shell of the terminal window run by `pid` is in, or `None`
-/// when the window isn't a terminal.
-pub fn shell_folder(pid: u32) -> Option<Folder> {
-    let core = core::list().ok().map(core::Terminals::new);
-    shell_of(pid, core.as_ref()).map(|shell| shell.folder)
+/// Whose a window is: the process that runs it, and which of that process's
+/// windows it is, oldest first. Most terminals are a process each, but
+/// Ghostty, `foot --server` and `kitty -1` run all their windows in one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Place {
+    pub pid: u32,
+    pub nth: usize,
+    /// How many windows the process has.
+    pub of: usize,
 }
 
-/// The shell of the terminal window run by `pid`: core's terminal in it,
-/// when `core` has one, else the window's own (`shell`).
-pub fn shell_of(pid: u32, core: Option<&core::Terminals>) -> Option<Shell> {
-    if let Some(terminal) = core.and_then(|core| core.in_window(pid).first().copied()) {
+/// Every window's place, by address.
+pub fn places(clients: &[hypr::Client]) -> HashMap<String, Place> {
+    let mut by_pid: HashMap<u32, Vec<&hypr::Client>> = HashMap::new();
+    for client in clients {
+        if let Ok(pid) = u32::try_from(client.pid) {
+            by_pid.entry(pid).or_default().push(client);
+        }
+    }
+    let mut places = HashMap::new();
+    for (pid, mut windows) in by_pid {
+        windows.sort_by_key(|window| window.opened());
+        let of = windows.len();
+        for (nth, window) in windows.into_iter().enumerate() {
+            places.insert(window.address.clone(), Place { pid, nth, of });
+        }
+    }
+    places
+}
+
+/// The folder a terminal window's shell is in, or `None` when the window isn't
+/// a terminal.
+pub fn shell_folder(place: Place) -> Option<Folder> {
+    let core = core::list().ok().map(core::Terminals::new);
+    shell_of(place, core.as_ref(), None).map(|shell| shell.folder)
+}
+
+/// A terminal window's shell: core's terminal in it, when `core` has one, else
+/// the window's own (`shell`). `before` is its process, when it was last read.
+pub fn shell_of(
+    place: Place,
+    core: Option<&core::Terminals>,
+    before: Option<u32>,
+) -> Option<Shell> {
+    let terminals = core.map(|core| core.in_window(place.pid));
+    let terminals = terminals.unwrap_or_default();
+    if let Some(first) = terminals.first() {
+        let terminal = match terminals.len() == place.of {
+            true => terminals[place.nth],
+            false => first,
+        };
         return Some(from_core(terminal));
     }
-    shell(pid)
+    shell(place, before)
+}
+
+/// Which of a terminal app's shells, oldest first, is in a window. Nothing
+/// says, but both were opened in the same order, so when there are as many of
+/// each, the window's place tells. Otherwise the app has several in a window
+/// (tabs or splits), or a window or a shell is only just coming or going: then
+/// it's still the one it was `before`, else the newest.
+fn in_place(shells: &[u32], place: Place, before: Option<u32>) -> Option<u32> {
+    if place.of > 1 {
+        if shells.len() == place.of {
+            return shells.get(place.nth).copied();
+        }
+        if let Some(before) = before.filter(|before| shells.contains(before)) {
+            return Some(before);
+        }
+    }
+    shells.last().copied()
+}
+
+/// Which of the windows run by `pid`, oldest first, has the process whose
+/// `ancestors` these are, when its windows have a shell each.
+pub fn window_with(pid: u32, windows: usize, ancestors: &[u32]) -> Option<usize> {
+    let shells = shells(pid);
+    (shells.len() == windows)
+        .then(|| shells.iter().position(|shell| ancestors.contains(shell)))
+        .flatten()
 }
 
 /// A core terminal's shell: its foreground program's folder and name, a
@@ -121,6 +191,7 @@ fn from_core(terminal: &core::Terminal) -> Shell {
     };
     let machine = terminal.machine();
     Shell {
+        pid: None,
         folder: Folder::on(machine, cwd),
         program,
         agent: Some(Agent {
@@ -142,35 +213,66 @@ fn from_core(terminal: &core::Terminal) -> Shell {
     }
 }
 
-/// The window's own shell, run by the terminal app `pid`, or `None` when
-/// the window isn't a terminal. As `omarchy-cmd-terminal-cwd` decides: a terminal's
-/// shell is its newest child that leads its own session on a tty and is a
-/// login shell (listed in `/etc/shells`). Other apps' children, such as
-/// kitty's `kitten` helpers or a browser's, don't qualify.
-///
-/// For tests, `SPACES_FAKE_CWDS` names a folder of symlinks, one per pid,
-/// pointing at that "terminal's" folder, and of `<pid>.program` and
-/// `<pid>.conversation` files holding what it runs.
-pub fn shell(pid: u32) -> Option<Shell> {
-    if let Some(fake) = std::env::var_os("SPACES_FAKE_CWDS") {
-        let fake = Path::new(&fake);
-        let cwd = std::fs::read_link(fake.join(pid.to_string())).ok()?;
-        let program = std::fs::read_to_string(fake.join(format!("{pid}.program")))
+/// The window's own shell, or `None` when the window isn't a terminal.
+pub fn shell(place: Place, before: Option<u32>) -> Option<Shell> {
+    let shell = in_place(&shells(place.pid), place, before)?;
+    if let Some(fake) = fakes() {
+        let cwd = std::fs::read_link(fake.join(shell.to_string())).ok()?;
+        let program = std::fs::read_to_string(fake.join(format!("{shell}.program")))
             .ok()
             .map(|p| p.trim().to_string())
             .filter(|p| !p.is_empty());
         return Some(Shell {
+            pid: Some(shell),
             folder: Folder::here(cwd),
             program,
             agent: None,
-            conversation: std::fs::read_to_string(fake.join(format!("{pid}.conversation")))
+            conversation: std::fs::read_to_string(fake.join(format!("{shell}.conversation")))
                 .ok()
                 .and_then(|text| serde_json::from_str(&text).ok()),
         });
     }
-    let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
-    let mut children: Vec<u32> = std::fs::read_dir(format!("/proc/{pid}/task"))
-        .ok()?
+    let stat = Stat::read(shell)?;
+    let known = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+    let cwd = std::fs::canonicalize(format!("/proc/{shell}/cwd")).ok()?;
+    Some(Shell {
+        pid: Some(shell),
+        folder: Folder::here(cwd),
+        program: foreground(&stat, &known).and_then(program_name),
+        agent: None,
+        conversation: foreground(&stat, &known).and_then(agent::conversation),
+    })
+}
+
+/// For tests, `SPACES_FAKE_CWDS` names a folder that stands in for `/proc`: a
+/// symlink per shell, pointing at the folder it's in, and `<shell>.program`
+/// and `<shell>.conversation` files holding what it runs. A terminal's shell
+/// is called as its window's process, or, when it has several,
+/// `<pid>.shells` holds what they are, oldest first.
+fn fakes() -> Option<std::path::PathBuf> {
+    std::env::var_os("SPACES_FAKE_CWDS").map(Into::into)
+}
+
+/// The shells the terminal app `pid` runs, oldest first. As
+/// `omarchy-cmd-terminal-cwd` decides: a terminal's shell is a child that
+/// leads its own session on a tty and is a login shell (listed in
+/// `/etc/shells`). Other apps' children, such as kitty's `kitten` helpers or a
+/// browser's, don't qualify.
+fn shells(pid: u32) -> Vec<u32> {
+    if let Some(fake) = fakes() {
+        let shells = std::fs::read_to_string(fake.join(format!("{pid}.shells")));
+        return match shells {
+            Ok(text) => text
+                .split_whitespace()
+                .filter_map(|shell| shell.parse().ok())
+                .collect(),
+            Err(_) => vec![pid],
+        };
+    }
+    let known = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+    let mut shells: Vec<(u64, u32)> = std::fs::read_dir(format!("/proc/{pid}/task"))
+        .into_iter()
+        .flatten()
         .flatten()
         .filter_map(|task| std::fs::read_to_string(task.path().join("children")).ok())
         .flat_map(|list| {
@@ -178,19 +280,13 @@ pub fn shell(pid: u32) -> Option<Shell> {
                 .filter_map(|c| c.parse().ok())
                 .collect::<Vec<u32>>()
         })
+        .filter_map(|child| {
+            let stat = Stat::read(child)?;
+            is_shell(child, &stat, &known).then_some((stat.started, child))
+        })
         .collect();
-    children.sort_unstable();
-    let (shell, stat) = children.into_iter().rev().find_map(|child| {
-        let stat = Stat::read(child)?;
-        is_shell(child, &stat, &shells).then_some((child, stat))
-    })?;
-    let cwd = std::fs::canonicalize(format!("/proc/{shell}/cwd")).ok()?;
-    Some(Shell {
-        folder: Folder::here(cwd),
-        program: foreground(&stat, &shells).and_then(program_name),
-        agent: None,
-        conversation: foreground(&stat, &shells).and_then(agent::conversation),
-    })
+    shells.sort_unstable();
+    shells.into_iter().map(|(_, shell)| shell).collect()
 }
 
 /// The fields of `/proc/<pid>/stat` that say how a process sits on its tty.
@@ -201,6 +297,8 @@ struct Stat {
     tty: i64,
     /// The process group in the foreground of its tty.
     tpgid: i64,
+    /// When it started, in ticks since boot.
+    started: u64,
 }
 
 impl Stat {
@@ -209,6 +307,7 @@ impl Stat {
         // The command name, in parentheses, can hold spaces; the fields after
         // it are state, ppid, pgrp, session, tty_nr, tpgid.
         let (_, rest) = stat.rsplit_once(") ")?;
+        let started = rest.split_whitespace().nth(19)?.parse().ok()?;
         let fields: Vec<i64> = rest
             .split_whitespace()
             .skip(1)
@@ -224,6 +323,7 @@ impl Stat {
             session,
             tty,
             tpgid,
+            started,
         })
     }
 }
@@ -341,7 +441,7 @@ pub fn command_in(command: &str, dir: &Path, env: &[(&str, &str)]) -> String {
 /// Whether the window run by `pid` was started with `key` set to `value`.
 pub fn was_given(pid: u32, key: &str, value: &str) -> bool {
     // Tests' windows have no processes.
-    if std::env::var_os("SPACES_FAKE_CWDS").is_some() {
+    if fakes().is_some() {
         return true;
     }
     let given = format!("{key}={value}");
@@ -433,8 +533,25 @@ mod tests {
     #[test]
     fn finds_no_shell_for_a_non_terminal() {
         // This test process's children aren't session-leading shells.
-        assert_eq!(shell(std::process::id()), None);
-        assert_eq!(shell(u32::MAX), None);
+        for pid in [std::process::id(), u32::MAX] {
+            let place = Place { pid, nth: 0, of: 1 };
+            assert_eq!(shell(place, None), None);
+        }
+    }
+
+    #[test]
+    fn tells_which_shell_is_in_a_window_of_several() {
+        let of = |nth, of| Place { pid: 1, nth, of };
+        assert_eq!(in_place(&[10, 20], of(0, 1), None), Some(20), "the newest");
+        assert_eq!(in_place(&[10, 20], of(0, 1), Some(10)), Some(20));
+        assert_eq!(in_place(&[10, 20], of(0, 2), None), Some(10));
+        assert_eq!(in_place(&[10, 20], of(1, 2), Some(10)), Some(20));
+        // A tab more than there are windows, or a window yet without one.
+        assert_eq!(in_place(&[10, 20, 30], of(0, 2), Some(10)), Some(10));
+        assert_eq!(in_place(&[10, 20], of(0, 3), Some(10)), Some(10));
+        assert_eq!(in_place(&[10, 20, 30], of(0, 2), Some(5)), Some(30), "gone");
+        assert_eq!(in_place(&[10, 20, 30], of(0, 2), None), Some(30));
+        assert_eq!(in_place(&[], of(0, 2), Some(10)), None);
     }
 
     #[test]
@@ -462,6 +579,7 @@ mod tests {
     #[test]
     fn labels_a_terminal_by_its_program_else_its_folder() {
         let at = |cwd: &Path, program: Option<&str>| Shell {
+            pid: None,
             folder: Folder::here(cwd),
             program: program.map(String::from),
             agent: None,

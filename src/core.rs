@@ -274,15 +274,16 @@ impl Terminals {
         }
     }
 
-    /// The terminals showing in the window run by `pid`, oldest first: one,
-    /// unless the app draws several in one window (tabs or splits).
+    /// The terminals showing in the windows run by `pid`, oldest first: one,
+    /// unless the app has several windows, or several in one (tabs or splits).
     pub fn in_window(&self, pid: u32) -> Vec<&Terminal> {
         let mut found: Vec<&Terminal> = self
             .by_address
             .values()
             .filter(|t| t.shows_in(pid))
             .collect();
-        found.sort_by(|a, b| a.address.cmp(&b.address));
+        // `t9` before `t10`.
+        found.sort_by_key(|t| (t.address.len(), t.address.clone()));
         found
     }
 

@@ -26,13 +26,49 @@ pub const DEFAULT_PICKERS: &[(&str, &str)] = &[
 
 /// Opens a terminal in `$SPACES_DIR` the way Omarchy's `super+enter`
 /// does (`omarchy-launch-terminal`), so it is the terminal you chose in
-/// Omarchy. Outside a uwsm session, without the app scope. When herdr-core
-/// is enabled (or `hc` is on `PATH`), it runs `space shell` (`shell.rs`);
-/// otherwise it opens a plain terminal directly.
-const OMARCHY_TERMINAL: &str = "exec setsid uwsm-app -- xdg-terminal-exec --dir=\"$SPACES_DIR\"";
-const PLAIN_TERMINAL: &str = "exec xdg-terminal-exec --dir=\"$SPACES_DIR\"";
+/// Omarchy.
+const XDG_TERMINAL: &str = "xdg-terminal-exec --dir=\"$SPACES_DIR\"";
 
-/// Runs an app as Omarchy does, in a scope of its own.
+/// Ghostty opens all its windows from one process, which Hyprland then can't
+/// place, nor we tell apart. So ours are a process each, ending with its
+/// window.
+const GHOSTTY: &str = "ghostty --gtk-single-instance=false --quit-after-last-window-closed=true \
+     --working-directory=\"$SPACES_DIR\"";
+const GHOSTTY_ENTRY: &str = "com.mitchellh.ghostty.desktop";
+
+/// The command for Omarchy's terminal, running `program` in place of your
+/// shell.
+fn omarchy_terminal(ghostty: bool, program: Option<&str>) -> String {
+    let launcher = app_launcher();
+    let (terminal, run) = match ghostty {
+        true => (GHOSTTY, " -e "),
+        false => (XDG_TERMINAL, " "),
+    };
+    match program {
+        Some(program) => format!("{launcher} {terminal}{run}{program}"),
+        None => format!("{launcher} {terminal}"),
+    }
+}
+
+/// Whether the terminal you chose in Omarchy is Ghostty: the first in the list
+/// that `xdg-terminal-exec` picks from, read here as asking it would hold up
+/// each terminal.
+fn prefers_ghostty(config_dir: &Path) -> bool {
+    ["hyprland-xdg-terminals.list", "xdg-terminals.list"]
+        .iter()
+        .filter_map(|name| fs::read_to_string(config_dir.join(name)).ok())
+        .find_map(|list| {
+            let first = list
+                .lines()
+                .map(str::trim)
+                .find(|line| line.ends_with(".desktop") && !line.starts_with(['#', '-', '/']))?;
+            Some(first.trim_start_matches('+') == GHOSTTY_ENTRY)
+        })
+        .unwrap_or(false)
+}
+
+/// Runs an app as Omarchy does, in a scope of its own. Outside a uwsm session,
+/// without it.
 pub fn app_launcher() -> &'static str {
     if on_path("uwsm-app") {
         "exec setsid uwsm-app --"
@@ -186,28 +222,22 @@ impl Config {
     /// The terminal command for picking up a conversation, which `space shell`
     /// does. A terminal of your own has to run that itself.
     pub fn resuming_terminal(&self) -> String {
-        let terminal = self.terminal();
-        if self.terminal.command.is_some() || self.use_herdr_core() {
-            return terminal;
-        }
-        format!("{terminal} {}", space_shell())
+        self.terminal_running(true)
     }
 
-    /// The configured terminal command, or Omarchy's way.
+    /// The configured terminal command, or Omarchy's way. When herdr-core is
+    /// enabled (or `hc` is on `PATH`), that runs `space shell` (`shell.rs`).
     pub fn terminal(&self) -> String {
+        self.terminal_running(self.use_herdr_core())
+    }
+
+    fn terminal_running(&self, space: bool) -> String {
         if let Some(command) = &self.terminal.command {
             return command.clone();
         }
-        let base = if on_path("uwsm-app") {
-            OMARCHY_TERMINAL
-        } else {
-            PLAIN_TERMINAL
-        };
-        if self.use_herdr_core() {
-            format!("{base} {}", space_shell())
-        } else {
-            base.to_string()
-        }
+        let ghostty = prefers_ghostty(&paths::config_dir()) && on_path("ghostty");
+        let shell = space.then(space_shell);
+        omarchy_terminal(ghostty, shell.as_deref())
     }
 
     /// The configured picker, or the first installed default.
@@ -262,7 +292,7 @@ mod tests {
         assert_eq!(config.picker, None);
         assert_eq!(config.restore, Restore::default());
         assert_eq!(config.sounds, Sounds::default());
-        assert!(config.terminal().contains("xdg-terminal-exec"));
+        assert!(config.terminal().contains("$SPACES_DIR"));
         assert_eq!(
             config.terminal().ends_with("' shell"),
             has_herdr_core(),
@@ -279,7 +309,7 @@ mod tests {
         fs::write(&path, "[terminal]\nherdr_core = false\n").unwrap();
         let config = Config::load_from(&path).unwrap();
         assert!(!config.use_herdr_core());
-        assert!(config.terminal().contains("xdg-terminal-exec"));
+        assert!(config.terminal().contains("$SPACES_DIR"));
         assert!(
             !config.terminal().ends_with("' shell"),
             "{}",
@@ -321,7 +351,7 @@ mod tests {
         fs::write(&path, "picker = \"vicinae dmenu\"\n").unwrap();
         let config = Config::load_from(&path).unwrap();
         assert_eq!(config.picker(), Some("vicinae dmenu".into()));
-        assert!(config.terminal().contains("xdg-terminal-exec"));
+        assert!(config.terminal().contains("$SPACES_DIR"));
     }
 
     #[test]
@@ -351,6 +381,39 @@ mod tests {
         assert_eq!(sounds.done.as_deref(), Some("~/ding.oga"));
         fs::write(&path, "[sounds]\nenabled = false\n").unwrap();
         assert!(!Config::load_from(&path).unwrap().sounds.enabled);
+    }
+
+    #[test]
+    fn opens_ghostty_a_process_a_window() {
+        let plain = omarchy_terminal(false, None);
+        assert!(
+            plain.ends_with(r#"exec setsid uwsm-app -- xdg-terminal-exec --dir="$SPACES_DIR""#)
+                || plain == r#"exec xdg-terminal-exec --dir="$SPACES_DIR""#
+        );
+        let ghostty = omarchy_terminal(true, Some("'/b/space' shell"));
+        assert!(
+            ghostty.contains(" --gtk-single-instance=false "),
+            "{ghostty}"
+        );
+        assert!(
+            ghostty.ends_with(r#" --working-directory="$SPACES_DIR" -e '/b/space' shell"#),
+            "{ghostty}"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let list = |text: &str| {
+            fs::write(dir.path().join("xdg-terminals.list"), text).unwrap();
+            prefers_ghostty(dir.path())
+        };
+        assert!(!prefers_ghostty(&dir.path().join("nowhere")));
+        assert!(list(
+            "# Preferred\ncom.mitchellh.ghostty.desktop\nkitty.desktop\n"
+        ));
+        assert!(!list("kitty.desktop\ncom.mitchellh.ghostty.desktop\n"));
+        assert!(!list("# com.mitchellh.ghostty.desktop\n"));
+        assert!(list(
+            "/execarg_default:x.desktop:-e\n-kitty.desktop\n+com.mitchellh.ghostty.desktop\n"
+        ));
     }
 
     #[test]

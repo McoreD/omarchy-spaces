@@ -46,6 +46,8 @@ struct Hyprland {
     evaluated: Vec<String>,
     /// Where a rule has the browser's windows open.
     browser_on: Option<String>,
+    /// Windows run by another window's process, by that one's address.
+    shared: std::collections::HashMap<u32, u32>,
     /// The classes of windows that aren't terminals.
     classes: std::collections::HashMap<u32, String>,
     /// Whether it says how windows are laid out, as 0.56 does.
@@ -191,7 +193,7 @@ impl Hyprland {
                         .map(|(ws, address)| {
                             let id = self.ensure(ws);
                             let class = self.classes.get(&address).cloned().unwrap_or_default();
-                            json!({ "address": format!("0x{address:x}"), "class": class, "pid": 1000 + address, "workspace": { "id": id, "name": ws } })
+                            json!({ "address": format!("0x{address:x}"), "class": class, "stableId": format!("{address:x}"), "pid": 1000 + self.shared.get(&address).unwrap_or(&address), "workspace": { "id": id, "name": ws } })
                         })
                         .collect(),
                 )
@@ -201,8 +203,7 @@ impl Hyprland {
             "j/activewindow" => match self.windows.iter().rposition(|w| *w == self.active) {
                 Some(i) => {
                     let address = self.addresses[i];
-                    json!({ "address": format!("0x{address:x}"), "pid": 1000 + address })
-                        .to_string()
+                    json!({ "address": format!("0x{address:x}") }).to_string()
                 }
                 None => "{}".into(),
             },
@@ -2040,6 +2041,48 @@ fn ls_lists_spaces_with_counts() {
     assert_eq!(rows[0]["folder"], Value::Null);
     assert_eq!(rows[1]["left_at"], 0, "never left");
     assert_eq!(rows.len(), 2);
+}
+
+#[test]
+fn windows_of_one_process_are_told_apart() {
+    let env = Env::new();
+    let (a, b) = (env.dir("a"), env.dir("b"));
+    let first = env.add_terminal("s1:1", &a);
+    let second = env.add_terminal("s2:1", &b);
+    let address = |window: &str| u32::from_str_radix(&window[2..], 16).unwrap();
+    let (one, two) = (address(&first), address(&second));
+    env.hypr.lock().unwrap().shared.insert(two, one);
+    let shells = |pids: &[u32]| {
+        let pids: Vec<String> = pids.iter().map(u32::to_string).collect();
+        let file = env.cwds().join(format!("{}.shells", 1000 + one));
+        fs::write(file, pids.join(" ")).unwrap();
+    };
+    shells(&[1000 + one, 1000 + two]);
+    let folders = |rows: &[Value]| -> Vec<Value> {
+        rows[1..]
+            .iter()
+            .map(|r| r["terminals"][0]["folder"].clone())
+            .collect()
+    };
+    let (a, b) = (json!(a), json!(b));
+    assert_eq!(folders(&env.ls_json()), [a.clone(), b.clone()]);
+    assert_eq!(env.ls_json()[2]["label"], "b");
+
+    // A new terminal opens where the focused one is.
+    env.set_active("s1:1");
+    env.ok(&["terminal"]);
+    assert_eq!(json!(env.launched(1)[0]), a);
+
+    // A shell more than there are windows, as a tab or a window on its way:
+    // the watch knows which were theirs.
+    let watch = Watch::start(&env);
+    watch.settled(Duration::from_millis(400));
+    std::os::unix::fs::symlink(env.dir("c"), env.cwds().join("5")).unwrap();
+    shells(&[1000 + one, 1000 + two, 5]);
+    env.cd(&second, &env.dir("d"));
+    let state = watch.settled(Duration::from_millis(2500));
+    assert_eq!(state["spaces"][1]["label"], "a");
+    assert_eq!(state["spaces"][2]["label"], "d");
 }
 
 #[test]

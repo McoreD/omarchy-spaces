@@ -82,7 +82,8 @@ pub fn watch(sounds: bool) -> Result<()> {
     // What spaces.json held before the snapshot was taken.
     let mut known = Store::load(&state_dir)?.spaces;
     let mut snapshot = commands::snapshot(&hypr)?;
-    let mut shells: HashMap<u32, Option<terminal::Shell>> = HashMap::new();
+    // What each window's shell was doing when last read, by address.
+    let mut shells: HashMap<String, (terminal::Place, Option<terminal::Shell>)> = HashMap::new();
     let mut last = Last::load(&state_dir)?;
     // Saving the session is a convenience; the watch goes on without it.
     let mut saver = session::Saver::new(&state_dir, &hypr.instance)
@@ -133,14 +134,21 @@ pub fn watch(sounds: bool) -> Result<()> {
 
         // What the terminals' shells are doing: the active space's now, and
         // new ones', the rest when due. Core's are in memory.
-        let pids: HashSet<u32> = snapshot.space_windows.iter().map(|w| w.pid).collect();
-        shells.retain(|pid, _| pids.contains(pid));
+        let live_addresses: HashSet<String> = snapshot
+            .space_windows
+            .iter()
+            .map(|w| w.address.clone())
+            .collect();
+        shells.retain(|address, _| live_addresses.contains(address));
         for window in &snapshot.space_windows {
+            let known = shells.get(&window.address);
             if read_all
                 || snapshot.active() == Some(window.space.as_str())
-                || !shells.contains_key(&window.pid)
+                || known.is_none_or(|(place, _)| *place != window.place)
             {
-                shells.insert(window.pid, terminal::shell_of(window.pid, core.as_ref()));
+                let before = known.and_then(|(_, shell)| shell.as_ref()?.pid);
+                let shell = terminal::shell_of(window.place, core.as_ref(), before);
+                shells.insert(window.address.clone(), (window.place, shell));
             }
         }
         read_all = false;
@@ -161,17 +169,12 @@ pub fn watch(sounds: bool) -> Result<()> {
             config_seen = configured;
         }
 
-        let live_addresses: HashSet<String> = snapshot
-            .space_windows
-            .iter()
-            .map(|w| w.address.clone())
-            .collect();
         status::prune_reports(&status_dir, &live_addresses);
         let reports = status::load_reports(&status_dir);
 
         let mut live = commands::live_from(
             &snapshot,
-            |window| shells.get(&window.pid).cloned().flatten(),
+            |window| shells.get(&window.address)?.1.clone(),
             &reports,
         );
         // The agent in the window you're looking at is seen, once a turn.
