@@ -10,7 +10,7 @@ just stress    # go between your spaces quickly, and check that what shows keeps
 just glyphs    # make the icon picker's glyphs again, for a newer Nerd Fonts
 ```
 
-`just install` and `just setup` do the [README's install steps](../../README.md#install), adding the `require` line to your bindings for you.
+`just install` and `just setup` do the [README's install steps](../../README.md#install), adding the `require` line to your bindings for you and replacing Omarchy's menu and workspaces on the bar without asking. The plugin's own setup (`install.sh --setup`) leaves a linked clone alone.
 
 ## Tests
 

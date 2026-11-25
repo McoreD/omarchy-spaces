@@ -21,6 +21,9 @@ import "Spaces.mjs" as Spaces
 // update` changes `manifest.json` to a new version (or the plugin starts ahead
 // of `space`), it runs `install.sh --update`, which fetches the matching
 // binary if `install.sh` installed the current one.
+//
+// As the plugin starts, `install.sh --setup` does what's missing of installing
+// it, `space` included. Until that's done, there is nothing to run.
 Item {
   id: root
 
@@ -59,7 +62,8 @@ Item {
   function ended() {
     root.ready = false
     root.failures++
-    if (root.exitCode === null) root.error = "The space command isn't installed: run install.sh in the plugin's folder"
+    if (root.exitCode === null) root.error = setup.running
+      ? "Installing the space command…" : setup.error || "The space command isn't installed: run install.sh in the plugin's folder"
     else if (root.failures > 1 && !root.error) root.error = "space watch exited with " + root.exitCode
     again.interval = Math.min(10000, 250 * Math.pow(2, Math.min(root.failures, 6)))
     again.restart()
@@ -97,6 +101,24 @@ Item {
           ])
         }
       }
+    }
+  }
+
+  Process {
+    id: setup
+    property string error: ""
+    command: [root.installScript, "--setup"]
+    running: true
+    stdout: SplitParser {
+      onRead: function(line) {
+        if (!line.startsWith("Installed space ") || proc.running) return
+        root.failures = 0
+        again.interval = 0
+        again.restart()
+      }
+    }
+    stderr: SplitParser {
+      onRead: function(line) { setup.error = line.replace(/^install\.sh: /, "") }
     }
   }
 

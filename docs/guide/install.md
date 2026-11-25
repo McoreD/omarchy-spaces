@@ -7,10 +7,31 @@ You need Omarchy 4.5 or newer, on x86-64 or ARM64. To install, follow the steps 
 | Part | Where | What it does |
 |---|---|---|
 | The plugin | `~/.config/omarchy/plugins/com.t4t5.spaces` | Draws the sidebar and the tabs |
-| The `space` command | `~/.local/bin/space` | Does the work. `install.sh` downloads the build for the plugin's version from its GitHub release, and checks it against the release's checksum |
+| The `space` command | `~/.local/bin/space` | Does the work. Downloaded as the plugin first starts: the build for the plugin's version from its GitHub release, checked against the release's checksum |
 | The Hyprland part | `~/.config/hypr/omarchy-spaces.lua`, a link into the plugin | Keeps every monitor on the same space, moves you on when you close a tab's last window, and holds the [actions for your keys](keys.md) |
 
-Nothing binds keys for you.
+The plugin runs `install.sh --setup` as it starts, which puts in place what's missing of these. Nothing binds keys for you.
+
+If the download fails, as it does offline, it tries again the next time the shell starts. To try at once:
+
+```sh
+omarchy restart shell
+```
+
+## The bar
+
+A notification asks whether Spaces should replace Omarchy's menu and workspaces on the bar, if you put it in the left section. Until you answer, it asks again each time the shell starts. To change your mind, or to answer without it:
+
+```sh
+~/.config/omarchy/plugins/com.t4t5.spaces/install.sh --bar replace
+```
+
+To put Omarchy's back, beside Spaces or in place of it:
+
+```sh
+omarchy plugin enable omarchy.menu --section left --index 0
+omarchy plugin enable omarchy.workspaces --after omarchy.menu
+```
 
 ## Update
 
@@ -18,11 +39,11 @@ Nothing binds keys for you.
 omarchy plugin update com.t4t5.spaces
 ```
 
-When `space` was installed with `install.sh`, the plugin sees the new version in `manifest.json`, runs `install.sh --update` to download the matching release binary and switches to it. If the plugin's UI changed, it notifies you to run `omarchy restart shell` (otherwise the new UI loads on your next login). Builds installed from source are left alone — update those with `cargo install` below.
+If the plugin installed `space`, it sees the new version in `manifest.json`, runs `install.sh --update` to download the matching release binary and switches to it. If the plugin's UI changed, it notifies you to run `omarchy restart shell` (otherwise the new UI loads on your next login). Builds installed from source are left alone — update those with `cargo install` below.
 
 ## Build from source
 
-With Rust (`sudo pacman -S rust` if `cargo --version` fails), run this in place of `install.sh`, both when you install and when you update:
+With Rust (`sudo pacman -S rust` if `cargo --version` fails), run this once the plugin is added, and again after each update:
 
 ```sh
 cargo install --locked --force --root ~/.local --target-dir ~/.cache/omarchy-spaces --path ~/.config/omarchy/plugins/com.t4t5.spaces

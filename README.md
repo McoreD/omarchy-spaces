@@ -10,23 +10,15 @@ A **space** holds one piece of work. Each space has its own **tabs**, and each t
 
 You need Omarchy 4.5 or newer.
 
-**1. Add the plugin.** When it asks whether to enable it, say no: the next step does that.
+**1. Add the plugin.** Press Enter when it asks where on the bar to put it.
 
 ```sh
-omarchy plugin add https://github.com/t4t5/omarchy-spaces.git
+omarchy plugin add https://github.com/t4t5/omarchy-spaces.git --enable
 ```
 
-**2. Install the `space` command and turn the plugin on.** Spaces replaces Omarchy's menu and workspaces on the bar, so this takes those off. Nothing is lost: the menu still opens with its key, or a right-click on the logo.
+This also downloads the `space` command and links a file into your Hyprland config. A notification then asks whether Spaces should replace Omarchy's menu and workspaces on the bar. Nothing is lost if you say yes: the menu still opens with its key, or a right-click on the logo.
 
-```sh
-~/.config/omarchy/plugins/com.t4t5.spaces/install.sh &&
-omarchy plugin enable com.t4t5.spaces --section left --index 0 &&
-omarchy plugin disable omarchy.menu &&
-omarchy plugin disable omarchy.workspaces &&
-ln -sfn ~/.config/omarchy/plugins/com.t4t5.spaces/hypr/omarchy-spaces.lua ~/.config/hypr/omarchy-spaces.lua
-```
-
-**3. Choose your keys.** Add this at the end of `~/.config/hypr/bindings.lua`. The first line is required; change or drop any of the others. They replace whatever Omarchy has on those keys.
+**2. Choose your keys.** Add this at the end of `~/.config/hypr/bindings.lua`. The first line is required; change or drop any of the others. They replace whatever Omarchy has on those keys.
 
 ```lua
 local spaces = require("hypr.omarchy-spaces")

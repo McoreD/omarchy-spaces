@@ -3195,6 +3195,138 @@ fn install_update_replaces_only_its_own_outdated_binary() {
 }
 
 #[test]
+fn install_setup_asks_before_it_changes_the_bar() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let version = env!("CARGO_PKG_VERSION");
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let installed = home.join(".local/bin/space");
+    let link = home.join(".config/hypr/omarchy-spaces.lua");
+    let answer = home.join(".local/state/omarchy-spaces/bar");
+    let plugin = tmp.path().join("plugin");
+    fs::create_dir_all(plugin.join("hypr")).unwrap();
+    for file in ["install.sh", "manifest.json", "hypr/omarchy-spaces.lua"] {
+        fs::copy(root.join(file), plugin.join(file)).unwrap();
+    }
+
+    // Omarchy's commands, which note what they were asked for.
+    let stubs = tmp.path().join("stubs");
+    let log = tmp.path().join("log");
+    fs::create_dir_all(&stubs).unwrap();
+    let stub = |name: &str, body: &str| {
+        let path = stubs.join(name);
+        fs::write(&path, format!("#!/bin/bash\n{body}\n")).unwrap();
+        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    };
+    let note = format!("echo \"${{0##*/}} $*\" >>'{}'", log.display());
+    stub("omarchy", &note);
+    stub("omarchy-notification-send", &note);
+    stub(
+        "omarchy-shell",
+        &format!("cat '{}/'$2.json", tmp.path().display()),
+    );
+    let shell = |left: &[&str], workspaces: bool, spaces: bool| {
+        let left: Vec<Value> = left.iter().map(|id| json!({ "id": id })).collect();
+        let config = json!({ "bar": { "layout": { "left": left } } });
+        fs::write(tmp.path().join("listShellConfig.json"), config.to_string()).unwrap();
+        let plugins = json!([
+            { "id": "com.t4t5.spaces", "enabled": spaces },
+            { "id": "omarchy.menu", "enabled": false },
+            { "id": "omarchy.workspaces", "enabled": workspaces },
+        ]);
+        fs::write(tmp.path().join("listPlugins.json"), plugins.to_string()).unwrap();
+    };
+    let run = |dir: &Path, args: &[&str]| {
+        fs::write(&log, "").unwrap();
+        let out = Command::new(dir.join("install.sh"))
+            .args(args)
+            .env("HOME", &home)
+            .env_remove("XDG_STATE_HOME")
+            .env("PATH", format!("{}:/usr/bin:/bin", stubs.display()))
+            .env(
+                "SPACES_RELEASES",
+                format!("file://{}", tmp.path().display()),
+            )
+            .output()
+            .unwrap();
+        (out, fs::read_to_string(&log).unwrap())
+    };
+    shell(&["omarchy.workspaces", "com.t4t5.spaces"], true, true);
+
+    // Nothing in a clone someone works in.
+    let clone = tmp.path().join("clone");
+    std::os::unix::fs::symlink(&plugin, &clone).unwrap();
+    let (out, did) = run(&clone, &["--setup"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(did, "");
+    assert!(!home.exists());
+
+    // Offline: the keys have what they load, but the bar isn't brought up.
+    let (out, did) = run(&plugin, &["--setup"]);
+    assert!(!out.status.success());
+    assert!(did.contains("Couldn't install"), "{did}");
+    assert!(!did.contains("--bar"), "{did}");
+    assert_eq!(
+        fs::read_link(&link).unwrap(),
+        plugin.join("hypr/omarchy-spaces.lua")
+    );
+
+    let package = Command::new(root.join("scripts/package.sh"))
+        .arg(env!("CARGO_BIN_EXE_space"))
+        .arg(std::env::consts::ARCH)
+        .arg(tmp.path().join(format!("v{version}")))
+        .output()
+        .unwrap();
+    assert!(package.status.success(), "{package:?}");
+    let (out, did) = run(&plugin, &["--setup"]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("Installed space "));
+    assert!(installed.exists());
+    assert!(did.contains("--bar replace"), "{did}");
+    assert!(!did.contains("omarchy plugin"), "{did}");
+
+    // It asks until there's an answer, and installs only once.
+    let (out, did) = run(&plugin, &["--setup"]);
+    assert!(out.stdout.is_empty(), "{out:?}");
+    assert!(did.contains("--bar replace"), "{did}");
+
+    // Not with the tabs elsewhere on the bar, or nothing to replace.
+    shell(&["omarchy.workspaces"], true, true);
+    assert_eq!(run(&plugin, &["--setup"]).1, "");
+    shell(&["com.t4t5.spaces"], false, true);
+    assert_eq!(run(&plugin, &["--setup"]).1, "");
+
+    // An answer to a plugin that's off by now doesn't turn it on.
+    shell(&["omarchy.workspaces"], true, false);
+    let (out, did) = run(&plugin, &["--bar", "replace"]);
+    assert!(!out.status.success());
+    assert_eq!(did, "");
+    assert!(!answer.exists());
+
+    shell(&["omarchy.workspaces", "com.t4t5.spaces"], true, true);
+    let (out, did) = run(&plugin, &["--bar", "replace"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        did,
+        "omarchy plugin enable com.t4t5.spaces --section left --index 0\n\
+         omarchy plugin disable omarchy.menu\n\
+         omarchy plugin disable omarchy.workspaces\n"
+    );
+    // Putting the workspaces back later doesn't bring the question back.
+    assert_eq!(run(&plugin, &["--setup"]).1, "");
+
+    fs::remove_file(&answer).unwrap();
+    assert_eq!(run(&plugin, &["--bar", "keep"]).1, "");
+    assert_eq!(run(&plugin, &["--setup"]).1, "");
+
+    // A Hyprland file that's the user's own stays.
+    fs::remove_file(&link).unwrap();
+    fs::write(&link, "-- mine\n").unwrap();
+    assert!(run(&plugin, &["--setup"]).0.status.success());
+    assert_eq!(fs::read_to_string(&link).unwrap(), "-- mine\n");
+}
+
+#[test]
 fn the_keys_run_commands_there_are() {
     let lua = include_str!("../hypr/omarchy-spaces.lua");
     let env = Env::new();
