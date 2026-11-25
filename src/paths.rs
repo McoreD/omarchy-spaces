@@ -32,6 +32,11 @@ pub fn state_dir() -> PathBuf {
     xdg("XDG_STATE_HOME", ".local/state").join("omarchy-spaces")
 }
 
+/// Where Omarchy keeps which workspaces are each monitor's (`monitors.rs`).
+pub fn omarchy_monitors() -> PathBuf {
+    xdg("XDG_STATE_HOME", ".local/state").join("omarchy/monitor-workspaces")
+}
+
 /// `$XDG_RUNTIME_DIR/omarchy-spaces/`: per-session files (built-in sounds,
 /// live agent statuses), gone with the session.
 pub fn runtime_dir() -> PathBuf {

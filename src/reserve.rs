@@ -16,7 +16,7 @@ use crate::state;
 /// can, after we stopped waiting.
 const KEPT: Duration = Duration::from_secs(60);
 
-/// Reserves the space and slot that `pick` chooses, given those reserved
+/// Reserves the space and tab that `pick` chooses, given those reserved
 /// already. One process picks at a time. `pick` has to ask Hyprland what's
 /// open itself: what was released after the reserved ones were read is then
 /// among it.
@@ -25,10 +25,10 @@ pub fn reserve(
     pick: impl FnOnce(&[(String, u8)]) -> Result<(String, u8)>,
 ) -> Result<(String, u8)> {
     let _lock = state::lock(dir, ".lock")?;
-    let (space, slot) = pick(&reserved(dir)?)?;
-    let workspace = name::workspace_name(&space, slot);
+    let (space, key) = pick(&reserved(dir)?)?;
+    let workspace = name::workspace_name(&space, key);
     File::create(dir.join(&workspace)).with_context(|| format!("can't reserve {workspace}"))?;
-    Ok((space, slot))
+    Ok((space, key))
 }
 
 /// What is reserved, clearing out what has been for too long.
@@ -37,7 +37,7 @@ fn reserved(dir: &Path) -> Result<Vec<(String, u8)>> {
     for file in fs::read_dir(dir).with_context(|| format!("can't read {}", dir.display()))? {
         let file = file?;
         let workspace = file.file_name().to_string_lossy().into_owned();
-        let Location::Space { name, slot } = name::locate(0, &workspace) else {
+        let Location::Space { name, key } = name::locate(0, &workspace) else {
             continue;
         };
         // One released meanwhile is gone.
@@ -45,7 +45,7 @@ fn reserved(dir: &Path) -> Result<Vec<(String, u8)>> {
             continue;
         };
         if made.elapsed().is_ok_and(|age| age < KEPT) {
-            reserved.push((name, slot));
+            reserved.push((name, key));
         } else {
             release(dir, &workspace);
         }

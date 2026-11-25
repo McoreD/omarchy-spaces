@@ -4,7 +4,9 @@ A set of tabs for each thing you work on, for Hyprland on Omarchy.
 
 A **space** holds one piece of work. Each space has its own **tabs**, and each tab is a Hyprland workspace (`s1:1`, `s1:2`, …) holding whatever windows you tile there. The plain numbered workspaces are the `home` space.
 
-A space is called after the folder its first terminal is in: the repository's folder when it's in one, `~` for home. It follows that terminal as it changes folder. Name a space when you want a name that stays. A space lasts as long as its windows: close the last one, however it goes (`super+w`, `exit`, the app quitting), and the space ends, taking you back to the space you were in before. Closing the last window on one of a space's tabs takes you to its next tab, or the one before.
+With more than one monitor, they all show the same space, and each has tabs of its own in it. Going to another space takes every monitor along, each back to the tab you last used on it, or to an empty one if you haven't used the space there. Moving between monitors only changes whose tabs your keys act on, never the space. Unplug a monitor and its tabs join those of the one that's left, after its own, until it's back.
+
+A space is called after the folder its first terminal is in: the repository's folder when it's in one, `~` for home. It follows that terminal as it changes folder. Name a space when you want a name that stays. A space lasts as long as its windows: close the last one, however it goes (`super+w`, `exit`, the app quitting), and the space ends, taking you back to the space you were in before. Closing the last window on one of a space's tabs takes you to its next tab on that monitor, or the one before; with none there, it stays, empty, as long as the space has windows on another.
 
 The spaces have their own column down the left of the screen, and the active space's tabs sit beside it on Omarchy's bar, in place of its workspaces. Collapsed, the column is a rail of badges, one per space: two letters for its name, as T3 Code marks projects, in a colour from the theme that stays with the name, with the space you're in outlined. Right-click a space to give its badge an icon instead, a Nerd Font glyph or an emoji: Tab to switch between them, or type to search both at once, and the badge shows the icon under the cursor until you pick one. Click the toggle at its top, or press a key you bind to it (`super+b` in [Keys](#keys)), to expand it into the spaces sidebar, with each space's name: your windows and the bar's tabs slide aside to reveal it, and the keyboard stays with your windows. Another key (`super+p`) searches it.
 
@@ -45,7 +47,7 @@ You need Omarchy 4.5 or newer, and Rust: check with `cargo --version`, and if it
 
    The rail of spaces appears down the left of the screen and the tabs on the bar.
 
-4. Link the Hyprland part. It ends a tab when you close its last window, and holds the tab actions for your keys:
+4. Link the Hyprland part. It keeps every monitor on the same space, ends a tab when you close its last window, and holds the tab actions for your keys:
 
    ```sh
    ln -sfn ~/.local/share/omarchy-spaces/hypr/omarchy-spaces.lua ~/.config/hypr/omarchy-spaces.lua
@@ -189,7 +191,7 @@ space close [space]          # close a space's windows, the active one by defaul
 
 # Tabs
 space tab new                # open a tab in the active space, with a terminal in its folder
-space tab go <n>             # go to tab n of the active space
+space tab go <n>             # go to tab n of the active space on this monitor, or to a tab as s1:2
 space tab next / space tab prev  # its next or previous tab, wrapping around
 space tab rename [tab] <name>  # name a tab, the one you are on by default; "" for its window's name
 space tab reorder <tab> <n>  # move a tab to position n among its space's tabs
@@ -198,7 +200,7 @@ space tab send [tab] <space|next|prev>  # a tab, the one you are on by default, 
 
 # Windows
 space window send <space|next|prev> [--silent]  # the window to another space, on the tab you left it on
-space window tab <n> [--silent]  # the window to tab n of the active space
+space window tab <n> [--silent]  # the window to tab n of the active space on this monitor
 
 # The rest
 space ls [--json]            # list spaces with window counts
@@ -209,7 +211,7 @@ space status <working|waiting|done|idle> [--window <addr>] [--pid <pid>]  # repo
 space watch [--sounds]       # print the spaces as ls --json does, a line each time they change; --sounds also rings for agents
 ```
 
-A space can be given by what it's called or by its id (`s1`, as `space ls` shows), and a tab by its space and number (`s1:2`, `work:2`). `space close` asks each app to close, as `super+w` does, so an app can still stop to save.
+A space can be given by what it's called or by its id (`s1`, as `space ls` shows), and a tab by its space and what its workspace is numbered (`s1:2`, `work:2`). Each monitor's are numbered as Omarchy numbers workspaces, 1-10 on the first and 11-20 on the next, each shown as 1-10: the second monitor's tab 2 is `s1:12`. `space tab go 2` goes to tab 2 of the monitor you are on. `space close` asks each app to close, as `super+w` does, so an app can still stop to save.
 
 After you log out or restart, the plugin opens the spaces that were up again by itself (it runs `space restore`), `home` included: their names, icons and tab names, and their terminals, each in its folder and arranged as they were (splits and their sizes, groups, floating and fullscreen windows, monitors). A terminal that was running Claude Code picks its conversation up again (`claude --resume`), unless `resume_agents = false` in the config; with a `terminal` of your own, that takes one that runs `space shell`. Chromium's windows and web apps come back among them with their tabs, unless `restore_browser = false`: the tab you were on comes first, and the tabs load anew, without their history, groups or pins. Incognito windows don't, nor do windows of a browser on another data folder. If Chromium is set to continue where you left off, that's left to it. It then goes back to the space you were in, unless you have started on something else. Other programs in the terminals, what they had printed, and other apps' windows don't come back; the windows beside one take its room. Splits are restored in Hyprland's dwindle layout; in others, windows come back in the order they were opened.
 
@@ -221,7 +223,7 @@ When `herdr-core` (`hc`) is installed and enabled (`herdr_core` unset or `true`)
 
 - `src/` is the `space` CLI, in Rust. It keeps no state about windows: it asks Hyprland over its socket, then dispatches. Terminal folders and foreground programs come from their shells in `/proc`, as Omarchy's `omarchy-cmd-terminal-cwd` does (or from herdr-core over its socket in `core.rs` for terminals running in it). Native agent statuses from `space status` live as per-window files under `$XDG_RUNTIME_DIR/omarchy-spaces/status/` and are pruned automatically as windows close or agents exit.
 - `omarchy/` is the Omarchy shell plugin (QML): the tabs as a bar widget (`TabsWidget.qml`), and the sidebar, which `Base.qml` draws under the windows. Their logic is in `Tabs.qml`, `Sidebar.qml`, `SidebarList.qml` and `Spaces.mjs`. Both read the spaces from one `space watch` that the plugin's service runs (`Watch.qml`) and restarts when it ends, as it does when Hyprland restarts or `space` is reinstalled. It reads Hyprland again when Hyprland's events say something changed, and every two seconds, as nothing says when a window is resized. It follows herdr-core's events for its terminals. A shell outside core changing folder or starting a program sends no event, so it reads the active space's other terminals' shells five times a second, the rest every two seconds, and all of them when a window's title changes, as terminals retitle themselves on `cd` and as a command starts. A terminal's program is the leader of the foreground process group on its shell's tty. What Chromium's windows hold it reads from the session files Chromium keeps open in its profile, matching them to Hyprland's windows by title, or the order they were opened in.
-- `hypr/omarchy-spaces.lua` holds the tab actions for your own keys, the hook that moves on from a tab emptied by closing its last window (`space emptied`), and the blur behind a glassy sidebar and bar.
+- `hypr/omarchy-spaces.lua` holds the tab actions for your own keys, the hook that takes the other monitors along when you go to another space, the hook that moves on from a tab emptied by closing its last window (`space emptied`), and the blur behind a glassy sidebar and bar.
 - `~/.local/state/omarchy-spaces/spaces.json` holds what Hyprland can't about each live space: the name and icon you gave it, the terminal it follows and that terminal's last folder. `~/.config/omarchy-spaces/config.toml` can set `terminal`, the command that opens one (default: Omarchy's, `xdg-terminal-exec`), `herdr_core` (`true`/`false`, default: auto when `hc` is on `PATH`), `picker`, for `space go` with no space named, `resume_agents` and `restore_browser` (`true`/`false`, default: `true`), and `[sounds]`: `done` and `waiting` files, and `enabled`.
 
 ## Development

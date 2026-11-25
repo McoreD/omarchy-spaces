@@ -72,6 +72,9 @@ pub struct Monitor {
     /// Turned a quarter when odd.
     #[serde(default)]
     pub transform: u8,
+    /// The workspace it shows.
+    #[serde(default, rename = "activeWorkspace")]
+    pub shows: Option<WorkspaceRef>,
 }
 
 impl Monitor {
@@ -264,6 +267,26 @@ pub fn move_window(selector: &str, follow: bool) -> String {
         lua_string(selector)
     )
 }
+
+/// Focus a monitor, by its name.
+pub fn focus_monitor(monitor: &str) -> String {
+    format!("hl.dsp.focus({{ monitor = {} }})", lua_string(monitor))
+}
+
+/// Lua that shows a workspace on the monitor it's on, staying where you are,
+/// by the Hyprland part (`hypr/omarchy-spaces.lua`).
+pub fn show_workspace(name: &str) -> String {
+    format!(
+        "local spaces = package.loaded[\"hypr.omarchy-spaces\"]\n\
+         if spaces and spaces.show then spaces.show({}) end",
+        lua_string(name)
+    )
+}
+
+/// Lua that has every monitor follow to the space you are in, if the Hyprland
+/// part is loaded (`hypr/omarchy-spaces.lua`).
+pub const FOLLOW: &str = "local spaces = package.loaded[\"hypr.omarchy-spaces\"]\n\
+     if spaces and spaces.sync then spaces.sync() end";
 
 /// Move a workspace to a monitor, by its name.
 pub fn move_workspace(selector: &str, monitor: &str) -> String {

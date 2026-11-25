@@ -40,11 +40,10 @@ pub struct Entry {
     /// new order.
     #[serde(default)]
     pub created: u64,
-    /// The names you gave its tabs, by slot. A tab without one is called
+    /// The names you gave its tabs, by what their workspaces are numbered, as
+    /// every monitor has its own tab 3 (3 and 13). A tab without one is called
     /// after its most recently focused window. A name lasts as long as its
     /// tab: when Hyprland drops the workspace, the name goes with it.
-    /// `home`'s are by workspace id instead, as every monitor has its own
-    /// slot 3 (workspaces 3 and 13).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tabs: BTreeMap<u8, String>,
 }

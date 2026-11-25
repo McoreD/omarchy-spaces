@@ -59,12 +59,12 @@ pub fn lock(dir: &Path, name: &str) -> Result<File> {
 /// When a space was last left, and on which workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Visit {
-    pub slot: u8,
+    pub key: u8,
     /// Unix milliseconds, for ordering the picker by most recent.
     pub at: u64,
 }
 
-/// `last`: each space's last-focused workspace, one `name<TAB>slot<TAB>time`
+/// `last`: each space's last-focused workspace, one `name<TAB>key<TAB>time`
 /// line per space, so `space go` returns you to where you were.
 #[derive(Debug, Default)]
 pub struct Last {
@@ -78,14 +78,14 @@ impl Last {
         let mut visits = BTreeMap::new();
         for line in read_optional(&path)?.lines() {
             let mut fields = line.split('\t');
-            let (Some(space), Some(slot)) = (fields.next(), fields.next()) else {
+            let (Some(space), Some(key)) = (fields.next(), fields.next()) else {
                 continue;
             };
-            let Some(slot) = name::parse_slot(slot) else {
+            let Some(key) = name::parse_key(key) else {
                 continue;
             };
             let at = fields.next().and_then(|t| t.parse().ok()).unwrap_or(0);
-            visits.insert(space.to_string(), Visit { slot, at });
+            visits.insert(space.to_string(), Visit { key, at });
         }
         Ok(Self { path, visits })
     }
@@ -96,18 +96,18 @@ impl Last {
 
     /// Records a visit as the latest, even if the clock says otherwise, so two
     /// switches within a millisecond still keep their order.
-    pub fn set(&mut self, space: &str, slot: u8) {
+    pub fn set(&mut self, space: &str, key: u8) {
         let latest = self.visits.values().map(|v| v.at).max().unwrap_or(0);
         let at = now().max(latest + 1);
-        self.visits.insert(space.to_string(), Visit { slot, at });
+        self.visits.insert(space.to_string(), Visit { key, at });
     }
 
     /// Follows a space's tabs to their new slots, when they were left.
-    pub fn renumber(&mut self, space: &str, slots: &BTreeMap<u8, u8>) {
+    pub fn renumber(&mut self, space: &str, moves: &BTreeMap<u8, u8>) {
         if let Some(visit) = self.visits.get_mut(space)
-            && let Some(slot) = slots.get(&visit.slot)
+            && let Some(key) = moves.get(&visit.key)
         {
-            visit.slot = *slot;
+            visit.key = *key;
         }
     }
 
@@ -137,7 +137,7 @@ impl Last {
     fn save(&self) -> Result<()> {
         let mut out = String::new();
         for (space, visit) in &self.visits {
-            out.push_str(&format!("{space}\t{}\t{}\n", visit.slot, visit.at));
+            out.push_str(&format!("{space}\t{}\t{}\n", visit.key, visit.at));
         }
         write_atomic(&self.path, &out)
     }
@@ -160,21 +160,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(
             dir.path().join("last"),
-            "ren\t3\t100\nbroken\nhome\t11\t5\ntax\t2\n",
+            "ren\t3\t100\nbroken\nhome\t13\t5\ns9\t251\t5\ntax\t2\n",
         )
         .unwrap();
 
         let mut last = Last::load(dir.path()).unwrap();
-        assert_eq!(last.get("ren"), Some(Visit { slot: 3, at: 100 }));
-        assert_eq!(last.get("home"), None, "slot 11 is out of range");
-        assert_eq!(last.get("tax"), Some(Visit { slot: 2, at: 0 }));
+        assert_eq!(last.get("ren"), Some(Visit { key: 3, at: 100 }));
+        assert_eq!(last.get("home"), Some(Visit { key: 13, at: 5 }));
+        assert_eq!(last.get("s9"), None, "key 251 is out of range");
+        assert_eq!(last.get("tax"), Some(Visit { key: 2, at: 0 }));
 
         last.set("ren", 5);
         last.set("tax", 1);
         last.save().unwrap();
 
         let last = Last::load(dir.path()).unwrap();
-        assert_eq!(last.get("ren").unwrap().slot, 5);
+        assert_eq!(last.get("ren").unwrap().key, 5);
         assert!(last.get("ren").unwrap().at > 100);
         assert!(last.get("tax").unwrap().at > last.get("ren").unwrap().at);
     }
@@ -192,9 +193,9 @@ mod tests {
         assert_eq!(last.latest_except("x", |_| true), Some("c"));
 
         last.renumber("c", &[(3, 1), (1, 2)].into());
-        assert_eq!(last.get("c"), Some(Visit { slot: 1, at: 200 }));
+        assert_eq!(last.get("c"), Some(Visit { key: 1, at: 200 }));
         last.renumber("a", &[(3, 1)].into());
-        assert_eq!(last.get("a").unwrap().slot, 1, "its tab didn't move");
+        assert_eq!(last.get("a").unwrap().key, 1, "its tab didn't move");
     }
 
     #[test]

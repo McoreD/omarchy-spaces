@@ -102,7 +102,8 @@ enum Cmd {
     #[command(hide = true)]
     Emptied { workspace: String },
     /// Open, go to, name, arrange, close and move tabs. A tab is given as
-    /// `<space>:<n>`, by what its space is called or its id.
+    /// `<space>:<n>`, by what its space is called or its id, and what its
+    /// workspace is numbered: 1-10 on the first monitor, 11-20 on the next.
     #[command(subcommand)]
     Tab(TabCmd),
     /// Move the focused window to another space or tab.
@@ -115,10 +116,11 @@ enum TabCmd {
     /// Open a new tab in the active space, with a terminal in its folder; in
     /// `home`, an empty one.
     New,
-    /// Go to tab N of the active space.
+    /// Go to tab N of the active space on this monitor, or a tab given as
+    /// `<space>:<n>`.
     Go {
-        #[arg(value_parser = slot)]
-        n: u8,
+        #[arg(value_name = "N", value_parser = tab)]
+        tab: String,
     },
     /// Go to the active space's next tab, wrapping around.
     Next,
@@ -182,6 +184,14 @@ fn slot(raw: &str) -> Result<u8, String> {
     name::parse_slot(raw).ok_or_else(|| format!("'{raw}' isn't a tab: use 1-{}", name::SLOTS))
 }
 
+/// A slot, or a tab as `<space>:<n>`.
+fn tab(raw: &str) -> Result<String, String> {
+    if !raw.contains(':') {
+        slot(raw)?;
+    }
+    Ok(raw.to_string())
+}
+
 fn space_target(raw: &str) -> Result<commands::SpaceTarget, String> {
     Ok(commands::SpaceTarget::of(raw))
 }
@@ -189,7 +199,10 @@ fn space_target(raw: &str) -> Result<commands::SpaceTarget, String> {
 fn run_tab(command: TabCmd) -> anyhow::Result<()> {
     match command {
         TabCmd::New => commands::go_to_tab(commands::Target::New),
-        TabCmd::Go { n } => commands::go_to_tab(commands::Target::Slot(n)),
+        TabCmd::Go { tab } => match name::parse_slot(&tab) {
+            Some(n) => commands::go_to_tab(commands::Target::Slot(n)),
+            None => commands::go_to_named_tab(tab),
+        },
         TabCmd::Next => commands::go_to_tab(commands::Target::Next),
         TabCmd::Prev => commands::go_to_tab(commands::Target::Prev),
         TabCmd::Rename { first, second } => match second {

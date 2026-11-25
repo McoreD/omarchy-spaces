@@ -15,6 +15,7 @@ use crate::config::{self, Config};
 use crate::core;
 use crate::hypr::{self, Hypr};
 use crate::layout::{self, Rect, Tree};
+use crate::monitors::Blocks;
 use crate::name::{self, HOME, Location};
 use crate::paths;
 use crate::reserve;
@@ -47,100 +48,136 @@ pub fn go_to_tab(target: Target) -> Result<()> {
     if target == Target::New && space != HOME {
         return new_tab(&hypr, &active, &here);
     }
-    let slot = match target {
-        Target::Slot(slot) => slot,
-        _ => {
-            let open = open_slots(&hypr.workspaces()?, &active, &here);
-            match pick_slot(target, &open, here.slot())? {
-                Some(slot) => slot,
+    let block = Blocks::load().of(&active);
+    let key = match target {
+        Target::Slot(slot) => name::key_in(block, slot),
+        Target::New => {
+            let open = open_tabs(&hypr.workspaces()?, &active, &here);
+            name::key_in(block, new_slot(&open, block)?)
+        }
+        Target::Next | Target::Prev => {
+            let open = open_tabs(&hypr.workspaces()?, &active, &here);
+            match step_tab(target == Target::Next, &open, here.key()) {
+                Some(key) => key,
                 None => return Ok(()),
             }
         }
     };
-    if here.slot() == Some(slot) {
+    if here.key() == Some(key) {
         return Ok(());
     }
 
-    focus(&hypr, space, slot)?;
-    remember(space, slot);
+    focus(&hypr, space, key)?;
+    remember(space, key);
     Ok(())
 }
 
-/// A new tab in the active space, reserved until its terminal is up.
+/// `space tab go <space>:<n>`: a tab of any space, on whichever monitor it is.
+pub fn go_to_named_tab(tab: String) -> Result<()> {
+    let hypr = Hypr::from_env()?;
+    let (rows, _) = load_rows(Some(&hypr))?;
+    let active = hypr.active_workspace()?;
+    let here = name::locate(active.id, &active.name);
+    let Tab { id, key, .. } = tab_or_active(&rows, Some(&tab), &active)?;
+    if is_tab(&id, key, active.id, &active.name) {
+        return Ok(());
+    }
+    hypr.dispatch(&hypr::focus_workspace(&session_selector(&id, key)))?;
+    if here.space() != id
+        && let Some(left_at) = here.key()
+    {
+        remember(here.space(), left_at);
+    }
+    remember(&id, key);
+    Ok(())
+}
+
+/// A new tab in the active space, reserved until its terminal is up: the one
+/// you are on, if nothing is open there, as on a monitor the space hasn't been
+/// used on.
 fn new_tab(hypr: &Hypr, active: &hypr::Workspace, here: &Location) -> Result<()> {
     let config = Config::load()?;
     let space = here.space();
     let dir = space_folder(hypr, space)?;
-    let (_, slot) = reserve::reserve(&paths::reserved_dir(), |reserved| {
-        let mut open = open_slots(&hypr.workspaces()?, active, here);
-        let opening = reserved.iter().filter(|(of, _)| of == space);
-        open.extend(opening.map(|(_, slot)| *slot));
-        open.sort_unstable();
-        open.dedup();
-        let slot = pick_slot(Target::New, &open, here.slot())?;
-        Ok((space.to_string(), slot.expect("a new tab has a slot")))
+    let block = Blocks::load().of(active);
+    let (_, key) = reserve::reserve(&paths::reserved_dir(), |reserved| {
+        let workspaces = hypr.workspaces()?;
+        let opening: Vec<u8> = reserved
+            .iter()
+            .filter(|(of, _)| of == space)
+            .map(|(_, key)| *key)
+            .collect();
+        let empty = workspaces
+            .iter()
+            .any(|ws| ws.name == active.name && ws.windows == 0);
+        if let Some(key) = here.key()
+            && empty
+            && !opening.contains(&key)
+        {
+            return Ok((space.to_string(), key));
+        }
+        let mut open = open_tabs(&workspaces, active, here);
+        open.extend(opening);
+        let slot = new_slot(&open, block)?;
+        Ok((space.to_string(), name::key_in(block, slot)))
     })?;
-    let workspace = name::workspace_name(space, slot);
-    open_terminal_then(hypr, &config, &dir, &workspace, || focus(hypr, space, slot))?;
-    remember(space, slot);
+    let workspace = name::workspace_name(space, key);
+    open_terminal_then(hypr, &config, &dir, &workspace, || focus(hypr, space, key))?;
+    remember(space, key);
     Ok(())
 }
 
-/// The slots of the active space that have a workspace now, in order, the
-/// focused one included. In `home`, those of the focused monitor's block of
-/// ten, as Omarchy numbers them.
-fn open_slots(
+/// The active space's tabs that have a workspace on the focused monitor now,
+/// the focused one included.
+fn open_tabs(
     workspaces: &[hypr::Workspace],
     active: &hypr::Workspace,
     here: &Location,
-) -> Vec<u8> {
-    let block = |id: i64| (id - 1).div_euclid(i64::from(name::SLOTS));
-    let mut open: BTreeSet<u8> = workspaces
-        .iter()
-        .filter_map(|ws| {
-            let location = name::locate(ws.id, &ws.name);
-            let same_space = match (&location, here) {
-                (Location::Space { name: a, .. }, Location::Space { name: b, .. }) => a == b,
-                (Location::Home { .. }, Location::Home { .. }) => {
-                    ws.id > 0 && block(ws.id) == block(active.id.max(1))
-                }
-                _ => false,
-            };
-            if same_space { location.slot() } else { None }
-        })
+) -> BTreeSet<u8> {
+    let mut open: BTreeSet<u8> = tabs_on(workspaces, here.space(), &active.monitor)
+        .filter_map(|ws| name::locate(ws.id, &ws.name).key())
         .collect();
-    open.extend(here.slot());
-    open.into_iter().collect()
+    open.extend(here.key());
+    open
 }
 
-/// The slot `new`, `next` or `prev` leads to from `current`, given the open
-/// ones; `None` when there's nowhere else to go.
-fn pick_slot(target: Target, open: &[u8], current: Option<u8>) -> Result<Option<u8>> {
-    let position = current.and_then(|c| open.iter().position(|&s| s == c));
-    Ok(match target {
-        Target::Slot(slot) => Some(slot),
-        Target::New => {
-            let after_last = open.last().map_or(1, |&last| last + 1);
-            let slot = if after_last <= name::SLOTS {
-                Some(after_last)
-            } else {
-                (1..=name::SLOTS).find(|s| !open.contains(s))
-            };
-            match slot {
-                Some(slot) => Some(slot),
-                None => bail!("all {} tabs are open; close one first", name::SLOTS),
-            }
-        }
-        Target::Next | Target::Prev if open.len() < 2 && position.is_some() => None,
-        Target::Next => match position {
-            Some(i) => Some(open[(i + 1) % open.len()]),
-            None => open.first().copied(),
-        },
-        Target::Prev => match position {
-            Some(i) => Some(open[(i + open.len() - 1) % open.len()]),
-            None => open.last().copied(),
-        },
-    })
+/// A space's workspaces on a monitor.
+fn tabs_on<'a>(
+    workspaces: &'a [hypr::Workspace],
+    space: &'a str,
+    monitor: &'a str,
+) -> impl Iterator<Item = &'a hypr::Workspace> {
+    workspaces
+        .iter()
+        .filter(move |ws| ws.monitor == monitor && name::locate(ws.id, &ws.name).space() == space)
+}
+
+/// The slot for a new tab of a monitor's, given the space's open ones: after
+/// its last, else its first free one.
+fn new_slot(open: &BTreeSet<u8>, block: u8) -> Result<u8> {
+    let open: BTreeSet<u8> = open
+        .iter()
+        .filter(|key| name::block_of(**key) == block)
+        .map(|key| name::slot_of(*key))
+        .collect();
+    let after_last = open.last().map_or(1, |last| last + 1);
+    if after_last <= name::SLOTS {
+        return Ok(after_last);
+    }
+    (1..=name::SLOTS)
+        .find(|slot| !open.contains(slot))
+        .with_context(|| format!("all {} tabs are open; close one first", name::SLOTS))
+}
+
+/// The tab after or before `current` among the open ones; `None` when there's
+/// nowhere else to go.
+fn step_tab(forward: bool, open: &BTreeSet<u8>, current: Option<u8>) -> Option<u8> {
+    let open: Vec<u8> = open.iter().copied().collect();
+    let Some(i) = current.and_then(|c| open.iter().position(|&key| key == c)) else {
+        return if forward { open.first() } else { open.last() }.copied();
+    };
+    let step = if forward { 1 } else { open.len() - 1 };
+    (open.len() > 1).then(|| open[(i + step) % open.len()])
 }
 
 /// `space window tab <n>`: the focused window to tab `n` of the active space,
@@ -149,13 +186,14 @@ pub fn window_to_tab(slot: u8, silent: bool) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
-    if here.slot() == Some(slot) || !hypr.has_active_window()? {
+    let key = name::key_in(Blocks::load().of(&active), slot);
+    if here.key() == Some(key) || !hypr.has_active_window()? {
         return Ok(());
     }
 
     match &here {
         Location::Space { name, .. } => {
-            hypr.dispatch(&hypr::move_window(&selector(name, slot), !silent))?
+            hypr.dispatch(&hypr::move_window(&selector(name, key), !silent))?
         }
         Location::Home { .. } => {
             let omarchy = if silent {
@@ -168,7 +206,7 @@ pub fn window_to_tab(slot: u8, silent: bool) -> Result<()> {
         }
     }
     if !silent {
-        remember(here.space(), slot);
+        remember(here.space(), key);
     }
     Ok(())
 }
@@ -180,7 +218,8 @@ pub fn window_to_tab(slot: u8, silent: bool) -> Result<()> {
 #[derive(Debug, Clone)]
 pub(crate) struct Terminal {
     address: String,
-    slot: u8,
+    /// The tab it's on; 0 for a `home` workspace that has no number.
+    tab: u8,
     pid: u32,
     shell: terminal::Shell,
 }
@@ -192,9 +231,7 @@ pub(crate) struct SpaceWindow {
     pub address: String,
     pub pid: u32,
     pub space: String,
-    /// The tab it's on; 0 for a `home` workspace that has no number.
-    pub slot: u8,
-    /// The tab as a session has it: a slot, or in `home`, a workspace's id.
+    /// The tab it's on, by its key.
     tab: Option<u8>,
     rect: Rect,
     floating: bool,
@@ -219,29 +256,20 @@ struct TabPlace {
 pub(crate) struct Snapshot {
     pub active: Option<String>,
     windows: BTreeMap<String, u32>,
+    /// Each space's tabs, by their keys.
     workspaces: BTreeMap<String, BTreeSet<u8>>,
-    /// `home`'s workspaces by id, as its slots repeat on every monitor.
-    home: BTreeSet<i64>,
     /// The windows on spaces' workspaces, `home`'s included.
     pub space_windows: Vec<SpaceWindow>,
     /// Every window, spaces' or not, for the browser's to be told apart.
     pub browser_windows: Vec<browser::Window>,
-    /// The tab you're on, as a session has it.
+    /// The tab you're on.
     active_tab: Option<u8>,
-    /// Where the tabs are, by space and tab as a session has it.
+    /// Where the tabs are, by space and key.
     places: BTreeMap<(String, u8), TabPlace>,
     /// How far a window keeps from its tile's edge.
     border: i32,
     /// What grouped windows give up at the top for the group's bar.
     group_bar: i32,
-}
-
-/// The tab a workspace is, as a session has it.
-fn session_tab(id: i64, location: &Location) -> Option<u8> {
-    match location {
-        Location::Space { slot, .. } => Some(*slot),
-        Location::Home { .. } => u8::try_from(id).ok().filter(|id| *id > 0),
-    }
 }
 
 /// The snapshot, which of its windows are terminals and where, and what
@@ -251,8 +279,6 @@ pub(crate) struct Live {
     active: Option<String>,
     windows: BTreeMap<String, u32>,
     workspaces: BTreeMap<String, BTreeSet<u8>>,
-    /// `home`'s workspaces by id.
-    home: BTreeSet<i64>,
     terminals: BTreeMap<String, Vec<Terminal>>,
     /// Windows that reported a native status via `space status` without being
     /// recognized as a terminal in `/proc`.
@@ -328,7 +354,7 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
     snapshot.active = Some(here.space().to_string());
-    snapshot.active_tab = session_tab(active.id, &here);
+    snapshot.active_tab = here.key();
     snapshot.border = hypr.option("general:border_size").unwrap_or(0);
     let monitors = hypr.monitors().unwrap_or_default();
     for ws in hypr.workspaces()? {
@@ -341,13 +367,8 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
             .workspaces
             .entry(location.space().to_string())
             .or_default();
-        if let Some(slot) = location.slot() {
-            entry.insert(slot);
-        }
-        if location.space() == HOME && ws.id > 0 {
-            snapshot.home.insert(ws.id);
-        }
-        if let Some(tab) = session_tab(ws.id, &location) {
+        if let Some(tab) = location.key() {
+            entry.insert(tab);
             let monitor = monitors.iter().find(|m| m.name == ws.monitor);
             snapshot.places.insert(
                 (location.space().to_string(), tab),
@@ -387,8 +408,7 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
                 address: client.address,
                 pid,
                 space: location.space().to_string(),
-                slot: location.slot().unwrap_or(0),
-                tab: session_tab(client.workspace.id, &location),
+                tab: location.key(),
                 rect: Rect {
                     x: client.at.0,
                     y: client.at.1,
@@ -447,7 +467,7 @@ pub(crate) fn live_from(
                 .or_default()
                 .push(Terminal {
                     address: window.address.clone(),
-                    slot: window.slot,
+                    tab: window.tab.unwrap_or(0),
                     pid: window.pid,
                     shell,
                 });
@@ -460,13 +480,12 @@ pub(crate) fn live_from(
     }
     // Oldest first, as far as Hyprland lets us tell: by tab, then process.
     for list in terminals.values_mut() {
-        list.sort_by_key(|t| (t.slot, t.pid));
+        list.sort_by_key(|t| (t.tab, t.pid));
     }
     Live {
         active: snapshot.active.clone(),
         windows: snapshot.windows.clone(),
         workspaces: snapshot.workspaces.clone(),
-        home: snapshot.home.clone(),
         terminals,
         extra_agents,
         addresses,
@@ -504,7 +523,8 @@ pub struct Row {
     pub active: bool,
     /// `None` when Hyprland can't be reached.
     pub windows: Option<u32>,
-    /// The space's workspaces that exist right now.
+    /// What the space's workspaces that exist right now are numbered: 1-10 on
+    /// the first monitor, 11-20 on the next.
     pub workspaces: Option<Vec<u8>>,
     /// The workspace `space go` returns to.
     pub last: u8,
@@ -516,7 +536,7 @@ pub struct Row {
     /// What most needs you among the agents in its windows, if any is
     /// working, done or waiting.
     pub status: Option<Status>,
-    /// The names you gave its tabs, by slot.
+    /// The names you gave its tabs, by what their workspaces are numbered.
     pub tabs: BTreeMap<u8, String>,
 }
 
@@ -525,6 +545,7 @@ pub struct Row {
 pub struct TerminalRow {
     /// Hyprland's address for the window: `0x55a4...`.
     pub address: String,
+    /// What its workspace is numbered.
     pub slot: u8,
     /// The folder its shell is in.
     pub folder: PathBuf,
@@ -540,7 +561,7 @@ impl TerminalRow {
     fn new(t: &Terminal, live: &Live) -> Self {
         Self {
             address: t.address.clone(),
-            slot: t.slot,
+            slot: t.tab,
             folder: t.shell.cwd.clone(),
             program: t.shell.program.clone(),
             label: t.shell.label(),
@@ -595,11 +616,12 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
                 // A tab's name goes with its tab.
                 entry
                     .tabs
-                    .retain(|slot, _| open.is_some_and(|open| open.contains(slot)));
+                    .retain(|tab, _| open.is_some_and(|open| open.contains(tab)));
             }
             if let Some(home) = store.spaces.get_mut(HOME) {
+                let open = live.workspaces.get(HOME);
                 home.tabs
-                    .retain(|id, _| live.home.contains(&i64::from(*id)));
+                    .retain(|tab, _| open.is_some_and(|open| open.contains(tab)));
             }
             let mut ids: Vec<String> = spaces.into_iter().collect();
             ids.sort_by_key(|id| (store.get(id).map_or(0, |e| e.created), id.clone()));
@@ -638,7 +660,7 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
                     .map(|slots| slots.iter().copied().collect())
                     .unwrap_or_default()
             }),
-            last: visit.map(|v| v.slot).unwrap_or(1),
+            last: visit.map(|v| v.key).unwrap_or(1),
             left_at: visit.map(|v| v.at).unwrap_or(0),
             terminals: live
                 .and_then(|l| Some((l, l.terminals.get(id)?)))
@@ -774,15 +796,15 @@ fn space_folder(hypr: &Hypr, space: &str) -> Result<PathBuf> {
     }
 }
 
-/// An id for a new space whose first terminal opens on tab `slot`, reserved
+/// An id for a new space whose first terminal opens on tab `key`, reserved
 /// until that terminal is up.
-fn fresh_space(hypr: &Hypr, slot: u8) -> Result<String> {
+fn fresh_space(hypr: &Hypr, key: u8) -> Result<String> {
     let (id, _) = reserve::reserve(&paths::reserved_dir(), |reserved| {
         let mut taken = snapshot(hypr)?.spaces();
         let mut store = Store::load(&paths::state_dir())?;
         store.prune(&taken);
         taken.extend(reserved.iter().map(|(space, _)| space.clone()));
-        Ok((store.fresh_id(&taken), slot))
+        Ok((store.fresh_id(&taken), key))
     })?;
     // A space by this id before may have left a visit behind.
     forget(&id);
@@ -809,8 +831,10 @@ pub fn new(dir: Option<PathBuf>) -> Result<()> {
         None => here_folder(&hypr)?,
     };
 
-    let id = fresh_space(&hypr, 1)?;
-    let workspace = name::workspace_name(&id, 1);
+    // On the monitor you are on.
+    let first = name::key_in(Blocks::load().of(&hypr.active_workspace()?), 1);
+    let id = fresh_space(&hypr, first)?;
+    let workspace = name::workspace_name(&id, first);
     open_terminal_then(&hypr, &config, &dir, &workspace, || switch(&hypr, &id))?;
 
     // The watcher may have seen the space by now, and made its entry.
@@ -1129,6 +1153,14 @@ fn go_back(
         return Ok(false);
     }
     if still_at(hypr, start, opened)? {
+        // A tab that isn't there yet is made on the monitor you are on.
+        let blocks = Blocks::load();
+        let key = name::locate(back.parse().unwrap_or(0), name).key();
+        if let Some(monitor) = key.and_then(|key| blocks.monitor(key))
+            && monitor != start.monitor
+        {
+            hypr.dispatch(&hypr::focus_monitor(monitor))?;
+        }
         hypr.dispatch(&hypr::focus_workspace(back))?;
     }
     Ok(true)
@@ -1416,11 +1448,13 @@ fn arrange(
     let Some(mut workspace) = find()? else {
         return Ok(());
     };
-    // `home`'s are where Omarchy has them.
-    if let Some(monitor) = &was.monitor
+    // On the monitor whose tab it is, whichever its connector is now. `home`'s
+    // are where Omarchy has them.
+    let blocks = Blocks::load();
+    if let Some(monitor) = blocks.monitor(slot).or(was.monitor.as_deref())
         && !saved.home
-        && workspace.monitor != *monitor
-        && monitors.iter().any(|m| m.name == *monitor)
+        && workspace.monitor != monitor
+        && monitors.iter().any(|m| m.name == monitor)
     {
         hypr.dispatch(&hypr::move_workspace(&session_selector(id, slot), monitor))?;
         workspace = find()?.unwrap_or(workspace);
@@ -1674,31 +1708,48 @@ fn switch(hypr: &Hypr, target: &str) -> Result<()> {
     }
 
     let last = Last::load(&paths::state_dir())?;
-    let slot = landing_slot(hypr, &last, target)?;
-    focus(hypr, target, slot)?;
+    let key = landing_tab(hypr, &last, &active, target)?;
+    focus(hypr, target, key)?;
 
-    if let Some(left_at) = here.slot() {
+    if let Some(left_at) = here.key() {
         remember(here.space(), left_at);
     }
     Ok(())
 }
 
-/// The tab you land on going to a space: where you left it, or, never
-/// visited (an older version's, or made by hand), its first tab.
-fn landing_slot(hypr: &Hypr, last: &Last, target: &str) -> Result<u8> {
-    Ok(match last.get(target) {
-        Some(visit) => visit.slot,
-        None if target == HOME => 1,
-        None => hypr
-            .workspaces()?
+/// The tab you land on going to a space, on the monitor you are on: where you
+/// left it, if that was there, else the one with the window you last used
+/// there, else its first tab there. The other monitors follow
+/// (`hypr/omarchy-spaces.lua`).
+fn landing_tab(hypr: &Hypr, last: &Last, active: &hypr::Workspace, target: &str) -> Result<u8> {
+    let block = Blocks::load().of(active);
+    if let Some(visit) = last.get(target)
+        && name::block_of(visit.key) == block
+    {
+        return Ok(visit.key);
+    }
+    if target != HOME || last.get(target).is_some() {
+        let workspaces = hypr.workspaces()?;
+        let tabs: Vec<(u8, &str)> = tabs_on(&workspaces, target, &active.monitor)
+            .filter_map(|ws| Some((name::locate(ws.id, &ws.name).key()?, ws.name.as_str())))
+            .collect();
+        let clients = if tabs.len() > 1 {
+            hypr.clients()?
+        } else {
+            Vec::new()
+        };
+        let used = |name: &str| {
+            let there = clients.iter().filter(|c| c.workspace.name == name);
+            there.map(|c| c.focus).filter(|focus| *focus >= 0).min()
+        };
+        let landing = tabs
             .iter()
-            .filter_map(|ws| match name::locate(ws.id, &ws.name) {
-                Location::Space { name, slot } if name == target => Some(slot),
-                _ => None,
-            })
-            .min()
-            .unwrap_or(1),
-    })
+            .min_by_key(|(key, name)| (used(name).unwrap_or(i64::MAX), *key));
+        if let Some((key, _)) = landing {
+            return Ok(*key);
+        }
+    }
+    Ok(name::key_in(block, 1))
 }
 
 /// Which space `space window send` and `space tab send` send to.
@@ -1745,17 +1796,18 @@ pub fn send_window(target: SpaceTarget, silent: bool) -> Result<()> {
     }
 
     let last = Last::load(&paths::state_dir())?;
-    let slot = landing_slot(&hypr, &last, &id)?;
+    let key = landing_tab(&hypr, &last, &active, &id)?;
     if id == HOME {
+        let slot = name::slot_of(key);
         let omarchy = if silent {
             format!("o.workspaces.move_window({slot}, false)")
         } else {
             format!("o.workspaces.move_window({slot})")
         };
         hypr.dispatch(&omarchy)
-            .or_else(|_| hypr.dispatch(&hypr::move_window(&slot.to_string(), !silent)))?;
+            .or_else(|_| hypr.dispatch(&hypr::move_window(&key.to_string(), !silent)))?;
     } else {
-        hypr.dispatch(&hypr::move_window(&selector(&id, slot), !silent))?;
+        hypr.dispatch(&hypr::move_window(&selector(&id, key), !silent))?;
     }
 
     if silent {
@@ -1763,7 +1815,7 @@ pub fn send_window(target: SpaceTarget, silent: bool) -> Result<()> {
     }
     // Where you left the space, unless that was its last window and it's
     // gone.
-    if let Some(left_at) = here.slot() {
+    if let Some(left_at) = here.key() {
         let left = here.space();
         let still_there = left == HOME
             || hypr.workspaces()?.iter().any(|ws| {
@@ -1878,19 +1930,15 @@ pub fn reorder_tab(tab: String, position: usize) -> Result<()> {
         bail!("positions start at 1, the space's first tab");
     }
     let active = hypr.active_workspace()?;
-    let Tab { id, key, slot } = tab_or_active(&hypr, &rows, Some(&tab), &active)?;
-    // The tabs there are, as the bar shows them: in `home`, its monitor's.
-    let tabs: Vec<u8> = hypr
-        .workspaces()?
+    let Tab { id, key, slot } = tab_or_active(&rows, Some(&tab), &active)?;
+    // The tabs there are, as the bar shows them: its monitor's.
+    let workspaces = hypr.workspaces()?;
+    let monitor = workspaces
         .iter()
-        .filter_map(|ws| match name::locate(ws.id, &ws.name) {
-            Location::Space { name, slot } => (name == id).then_some(slot),
-            Location::Home { .. } => {
-                (id == HOME && ws.id > 0 && block(ws.id) == block(i64::from(key)))
-                    .then(|| u8::try_from(ws.id).ok())
-                    .flatten()
-            }
-        })
+        .find(|ws| is_tab(&id, key, ws.id, &ws.name))
+        .map_or(active.monitor.as_str(), |ws| ws.monitor.as_str());
+    let tabs: Vec<u8> = tabs_on(&workspaces, &id, monitor)
+        .filter_map(|ws| name::locate(ws.id, &ws.name).key())
         .collect::<BTreeSet<u8>>()
         .into_iter()
         .collect();
@@ -1921,15 +1969,10 @@ pub fn reorder_tab(tab: String, position: usize) -> Result<()> {
     drop(store);
 
     // Where you left the space is still the tab you left.
-    let slot_of = |key: u8| (key - 1) % name::SLOTS + 1;
-    let slots: BTreeMap<u8, u8> = moves
-        .iter()
-        .map(|(from, to)| (slot_of(*from), slot_of(*to)))
-        .collect();
-    if let Err(e) = Last::update(&paths::state_dir(), |last| last.renumber(&id, &slots)) {
+    if let Err(e) = Last::update(&paths::state_dir(), |last| last.renumber(&id, &moves)) {
         eprintln!("space: warning: {e:#}");
     }
-    println!("Moved tab {slot} to {}", slot_of(to));
+    println!("Moved tab {slot} to {}", name::slot_of(to));
     Ok(())
 }
 
@@ -2039,31 +2082,35 @@ fn restamp(store: &mut Store, order: &[String]) {
     }
 }
 
-/// A space's tab, as `find_tab` finds it, and the number it shows.
+/// A space's tab, and the number it shows.
 struct Tab {
     id: String,
     key: u8,
     slot: u8,
 }
 
-/// The tab given as `<space>:<n>` (`s1:2`, `ren:2`), or with none, the one
-/// you are on.
-fn tab_or_active(
-    hypr: &Hypr,
-    rows: &[Row],
-    tab: Option<&str>,
-    active: &hypr::Workspace,
-) -> Result<Tab> {
+/// The tab given as `<space>:<n>` (`s1:2`, `ren:2`), `n` being its key, or
+/// with none, the one you are on.
+fn tab_or_active(rows: &[Row], tab: Option<&str>, active: &hypr::Workspace) -> Result<Tab> {
     let here = name::locate(active.id, &active.name);
-    let (space, slot) = match tab {
+    let (space, key) = match tab {
         Some(tab) => tab
             .rsplit_once(':')
-            .and_then(|(space, slot)| Some((space, name::parse_slot(slot)?)))
+            .and_then(|(space, key)| Some((space, name::parse_key(key)?)))
             .with_context(|| format!("'{tab}' isn't a tab: give it as s1:2"))?,
-        None => (here.space(), here.slot().context("you aren't on a tab")?),
+        None => (here.space(), here.key().context("you aren't on a tab")?),
     };
-    let (id, key) = find_tab(hypr, rows, space, slot)?;
-    Ok(Tab { id, key, slot })
+    let id = resolve(rows, space)?;
+    let row = rows.iter().find(|r| r.id == id).expect("resolved");
+    let open = row.workspaces.as_deref().unwrap_or_default();
+    if !open.contains(&key) {
+        bail!("'{}' has no tab {key}", row.label);
+    }
+    Ok(Tab {
+        id,
+        key,
+        slot: name::slot_of(key),
+    })
 }
 
 /// `space tab rename [<space>:<n>] <name>`: gives a tab, the one you are on
@@ -2073,7 +2120,7 @@ pub fn rename_tab(tab: Option<String>, new_name: String) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (mut store, rows, _) = lock_rows(Some(&hypr))?;
     let active = hypr.active_workspace()?;
-    let Tab { id, key, slot } = tab_or_active(&hypr, &rows, tab.as_deref(), &active)?;
+    let Tab { id, key, slot } = tab_or_active(&rows, tab.as_deref(), &active)?;
     let new_name = spaces::clean_name(&new_name)?;
 
     let tabs = &mut store.entry(&id).tabs;
@@ -2088,54 +2135,6 @@ pub fn rename_tab(tab: Option<String>, new_name: String) -> Result<()> {
         (None, true) => println!("Tab {slot} shows just its number again"),
     }
     Ok(())
-}
-
-/// The id of the space a tab is in, and what the tab goes by there: its slot,
-/// or in `home`, its workspace's id, as each monitor has its own tab n.
-fn find_tab(hypr: &Hypr, rows: &[Row], space: &str, slot: u8) -> Result<(String, u8)> {
-    let id = resolve(rows, space)?;
-    if id == HOME {
-        return Ok((id, home_workspace(hypr, slot)?));
-    }
-    let row = rows.iter().find(|r| r.id == id).expect("resolved");
-    let open = row.workspaces.as_deref().unwrap_or_default();
-    if !open.contains(&slot) {
-        bail!("'{}' has no tab {slot}", row.label);
-    }
-    Ok((id, slot))
-}
-
-/// The id of `home`'s tab `slot`: on the focused monitor when you are in
-/// `home`, as the bar shows it, else the only open one with that number.
-fn home_workspace(hypr: &Hypr, slot: u8) -> Result<u8> {
-    let in_block =
-        |id: i64, of: i64| (id - 1) / i64::from(name::SLOTS) == (of - 1) / i64::from(name::SLOTS);
-    let active = hypr.active_workspace()?;
-    let here =
-        matches!(name::locate(active.id, &active.name), Location::Home { .. }) && active.id > 0;
-    let open: Vec<i64> = hypr
-        .workspaces()?
-        .into_iter()
-        .filter(|ws| {
-            ws.id > 0 && name::locate(ws.id, &ws.name) == (Location::Home { slot: Some(slot) })
-        })
-        .map(|ws| ws.id)
-        .collect();
-    let found = if here {
-        open.iter().copied().find(|id| in_block(*id, active.id))
-    } else {
-        match open.as_slice() {
-            [only] => Some(*only),
-            [] => None,
-            _ => bail!(
-                "'home' has a tab {slot} on more than one monitor; go to the one you mean first"
-            ),
-        }
-    };
-    let Some(found) = found else {
-        bail!("'home' has no tab {slot}");
-    };
-    u8::try_from(found).with_context(|| format!("workspace {found} isn't one of Omarchy's"))
 }
 
 /// `space close [space]`: closes every window of a space, the active one by
@@ -2197,7 +2196,7 @@ pub fn close_tab(tab: Option<String>) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (rows, _) = load_rows(Some(&hypr))?;
     let active = hypr.active_workspace()?;
-    let Tab { id, key, slot } = tab_or_active(&hypr, &rows, tab.as_deref(), &active)?;
+    let Tab { id, key, slot } = tab_or_active(&rows, tab.as_deref(), &active)?;
     let on_tab = |ws_id, ws_name: &str| is_tab(&id, key, ws_id, ws_name);
     let windows: Vec<String> = hypr
         .clients()?
@@ -2207,7 +2206,7 @@ pub fn close_tab(tab: Option<String>) -> Result<()> {
         .collect();
 
     if on_tab(active.id, &active.name) {
-        leave_tab(&hypr, &id, slot, active.id)?;
+        leave_tab(&hypr, &id, key, &active, true)?;
     }
     for address in &windows {
         hypr.dispatch(&hypr::close_window(address))?;
@@ -2220,36 +2219,22 @@ pub fn close_tab(tab: Option<String>) -> Result<()> {
     Ok(())
 }
 
-/// Whether a workspace is a space's tab, by what `find_tab` says it goes by.
+/// Whether a workspace is a space's tab.
 fn is_tab(space: &str, key: u8, ws_id: i64, ws_name: &str) -> bool {
-    match name::locate(ws_id, ws_name) {
-        Location::Space { name, slot } => name == space && slot == key,
-        Location::Home { .. } => space == HOME && ws_id == i64::from(key),
-    }
+    let location = name::locate(ws_id, ws_name);
+    location.space() == space && location.key() == Some(key)
 }
 
-/// Which monitor's block of ten one of `home`'s workspaces is in.
-fn block(id: i64) -> i64 {
-    (id - 1).div_euclid(i64::from(name::SLOTS))
-}
-
-/// The tab to go to from a space's tab that is ending, on the workspace
-/// `from`: its next tab with windows, else the one before.
-fn tab_beside(hypr: &Hypr, id: &str, slot: u8, from: i64) -> Result<Option<u8>> {
-    let tabs: BTreeSet<u8> = hypr
-        .workspaces()?
-        .iter()
+/// The tab to go to from a space's tab that is ending, on `monitor`: its next
+/// tab with windows there, else the one before.
+fn tab_beside(workspaces: &[hypr::Workspace], id: &str, key: u8, monitor: &str) -> Option<u8> {
+    let tabs: BTreeSet<u8> = tabs_on(workspaces, id, monitor)
         .filter(|ws| ws.windows > 0)
-        .filter_map(|ws| match name::locate(ws.id, &ws.name) {
-            Location::Space { name, slot } if name == id => Some(slot),
-            // The monitor's own, as the bar shows them.
-            Location::Home { slot } if id == HOME && block(ws.id) == block(from) => slot,
-            _ => None,
-        })
+        .filter_map(|ws| name::locate(ws.id, &ws.name).key())
         .collect();
-    let after = tabs.range(slot + 1..).next();
-    let before = tabs.range(..slot).next_back();
-    Ok(after.or(before).copied())
+    let after = tabs.range(key + 1..).next();
+    let before = tabs.range(..key).next_back();
+    after.or(before).copied()
 }
 
 /// `space tab send [<space>:<n>] <space|next|prev>`: moves a tab, the one you
@@ -2261,7 +2246,7 @@ pub fn send_tab(tab: Option<String>, to: SpaceTarget) -> Result<()> {
     let (rows, _) = load_rows(Some(&hypr))?;
     let active = hypr.active_workspace()?;
     let here = name::locate(active.id, &active.name);
-    let Tab { id, key, slot } = tab_or_active(&hypr, &rows, tab.as_deref(), &active)?;
+    let Tab { id, key, slot } = tab_or_active(&rows, tab.as_deref(), &active)?;
     let to = match to {
         SpaceTarget::Named(target) => resolve(&rows, &target)?,
         SpaceTarget::Next | SpaceTarget::Prev => match neighbour(&rows, to == SpaceTarget::Next) {
@@ -2282,35 +2267,40 @@ pub fn send_tab(tab: Option<String>, to: SpaceTarget) -> Result<()> {
         bail!("nothing is open on tab {slot}");
     }
     let workspaces = hypr.workspaces()?;
-    let from_id = workspaces
+    // It stays on the monitor it's on.
+    let from = workspaces
         .iter()
         .find(|ws| is_tab(&id, key, ws.id, &ws.name))
-        .map_or(active.id, |ws| ws.id);
+        .unwrap_or(&active);
+    let block = Blocks::load().of(from);
     let was_here = is_tab(&id, key, active.id, &active.name);
-    let beside = tab_beside(&hypr, &id, slot, from_id)?;
+    let beside = tab_beside(&workspaces, &id, key, &from.monitor);
+    // Whether the space has anything else, on any monitor.
+    let lives_on = snapshot
+        .space_windows
+        .iter()
+        .any(|w| w.space == id && w.tab != Some(key));
 
     let label = rows.iter().find(|r| r.id == to).map_or("", |r| &r.label);
     let (to_key, reserved) = if to == HOME {
-        (home_slot(&hypr, &workspaces, &active)?, None)
+        (key_after(&open_in(&workspaces, HOME), block, HOME)?, None)
     } else {
-        let (_, slot) = reserve::reserve(&paths::reserved_dir(), |reserved| {
-            let mut open: BTreeSet<u8> = hypr
-                .workspaces()?
-                .iter()
-                .filter_map(|ws| match name::locate(ws.id, &ws.name) {
-                    Location::Space { name, slot } if name == to => Some(slot),
-                    _ => None,
-                })
-                .collect();
+        let (_, key) = reserve::reserve(&paths::reserved_dir(), |reserved| {
+            let mut open = open_in(&hypr.workspaces()?, &to);
             let opening = reserved.iter().filter(|(of, _)| *of == to);
-            open.extend(opening.map(|(_, slot)| *slot));
-            Ok((to.clone(), slot_after(&open, label)?))
+            open.extend(opening.map(|(_, key)| *key));
+            Ok((to.clone(), key_after(&open, block, label)?))
         })?;
-        (slot, Some(name::workspace_name(&to, slot)))
+        (key, Some(name::workspace_name(&to, key)))
     };
+    if from.monitor != active.monitor {
+        hypr.dispatch(&hypr::focus_monitor(&from.monitor))?;
+    }
     let moved = move_tab(&hypr, &snapshot, (&id, key), (&to, to_key), &windows);
-    let went =
-        moved.and_then(|()| hypr.dispatch(&hypr::focus_workspace(&session_selector(&to, to_key))));
+    let went = moved
+        .and_then(|()| hypr.dispatch(&hypr::focus_workspace(&session_selector(&to, to_key))))
+        // Renamed, the tab you were on says nothing of being in another space.
+        .and_then(|()| hypr.eval(hypr::FOLLOW));
     if let Some(reserved) = reserved {
         reserve::release(&paths::reserved_dir(), &reserved);
     }
@@ -2329,14 +2319,14 @@ pub fn send_tab(tab: Option<String>, to: SpaceTarget) -> Result<()> {
     // Where you left the spaces you did: never on the tab that went.
     if let Some(next) = beside {
         let last = Last::load(&paths::state_dir())?;
-        if was_here || last.get(&id).is_some_and(|visit| visit.slot == slot) {
+        if was_here || last.get(&id).is_some_and(|visit| visit.key == key) {
             remember(&id, next);
         }
-    } else if id != HOME {
+    } else if id != HOME && !lives_on {
         forget(&id);
     }
-    let ended = here.space() == id && id != HOME && beside.is_none();
-    if let Some(left_at) = here.slot()
+    let ended = here.space() == id && id != HOME && !lives_on;
+    if let Some(left_at) = here.key()
         && here.space() != to
         && !was_here
         && !ended
@@ -2347,44 +2337,28 @@ pub fn send_tab(tab: Option<String>, to: SpaceTarget) -> Result<()> {
     Ok(())
 }
 
-/// The slot after the last one open, else the first free.
-fn slot_after(open: &BTreeSet<u8>, label: &str) -> Result<u8> {
-    let open: Vec<u8> = open.iter().copied().collect();
-    if open.len() >= usize::from(name::SLOTS) {
-        bail!(
+/// The tabs of a space that have a workspace now, on any monitor.
+fn open_in(workspaces: &[hypr::Workspace], space: &str) -> BTreeSet<u8> {
+    workspaces
+        .iter()
+        .map(|ws| name::locate(ws.id, &ws.name))
+        .filter(|location| location.space() == space)
+        .filter_map(|location| location.key())
+        .collect()
+}
+
+/// The tab after a monitor's last one open, else its first free.
+fn key_after(open: &BTreeSet<u8>, block: u8, label: &str) -> Result<u8> {
+    match new_slot(open, block) {
+        Ok(slot) => Ok(name::key_in(block, slot)),
+        Err(_) => bail!(
             "all {} tabs of '{label}' are open; close one first",
             name::SLOTS
-        );
+        ),
     }
-    Ok(pick_slot(Target::New, &open, None)?.expect("a new tab has a slot"))
 }
 
-/// The workspace for a new tab of `home`, on the monitor you are on.
-fn home_slot(hypr: &Hypr, workspaces: &[hypr::Workspace], active: &hypr::Workspace) -> Result<u8> {
-    let plain: Vec<&hypr::Workspace> = workspaces
-        .iter()
-        .filter(|ws| ws.id > 0 && matches!(name::locate(ws.id, &ws.name), Location::Home { .. }))
-        .collect();
-    let here = match plain.iter().find(|ws| ws.monitor == active.monitor) {
-        Some(ws) => block(ws.id),
-        // None of its own there yet: Omarchy knows which they'd be.
-        None => {
-            let last = Last::load(&paths::state_dir())?;
-            focus(hypr, HOME, landing_slot(hypr, &last, HOME)?)?;
-            block(hypr.active_workspace()?.id.max(1))
-        }
-    };
-    let open: BTreeSet<u8> = plain
-        .iter()
-        .filter(|ws| block(ws.id) == here)
-        .filter_map(|ws| name::locate(ws.id, &ws.name).slot())
-        .collect();
-    let slot = slot_after(&open, HOME)?;
-    u8::try_from(here * i64::from(name::SLOTS) + i64::from(slot))
-        .context("there are too many monitors")
-}
-
-/// Moves a tab's windows to another, both tabs as a session has them. Between
+/// Moves a tab's windows to another. Between
 /// spaces its workspace is renamed, which leaves them just as they are.
 /// Hyprland's numbered workspaces, `home`'s, can't become named ones or the
 /// other way around, so then each window moves, and the tiles are split again
@@ -2461,17 +2435,32 @@ impl MovingTab {
     }
 }
 
-/// Goes from a space's tab that is ending, on the workspace `from`, to its
-/// next tab with windows, else the one before. With none left, the space ends
-/// and you go back to the space you were in before it, or `home`, whose own
-/// last tab you stay on.
-fn leave_tab(hypr: &Hypr, id: &str, slot: u8, from: i64) -> Result<()> {
-    if let Some(next) = tab_beside(hypr, id, slot, from)? {
-        focus(hypr, id, next)?;
-        remember(id, next);
+/// Has the monitor showing a space's tab that is ending, on the workspace
+/// `from`, go on to its next tab there with windows, else the one before.
+/// With none left there, it stays, empty, as long as the space has windows on
+/// another monitor. With none on any, the space ends and you go back to the
+/// space you were in before it, or `home`, whose own last tab you stay on.
+/// `focused` says whether that monitor is the one you are on.
+fn leave_tab(hypr: &Hypr, id: &str, key: u8, from: &hypr::Workspace, focused: bool) -> Result<()> {
+    let workspaces = hypr.workspaces()?;
+    if let Some(next) = tab_beside(&workspaces, id, key, &from.monitor) {
+        if focused {
+            focus(hypr, id, next)?;
+            remember(id, next);
+        } else if let Some(next) = workspaces
+            .iter()
+            .find(|ws| is_tab(id, next, ws.id, &ws.name))
+        {
+            hypr.eval(&hypr::show_workspace(&next.name))?;
+        }
         return Ok(());
     }
-    if id == HOME {
+    let elsewhere = |ws: &hypr::Workspace| {
+        ws.windows > 0
+            && !is_tab(id, key, ws.id, &ws.name)
+            && name::locate(ws.id, &ws.name).space() == id
+    };
+    if id == HOME || workspaces.iter().any(elsewhere) {
         return Ok(());
     }
 
@@ -2494,28 +2483,29 @@ fn leave_tab(hypr: &Hypr, id: &str, slot: u8, from: i64) -> Result<()> {
 }
 
 /// `space emptied <workspace>`, run by Hyprland (`hypr/omarchy-spaces.lua`) when
-/// closing a window left the workspace you are on empty. An emptied tab
-/// doesn't linger: you go to the space's next tab with windows, else the one
-/// before; with none left, the space ends and you go back to the space you
-/// were in before it, or `home`. Nothing happens if things moved on since: you left that
-/// workspace, or something opened on it.
+/// closing a window left a workspace that a monitor shows empty. An emptied
+/// tab doesn't linger: see `leave_tab`. Nothing happens if things moved on
+/// since: no monitor shows that workspace, or something opened on it.
 pub fn emptied(workspace: &str) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let active = hypr.active_workspace()?;
-    if active.name != workspace {
-        return Ok(());
-    }
-    let Location::Space { name: id, slot } = name::locate(active.id, &active.name) else {
+    let workspaces = hypr.workspaces()?;
+    let Some(emptied) = workspaces.iter().find(|ws| ws.name == workspace) else {
         return Ok(());
     };
-    let refilled = hypr
-        .workspaces()?
-        .iter()
-        .any(|ws| ws.name == workspace && ws.windows > 0);
-    if refilled {
+    let focused = active.name == workspace;
+    let shown = focused
+        || hypr.monitors()?.iter().any(|monitor| {
+            let shows = monitor.shows.as_ref();
+            shows.is_some_and(|ws| ws.name == workspace)
+        });
+    if !shown || emptied.windows > 0 {
         return Ok(());
     }
-    leave_tab(&hypr, &id, slot, active.id)
+    let Location::Space { name: id, key } = name::locate(emptied.id, &emptied.name) else {
+        return Ok(());
+    };
+    leave_tab(&hypr, &id, key, emptied, focused)
 }
 
 /// `space ls`: every space, the active one marked, with a window count.
@@ -2625,25 +2615,25 @@ fn picker_lines(rows: &[&Row]) -> Vec<String> {
         .collect()
 }
 
-/// Focuses a slot of a space. In `home`, that is Omarchy's own per-monitor
-/// workspace `n`, or plain workspace `n` outside Omarchy.
-fn focus(hypr: &Hypr, space: &str, slot: u8) -> Result<()> {
+/// Focuses a space's tab. In `home`, that is Omarchy's own workspace on the
+/// focused monitor, or the plain workspace outside Omarchy.
+fn focus(hypr: &Hypr, space: &str, key: u8) -> Result<()> {
     if space == HOME {
-        hypr.dispatch(&format!("o.workspaces.focus({slot})"))
-            .or_else(|_| hypr.dispatch(&hypr::focus_workspace(&slot.to_string())))
+        hypr.dispatch(&format!("o.workspaces.focus({})", name::slot_of(key)))
+            .or_else(|_| hypr.dispatch(&hypr::focus_workspace(&key.to_string())))
     } else {
-        hypr.dispatch(&hypr::focus_workspace(&selector(space, slot)))
+        hypr.dispatch(&hypr::focus_workspace(&selector(space, key)))
     }
 }
 
-fn selector(space: &str, slot: u8) -> String {
-    format!("name:{}", name::workspace_name(space, slot))
+fn selector(space: &str, key: u8) -> String {
+    format!("name:{}", name::workspace_name(space, key))
 }
 
-/// Records the workspace the active space is on. Failing to is only a
-/// warning: the switch itself has happened.
-fn remember(space: &str, slot: u8) {
-    if let Err(e) = Last::update(&paths::state_dir(), |last| last.set(space, slot)) {
+/// Records the tab the active space is on. Failing to is only a warning: the
+/// switch itself has happened.
+fn remember(space: &str, key: u8) {
+    if let Err(e) = Last::update(&paths::state_dir(), |last| last.set(space, key)) {
         eprintln!("space: warning: {e:#}");
     }
 }
@@ -2676,10 +2666,10 @@ fn run_picker(command: &str, input: &str) -> Result<Option<String>> {
 mod tests {
     use super::*;
 
-    fn terminal(address: &str, slot: u8, pid: u32, cwd: &str) -> Terminal {
+    fn terminal(address: &str, tab: u8, pid: u32, cwd: &str) -> Terminal {
         Terminal {
             address: address.into(),
-            slot,
+            tab,
             pid,
             shell: terminal::Shell {
                 cwd: cwd.into(),
@@ -2691,23 +2681,31 @@ mod tests {
     }
 
     #[test]
-    fn picks_new_next_and_prev_tabs() {
-        use Target::*;
-        let pick = |t, open: &[u8], cur| pick_slot(t, open, cur).unwrap();
-        assert_eq!(pick(New, &[1], Some(1)), Some(2));
-        assert_eq!(pick(New, &[1, 2, 5], Some(2)), Some(6));
+    fn picks_new_tabs_in_the_monitors_block() {
+        let pick = |open: &[u8], block| new_slot(&open.iter().copied().collect(), block);
+        assert_eq!(pick(&[1], 0).unwrap(), 2);
+        assert_eq!(pick(&[1, 2, 5], 0).unwrap(), 6);
+        assert_eq!(pick(&[2, 10], 0).unwrap(), 1, "a gap once 10 is taken");
+        assert_eq!(pick(&[1, 2, 11], 1).unwrap(), 2, "after its own");
+        assert_eq!(pick(&[1, 2], 1).unwrap(), 1, "the first of its own");
+        assert!(pick(&(1..=10).collect::<Vec<_>>(), 0).is_err());
+    }
+
+    #[test]
+    fn steps_through_the_open_tabs() {
+        let step =
+            |forward, open: &[u8], cur| step_tab(forward, &open.iter().copied().collect(), cur);
+        assert_eq!(step(true, &[1, 3, 4], Some(3)), Some(4));
+        assert_eq!(step(true, &[1, 3, 4], Some(4)), Some(1), "wraps");
+        assert_eq!(step(false, &[1, 3, 4], Some(1)), Some(4), "wraps");
+        assert_eq!(step(false, &[1, 3, 4], Some(3)), Some(1));
         assert_eq!(
-            pick(New, &[2, 10], Some(10)),
-            Some(1),
-            "a gap once 10 is taken"
+            step(true, &[1, 11], Some(1)),
+            Some(11),
+            "an unplugged one's"
         );
-        assert!(pick_slot(New, &(1..=10).collect::<Vec<_>>(), Some(1)).is_err());
-        assert_eq!(pick(Next, &[1, 3, 4], Some(3)), Some(4));
-        assert_eq!(pick(Next, &[1, 3, 4], Some(4)), Some(1), "wraps");
-        assert_eq!(pick(Prev, &[1, 3, 4], Some(1)), Some(4), "wraps");
-        assert_eq!(pick(Prev, &[1, 3, 4], Some(3)), Some(1));
-        assert_eq!(pick(Next, &[2], Some(2)), None, "only one tab");
-        assert_eq!(pick(Next, &[2, 5], None), Some(2));
+        assert_eq!(step(true, &[2], Some(2)), None, "only one tab");
+        assert_eq!(step(true, &[2, 5], None), Some(2));
     }
 
     #[test]

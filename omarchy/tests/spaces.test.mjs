@@ -53,11 +53,12 @@ test("starts on the space left most recently", () => {
 })
 
 test("locates workspaces like space does", () => {
-  assert.deepEqual(locate(-1337, "ren:3"), { space: "ren", slot: 3 })
-  assert.deepEqual(locate(-1338, "tax-2026:10"), { space: "tax-2026", slot: 10 })
-  assert.deepEqual(locate(13, "13"), { space: "home", slot: 3 })
-  for (const name of ["chat", "Ren:1", "ren:0", "ren:11", "ren:01", "home:1"]) {
-    assert.deepEqual(locate(-5, name), { space: "home", slot: 0 }, name)
+  assert.deepEqual(locate(-1337, "ren:3"), { space: "ren", key: 3, slot: 3 })
+  assert.deepEqual(locate(-1338, "tax-2026:10"), { space: "tax-2026", key: 10, slot: 10 })
+  assert.deepEqual(locate(-1339, "ren:13"), { space: "ren", key: 13, slot: 3 }, "the second monitor's")
+  assert.deepEqual(locate(13, "13"), { space: "home", key: 13, slot: 3 })
+  for (const name of ["chat", "Ren:1", "ren:0", "ren:251", "ren:01", "home:1"]) {
+    assert.deepEqual(locate(-5, name), { space: "home", key: 0, slot: 0 }, name)
   }
 })
 
@@ -85,8 +86,8 @@ test("builds the active space's tabs", () => {
   assert.deepEqual(tabsFor(workspaces, windows, { id: -1338, name: "ren:3" }), {
     space: "ren",
     tabs: [
-      { slot: 1, label: "Chromium", named: false, status: "", windows: 2, active: false },
-      { slot: 3, label: "Nvim", named: false, status: "", windows: 1, active: true },
+      { key: 1, slot: 1, label: "Chromium", named: false, status: "", windows: 2, active: false },
+      { key: 3, slot: 3, label: "Nvim", named: false, status: "", windows: 1, active: true },
     ],
   })
 })
@@ -171,24 +172,53 @@ test("a new tab is empty until something opens on it", () => {
   ])
 })
 
-test("home's tabs are the focused monitor's plain workspaces", () => {
-  const workspaces = [{ id: 1, name: "1" }, { id: 2, name: "2" }, { id: 12, name: "12" }, { id: -1337, name: "ren:1" }]
-  const tabs = tabsFor(workspaces, [], { id: 2, name: "2" })
+test("each monitor has its own tabs", () => {
+  const workspaces = [
+    { id: -1, name: "ren:1", monitor: "eDP-1" },
+    { id: -2, name: "ren:2", monitor: "eDP-1" },
+    { id: -3, name: "ren:11", monitor: "DP-1" },
+    { id: -4, name: "tax:12", monitor: "DP-1" },
+  ]
+  const tabs = (active) => tabsFor(workspaces, [], active, {}, { 2: "server", 11: "logs" }).tabs
+  assert.deepEqual(tabs({ id: -2, name: "ren:2", monitor: "eDP-1" }).map((t) => [t.key, t.slot, t.label, t.active]), [
+    [1, 1, "", false],
+    [2, 2, "server", true],
+  ])
+  assert.deepEqual(tabs({ id: -3, name: "ren:11", monitor: "DP-1" }).map((t) => [t.key, t.slot, t.label, t.active]), [
+    [11, 1, "logs", true],
+  ])
+  // Unplugged, its tabs are on the one that's left.
+  workspaces[2].monitor = "eDP-1"
+  assert.deepEqual(tabs({ id: -2, name: "ren:2", monitor: "eDP-1" }).map((t) => t.key), [1, 2, 11])
+})
+
+test("home's tabs are the monitor's plain workspaces", () => {
+  const workspaces = [
+    { id: 1, name: "1", monitor: "eDP-1" },
+    { id: 2, name: "2", monitor: "eDP-1" },
+    { id: 12, name: "12", monitor: "DP-1" },
+    { id: -1337, name: "ren:1", monitor: "eDP-1" },
+  ]
+  const tabs = tabsFor(workspaces, [], { id: 2, name: "2", monitor: "eDP-1" })
   assert.equal(tabs.space, "home")
   assert.deepEqual(tabs.tabs.map((t) => t.slot), [1, 2])
-  assert.deepEqual(tabsFor(workspaces, [], { id: 12, name: "12" }).tabs.map((t) => t.slot), [2])
+  assert.deepEqual(tabsFor(workspaces, [], { id: 12, name: "12", monitor: "DP-1" }).tabs.map((t) => t.slot), [2])
 })
 
 test("home's tabs are just numbers until named, by workspace id", () => {
-  const workspaces = [{ id: 2, name: "2" }, { id: 3, name: "3" }, { id: 13, name: "13" }]
+  const workspaces = [
+    { id: 2, name: "2", monitor: "eDP-1" },
+    { id: 3, name: "3", monitor: "eDP-1" },
+    { id: 13, name: "13", monitor: "DP-1" },
+  ]
   const windows = [{ workspaceId: 3, address: "0x1", windowClass: "firefox", focus: 0 }]
   const names = { 2: "notes", 13: "music" }
-  const tabs = tabsFor(workspaces, windows, { id: 3, name: "3" }, {}, names)
+  const tabs = tabsFor(workspaces, windows, { id: 3, name: "3", monitor: "eDP-1" }, {}, names)
   assert.deepEqual(tabs.tabs.map((t) => [t.slot, t.label, t.named]), [
     [2, "notes", true],
     [3, "", false],
   ])
-  const other = tabsFor(workspaces, [], { id: 13, name: "13" }, {}, names)
+  const other = tabsFor(workspaces, [], { id: 13, name: "13", monitor: "DP-1" }, {}, names)
   assert.deepEqual(other.tabs.map((t) => [t.slot, t.label]), [[3, "music"]])
 })
 
@@ -343,7 +373,7 @@ test("renames a space or a tab with its own command", () => {
 })
 
 test("offers to rename, move or close a tab", () => {
-  const tab = (slot, windows, active) => ({ slot, label: "", windows, active })
+  const tab = (slot, windows, active) => ({ key: slot, slot, label: "", windows, active })
   const closes = (space, tabs) => tabActions(tabs[0], { space, tabs }).map((a) => [a.id, a.enabled]).at(-1)
   const moves = (tab, elsewhere) => tabActions(tab, { space: "s1", tabs: [] }, elsewhere).find((a) => a.id === "move-tab").enabled
   assert.deepEqual(tabActions(tab(2, 1, true), { space: "s1", tabs: [] }).map((a) => a.id), ["rename-tab", "move-tab", "close-tab"])
@@ -451,7 +481,7 @@ test("drags tabs, which aren't equally wide", () => {
 })
 
 test("a moved tab takes its place's number", () => {
-  const tab = (slot, label, active) => ({ slot, label, named: false, status: "", windows: 1, active })
+  const tab = (slot, label, active) => ({ key: slot, slot, label, named: false, status: "", windows: 1, active })
   const model = { space: "s1", tabs: [tab(1, "a", true), tab(2, "b", false), tab(4, "c", false)] }
   const moved = reorderTabs(model, 2, 0)
   assert.deepEqual(moved, { space: "s1", tabs: [tab(1, "c", false), tab(2, "a", true), tab(4, "b", false)] })

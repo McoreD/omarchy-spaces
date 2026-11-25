@@ -46,8 +46,8 @@ pub struct Session {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Space {
-    /// Whether it's `home`, whose slots here are its workspaces' ids, as
-    /// every monitor has its own slot 3 (workspaces 3 and 13).
+    /// Whether it's `home`. Slots here are what tabs' workspaces are
+    /// numbered, as every monitor has its own tab 3 (3 and 13).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub home: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

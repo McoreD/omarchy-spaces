@@ -9,7 +9,7 @@ import qs.Ui
 import "Spaces.mjs" as Spaces
 
 // The active space's tabs on Omarchy's bar, in place of its workspaces: a tab
-// per workspace. Clicks on tabs run `space tab`, which stays the only thing
+// per workspace on the bar's monitor, as each has its own. Clicks on tabs run `space tab`, which stays the only thing
 // that changes workspaces. Double-clicking a tab names it: the sidebar holds
 // the keyboard (Sidebar.qml) and the tab shows what you type. So does Rename in the menu a right-click on a tab
 // opens (SpaceMenu.qml), which also moves the tab
@@ -189,7 +189,7 @@ BarWidget {
     root.heldTabs = Spaces.reorderTabs(held, from, to)
     settling.restart()
     // Positions count from the first tab.
-    root.run(["space", "tab", "reorder", held.space + ":" + held.tabs[from].slot, String(to + 1)])
+    root.run(["space", "tab", "reorder", held.space + ":" + held.tabs[from].key, String(to + 1)])
   }
 
   // A drag doesn't outlive the tabs it's among: going to another space, or a
@@ -202,7 +202,7 @@ BarWidget {
         if (Spaces.sameTabs(root.heldTabs, tabs.model)) root.settle()
         return
       }
-      var slots = function(model) { return model.space + model.tabs.map(function(tab) { return ":" + tab.slot }).join("") }
+      var slots = function(model) { return model.space + model.tabs.map(function(tab) { return ":" + tab.key }).join("") }
       if (slots(root.heldTabs) !== slots(tabs.model)) Qt.callLater(root.endDrag)
     }
   }
@@ -242,15 +242,16 @@ BarWidget {
 
   // Opens a tab's menu at a point on the bar's window, which need not start
   // at its screen's top when the bar is at the bottom.
-  function openTabMenu(slot, x, y) {
+  function openTabMenu(key, x, y) {
     var window = root.QsWindow.window
     if (!root.sidebar || !window || !window.screen) return
     var top = root.bar && root.bar.position === "bottom" ? window.screen.height - window.height : 0
-    root.sidebar.openTabMenu(slot, x, top + y, window.screen)
+    root.sidebar.openTabMenu(key, x, top + y, window.screen)
   }
 
   Tabs {
     id: tabs
+    monitorName: root.screenName
     rows: root.service && root.service.watch ? root.service.watch.rows : []
   }
 
@@ -477,16 +478,16 @@ BarWidget {
         // Later: the new order makes new tabs, this one among them.
         onDropped: Qt.callLater(root.drop)
         onDragCanceled: root.endDrag()
-        editing: !!root.sidebar && root.sidebar.renaming === root.model.space + ":" + modelData.slot
+        editing: !!root.sidebar && root.sidebar.renaming === root.model.space + ":" + modelData.key
         status: modelData.status
         current: modelData.active
         cap: root.tabCap
-        onClicked: root.run(["space", "tab", "go", String(modelData.slot)])
+        onClicked: root.run(["space", "tab", "go", root.model.space + ":" + modelData.key])
         hasMenu: true
-        menuOpen: !!root.sidebar && root.sidebar.menuTabFor === root.model.space + ":" + modelData.slot
+        menuOpen: !!root.sidebar && root.sidebar.menuTabFor === root.model.space + ":" + modelData.key
           && !!root.sidebar.menuScreen && root.sidebar.menuScreen.name === root.screenName
-        onDoubleClicked: if (root.sidebar) root.sidebar.renameTab(modelData.slot)
-        onMenuRequested: function(x, y) { root.openTabMenu(modelData.slot, x, y) }
+        onDoubleClicked: if (root.sidebar) root.sidebar.renameTab(modelData.key)
+        onMenuRequested: function(x, y) { root.openTabMenu(modelData.key, x, y) }
       }
     }
 
@@ -510,7 +511,7 @@ BarWidget {
         text: root.tabLabel(modelData)
         status: modelData.status
         current: modelData.active
-        onClicked: root.run(["space", "tab", "go", String(modelData.slot)])
+        onClicked: root.run(["space", "tab", "go", root.model.space + ":" + modelData.key])
       }
     }
   }

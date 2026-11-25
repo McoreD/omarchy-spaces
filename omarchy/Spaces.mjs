@@ -29,12 +29,12 @@ export function parseRows(text) {
     }))
 }
 
-// The names you gave a space's tabs, by slot: `{ 2: "server" }`.
+// The names you gave a space's tabs, by key: `{ 2: "server" }`.
 function tabNames(value) {
   const names = {}
   if (!value || typeof value !== "object") return names
-  for (const [slot, name] of Object.entries(value)) {
-    if (/^([1-9]|10)$/.test(slot) && typeof name === "string" && name) names[slot] = name
+  for (const [key, name] of Object.entries(value)) {
+    if (/^[1-9][0-9]{0,2}$/.test(key) && typeof name === "string" && name) names[key] = name
   }
   return names
 }
@@ -124,7 +124,7 @@ export function rowActions(row) {
 // `home` doesn't.
 export function tabActions(tab, model, elsewhere) {
   if (!tab) return []
-  const leavable = model.space !== "home" || model.tabs.some((t) => t.slot !== tab.slot && t.windows > 0)
+  const leavable = model.space !== "home" || model.tabs.some((t) => t.key !== tab.key && t.windows > 0)
   return [
     { id: "rename-tab", icon: "\u{f0cb6}", label: "Rename", enabled: true, hint: "", separatorBefore: false },
     {
@@ -278,19 +278,23 @@ export function initialIndex(rows) {
 //
 // A space's workspaces are its tabs: `ren:1`, `ren:2`, ... The rules match
 // `space` (src/name.rs): a strict `name:n`, anything else is `home`, whose
-// tabs are the plain numbered workspaces of the monitor's block of ten.
+// tabs are the plain numbered workspaces. A tab's key is that number. Every
+// monitor has tabs of its own, 1-10 on the first, 11-20 on the next, and
+// shows each as its slot, 1-10.
 
 const SLOTS = 10
+const LAST_KEY = 250
 const SPACE_WORKSPACE = /^([a-z0-9][a-z0-9-]*):(\d+)$/
 
-// `{ space, slot }` for a workspace; slot is 0 when it has none.
+// `{ space, key, slot }` for a workspace; key and slot are 0 when it has none.
 export function locate(id, name) {
+  const at = (space, key) => ({ space, key, slot: key > 0 ? ((key - 1) % SLOTS) + 1 : 0 })
   const match = SPACE_WORKSPACE.exec(String(name || ""))
   if (match && match[1] !== "home") {
-    const slot = Number(match[2])
-    if (String(slot) === match[2] && slot >= 1 && slot <= SLOTS) return { space: match[1], slot }
+    const key = Number(match[2])
+    if (String(key) === match[2] && key >= 1 && key <= LAST_KEY) return at(match[1], key)
   }
-  return { space: "home", slot: id > 0 ? ((id - 1) % SLOTS) + 1 : 0 }
+  return at("home", id > 0 ? id : 0)
 }
 
 // A short app name from a window class: `org.omarchy.quick-terminal` is
@@ -314,39 +318,28 @@ export function terminalsByAddress(rows) {
   return terminals
 }
 
-// The active space's tabs from Hyprland's workspaces and windows.
-//   workspaces: [{ id, name }]
+// The active space's tabs on a monitor, from Hyprland's workspaces and windows.
+//   workspaces: [{ id, name, monitor }]
 //   windows:    [{ workspaceId, address, windowClass, focus }]  (focus: lower is more recent)
-//   active:     { id, name } of the focused workspace
+//   active:     { id, name, monitor } of the workspace the monitor shows
 //   terminals:  terminalsByAddress(rows), which name terminals better than
 //               their class, and say what their agents are doing
-//   names:      the names you gave the space's tabs, by slot (its row's tabs);
-//               `home`'s by workspace id, as each monitor has its own slot 3
-// Returns { space, tabs: [{ slot, label, named, status, windows, active }] }
-// in slot order, a tab's status the one most in need of you among its
+//   names:      the names you gave the space's tabs, by key (its row's tabs)
+// Returns { space, tabs: [{ key, slot, label, named, status, windows, active }] }
+// in order, those an unplugged monitor left here included, a tab's status the one most in need of you among its
 // windows. A name you gave a tab is its label, and makes it `named`.
 // `home`'s tabs are just their numbers until you name them.
 export function tabsFor(workspaces, windows, active, terminals, names) {
   const here = locate(active ? active.id : 0, active ? active.name : "")
-  const block = (id) => Math.floor((id - 1) / SLOTS)
-  const activeBlock = block(active && active.id > 0 ? active.id : 1)
-
   const tabs = new Map()
-  const tabOf = (workspace) => {
-    const where = locate(workspace.id, workspace.name)
-    if (where.space !== here.space || where.slot === 0) return null
-    if (where.space === "home" && block(workspace.id) !== activeBlock) return null
-    return where.slot
+  const add = (workspace, where) => {
+    if (where.space !== here.space || where.key === 0 || tabs.has(where.key)) return
+    tabs.set(where.key, { id: workspace.id, key: where.key, slot: where.slot, label: "", status: "", windows: 0, focus: Infinity })
   }
-
   for (const workspace of workspaces || []) {
-    const slot = tabOf(workspace)
-    if (slot === null || tabs.has(slot)) continue
-    tabs.set(slot, { id: workspace.id, slot, label: "", status: "", windows: 0, focus: Infinity })
+    if (workspace.monitor === active?.monitor) add(workspace, locate(workspace.id, workspace.name))
   }
-  if (here.slot > 0 && !tabs.has(here.slot)) {
-    tabs.set(here.slot, { id: active.id, slot: here.slot, label: "", status: "", windows: 0, focus: Infinity })
-  }
+  if (active) add(active, here)
 
   const byId = new Map([...tabs.values()].map((tab) => [tab.id, tab]))
   for (const window of windows || []) {
@@ -367,18 +360,18 @@ export function tabsFor(workspaces, windows, active, terminals, names) {
   return {
     space: here.space,
     tabs: [...tabs.values()]
-      .sort((a, b) => a.slot - b.slot)
+      .sort((a, b) => a.key - b.key)
       .map((tab) => {
         const home = here.space === "home"
-        const key = home ? tab.id : tab.slot
-        const name = names && Object.prototype.hasOwnProperty.call(names, key) ? names[key] : ""
+        const name = names && Object.prototype.hasOwnProperty.call(names, tab.key) ? names[tab.key] : ""
         return {
+          key: tab.key,
           slot: tab.slot,
           label: name || (home ? "" : tab.label),
           named: !!name,
           status: tab.status,
           windows: tab.windows,
-          active: tab.slot === here.slot,
+          active: tab.key === here.key,
         }
       }),
   }
@@ -640,7 +633,7 @@ export function tabDropIndex(widths, from, dx, spacing) {
 export function reorderTabs(model, from, to) {
   return {
     space: model.space,
-    tabs: moveRow(model.tabs, from, to).map((tab, i) => Object.assign({}, tab, { slot: model.tabs[i].slot })),
+    tabs: moveRow(model.tabs, from, to).map((tab, i) => Object.assign({}, tab, { key: model.tabs[i].key, slot: model.tabs[i].slot })),
   }
 }
 
@@ -648,7 +641,7 @@ export function reorderTabs(model, from, to) {
 export function sameTabs(a, b) {
   return a.space === b.space && a.tabs.length === b.tabs.length && a.tabs.every((tab, i) => {
     const other = b.tabs[i]
-    return tab.slot === other.slot && tab.label === other.label && tab.windows === other.windows
+    return tab.key === other.key && tab.label === other.label && tab.windows === other.windows
       && tab.active === other.active
   })
 }

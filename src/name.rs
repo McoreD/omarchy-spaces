@@ -9,8 +9,12 @@
 /// The implicit space holding the plain numbered workspaces.
 pub const HOME: &str = "home";
 
-/// Workspaces per space, as Omarchy gives every monitor 1-10.
+/// Tabs per space on each monitor, as Omarchy gives every monitor
+/// workspaces 1-10.
 pub const SLOTS: u8 = 10;
+
+/// The highest a workspace is numbered: the last of the 25th monitor's.
+const LAST_KEY: u8 = 250;
 
 /// Whether `id` can be a space's id: lowercase letters, digits and `-`,
 /// starting with a letter or digit, so no `:`, which separates it from the
@@ -25,7 +29,7 @@ pub fn is_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// A workspace slot, 1-10.
+/// A tab's slot, the number it shows, 1-10.
 pub fn parse_slot(raw: &str) -> Option<u8> {
     if raw.starts_with('0') {
         return None;
@@ -33,20 +37,46 @@ pub fn parse_slot(raw: &str) -> Option<u8> {
     raw.parse::<u8>().ok().filter(|n| (1..=SLOTS).contains(n))
 }
 
-/// The Hyprland workspace name for a space's slot: `s1:3`.
-pub fn workspace_name(space: &str, slot: u8) -> String {
-    format!("{space}:{slot}")
+/// A tab's key, which tells it from its space's others: what its workspace is
+/// numbered. Each monitor has a block of ten, as Omarchy gives it for its
+/// workspaces, so the second one's tab 3 has key 13.
+pub fn parse_key(raw: &str) -> Option<u8> {
+    if raw.starts_with('0') {
+        return None;
+    }
+    raw.parse::<u8>()
+        .ok()
+        .filter(|n| (1..=LAST_KEY).contains(n))
+}
+
+/// The slot a key shows as: 3 for 13.
+pub fn slot_of(key: u8) -> u8 {
+    (key - 1) % SLOTS + 1
+}
+
+/// Which monitor's block a key is in, from 0.
+pub fn block_of(key: u8) -> u8 {
+    (key - 1) / SLOTS
+}
+
+/// The key of a slot in a monitor's block.
+pub fn key_in(block: u8, slot: u8) -> u8 {
+    block.min(LAST_KEY / SLOTS - 1) * SLOTS + slot
+}
+
+/// The Hyprland workspace name for a space's tab: `s1:3`.
+pub fn workspace_name(space: &str, key: u8) -> String {
+    format!("{space}:{key}")
 }
 
 /// Where a workspace sits in Spaces' terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Location {
-    /// A plain numbered workspace, or anything not in `name:n` form. The slot
-    /// is known for numbered ones, counted within the monitor's block of ten
-    /// as Omarchy numbers them (workspace 13 is slot 3 of the second monitor).
-    Home { slot: Option<u8> },
+    /// A plain numbered workspace, its number the key, or anything not in
+    /// `name:n` form, without one.
+    Home { key: Option<u8> },
     /// A space's workspace, `name:n`.
-    Space { name: String, slot: u8 },
+    Space { name: String, key: u8 },
 }
 
 impl Location {
@@ -57,28 +87,32 @@ impl Location {
         }
     }
 
-    pub fn slot(&self) -> Option<u8> {
+    pub fn key(&self) -> Option<u8> {
         match self {
-            Location::Home { slot } => *slot,
-            Location::Space { slot, .. } => Some(*slot),
+            Location::Home { key } => *key,
+            Location::Space { key, .. } => Some(*key),
         }
+    }
+
+    pub fn slot(&self) -> Option<u8> {
+        self.key().map(slot_of)
     }
 }
 
 /// Reads a Hyprland workspace's id and name.
 pub fn locate(id: i64, name: &str) -> Location {
-    if let Some((space, slot)) = name.rsplit_once(':')
+    if let Some((space, key)) = name.rsplit_once(':')
         && is_id(space)
         && space != HOME
-        && let Some(slot) = parse_slot(slot)
+        && let Some(key) = parse_key(key)
     {
         return Location::Space {
             name: space.to_string(),
-            slot,
+            key,
         };
     }
-    let slot = (id > 0).then(|| ((id - 1) % i64::from(SLOTS) + 1) as u8);
-    Location::Home { slot }
+    let key = u8::try_from(id).ok().filter(|id| *id > 0);
+    Location::Home { key }
 }
 
 /// The closest known name to a mistyped one, if any is close enough to be
@@ -149,28 +183,48 @@ mod tests {
     }
 
     #[test]
+    fn keys_are_slots_in_a_monitors_block() {
+        assert_eq!(parse_key("13"), Some(13));
+        for bad in ["0", "251", "013", "x", ""] {
+            assert_eq!(parse_key(bad), None, "{bad}");
+        }
+        for (key, block, slot) in [
+            (1, 0, 1),
+            (10, 0, 10),
+            (11, 1, 1),
+            (20, 1, 10),
+            (250, 24, 10),
+        ] {
+            assert_eq!((block_of(key), slot_of(key)), (block, slot), "{key}");
+            assert_eq!(key_in(block, slot), key);
+        }
+    }
+
+    #[test]
     fn locates_workspaces() {
         assert_eq!(
             locate(-1337, "ren:3"),
             Location::Space {
                 name: "ren".into(),
-                slot: 3
+                key: 3
             }
         );
         assert_eq!(
             locate(-1338, "tax-2026:10"),
             Location::Space {
                 name: "tax-2026".into(),
-                slot: 10
+                key: 10
             }
         );
-        assert_eq!(locate(3, "3"), Location::Home { slot: Some(3) });
-        // Omarchy's second monitor owns 11-20.
-        assert_eq!(locate(13, "13"), Location::Home { slot: Some(3) });
-        assert_eq!(locate(20, "20"), Location::Home { slot: Some(10) });
+        // The second monitor's are 11-20, as Omarchy has it.
+        let second = locate(-1339, "ren:13");
+        assert_eq!((second.key(), second.slot()), (Some(13), Some(3)));
+        assert_eq!(locate(3, "3"), Location::Home { key: Some(3) });
+        assert_eq!(locate(13, "13").slot(), Some(3));
+        assert_eq!(locate(20, "20").slot(), Some(10));
         // Anything not strictly `name:n` is home.
-        for name in ["chat", "Ren:1", "ren:0", "ren:11", "home:1", "ren:", ":1"] {
-            assert_eq!(locate(-5, name), Location::Home { slot: None }, "{name}");
+        for name in ["chat", "Ren:1", "ren:0", "ren:251", "home:1", "ren:", ":1"] {
+            assert_eq!(locate(-5, name), Location::Home { key: None }, "{name}");
         }
     }
 

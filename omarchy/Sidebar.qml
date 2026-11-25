@@ -79,7 +79,7 @@ Item {
   readonly property var menuTab: {
     var model = root.tabs ? root.tabs.model : null
     if (!root.menuTabFor || !model) return null
-    return model.tabs.find(function(tab) { return model.space + ":" + tab.slot === root.menuTabFor }) || null
+    return model.tabs.find(function(tab) { return model.space + ":" + tab.key === root.menuTabFor }) || null
   }
   // Gone to another space, or the tab ended: the menu doesn't come back.
   onMenuTabChanged: if (!root.menuTab && root.menuTabFor) root.closeMenu()
@@ -296,7 +296,7 @@ Item {
   function take() {
     root.rows = root.watch ? root.watch.rows : []
     root.error = root.watch && root.rows.length === 0 ? root.watch.error : ""
-    var workspace = Hyprland.focusedWorkspace
+    var workspace = root.tabs ? root.tabs.shown : null
     if (workspace) root.rows = Spaces.freshen(root.rows, Spaces.locate(workspace.id, workspace.name).space, Date.now())
     root.applyFilter(true)
   }
@@ -397,11 +397,11 @@ Item {
   }
 
   // Opens the menu of a tab of the space you are in, as it does a space's.
-  function openTabMenu(slot, x, y, screen) {
+  function openTabMenu(key, x, y, screen) {
     var space = root.tabs && root.tabs.model ? root.tabs.model.space : ""
     if (!space) return
     root.placeMenu(x, y, screen)
-    root.menuTabFor = space + ":" + slot
+    root.menuTabFor = space + ":" + key
   }
 
   function placeMenu(x, y, screen) {
@@ -441,14 +441,14 @@ Item {
       root.closeMenu()
       return
     }
-    var workspace = Hyprland.focusedWorkspace
+    var workspace = root.tabs ? root.tabs.shown : null
     var here = workspace ? Spaces.locate(workspace.id, workspace.name) : null
-    if (!here || !here.slot) return
+    if (!here || !here.key) return
     root.placeMenu(0, 0, root.focusedScreen())
     // Before the tab, so its menu doesn't flash up first.
     root.moveCentered = true
     root.movingTab = true
-    root.menuTabFor = here.space + ":" + here.slot
+    root.menuTabFor = here.space + ":" + here.key
   }
 
   // Sends the tab to a space, and you with it.
@@ -470,7 +470,7 @@ Item {
   function act(id, row) {
     root.closeMenu()
     if (id === "rename") root.startRename(row)
-    else if (id === "rename-tab") root.renameTab(row.slot)
+    else if (id === "rename-tab") root.renameTab(row.key)
     else if (id === "icon") root.openIconPicker(row)
     else if (id === "clear-icon") root.run(["space", "icon", row.id, ""])
     else if (id === "close") root.run(["space", "close", row.id])
@@ -519,16 +519,16 @@ Item {
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
-  // Names a tab of the space you are in, `slot`, or the one you are on: the
+  // Names a tab of the space you are in, by its key, or the one you are on: the
   // bar shows the name as you type it. A sidebar shown just for a search goes.
-  function renameTab(slot) {
-    var workspace = Hyprland.focusedWorkspace
+  function renameTab(key) {
+    var workspace = root.tabs ? root.tabs.shown : null
     var here = workspace ? Spaces.locate(workspace.id, workspace.name) : null
-    if (!here || !here.slot) return
+    if (!here || !here.key) return
     var tabs = root.tabs && root.tabs.model ? root.tabs.model.tabs : []
-    var tab = tabs.find(function(t) { return t.slot === (slot || here.slot) })
+    var tab = tabs.find(function(t) { return t.key === (key || here.key) })
     if (!tab) return
-    var target = here.space + ":" + tab.slot
+    var target = here.space + ":" + tab.key
     if (root.renaming === target) return
     if (root.searching && root.searchOnly) root.hide()
     root.closeMenu()
@@ -539,7 +539,7 @@ Item {
   // change. A sidebar collapsed, or expanded just for a search, is expanded
   // just for the rename.
   function renameSpace() {
-    var workspace = Hyprland.focusedWorkspace
+    var workspace = root.tabs ? root.tabs.shown : null
     var id = workspace ? Spaces.locate(workspace.id, workspace.name).space : ""
     if (!id || id === "home" || root.renaming === id) return
     var only = !root.opened || (root.searching && root.searchOnly)
@@ -584,7 +584,8 @@ Item {
   // Whether the focused workspace has tiled windows, which Hyprland moves
   // when the sidebar claims or returns its width. Floating ones stay put.
   function windowsToMove() {
-    var workspace = Hyprland.focusedWorkspace
+    var shown = root.tabs ? root.tabs.shown : null
+    var workspace = shown ? Hyprland.workspaces.values.find(function(ws) { return ws.id === shown.id }) : null
     var toplevels = workspace && workspace.toplevels ? workspace.toplevels.values : []
     for (var i = 0; i < toplevels.length; i++) {
       var ipc = toplevels[i].lastIpcObject || {}

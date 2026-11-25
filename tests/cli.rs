@@ -16,6 +16,9 @@ use serde_json::{Value, json};
 struct Hyprland {
     /// Name of the focused workspace.
     active: String,
+    /// What the monitor you aren't on shows, with two plugged in: `eDP-1`,
+    /// whose workspaces are numbered 1-10, and `DP-1`, whose are 11-20.
+    elsewhere: Option<String>,
     /// Workspaces as (id, name).
     workspaces: Vec<(i64, String)>,
     /// Windows, by the name of the workspace each is on.
@@ -75,7 +78,24 @@ fn write_stubs(home: &Path) {
     }
 }
 
+/// The monitor a workspace is on, by its number.
+fn monitor_of(name: &str) -> &'static str {
+    let number = name.rsplit(':').next().unwrap().parse::<u8>().unwrap_or(1);
+    if number > 10 { "DP-1" } else { "eDP-1" }
+}
+
 impl Hyprland {
+    /// Goes to a workspace, and to the monitor it's on.
+    fn go(&mut self, name: String) {
+        self.ensure(&name);
+        if let Some(elsewhere) = &mut self.elsewhere
+            && monitor_of(&name) != monitor_of(&self.active)
+        {
+            *elsewhere = self.active.clone();
+        }
+        self.active = name;
+    }
+
     fn ensure(&mut self, name: &str) -> i64 {
         if let Some((id, _)) = self.workspaces.iter().find(|(_, n)| n == name) {
             return *id;
@@ -95,14 +115,15 @@ impl Hyprland {
         let id = self.ensure(name);
         let windows = self.windows.iter().filter(|w| *w == name).count();
         let layout = if self.layouts { "dwindle" } else { "" };
-        json!({ "id": id, "name": name, "monitor": "eDP-1", "windows": windows, "tiledLayout": layout })
+        json!({ "id": id, "name": name, "monitor": monitor_of(name), "windows": windows, "tiledLayout": layout })
     }
 
-    /// Hyprland destroys empty workspaces that aren't focused.
+    /// Hyprland destroys empty workspaces that no monitor shows.
     fn tidy(&mut self) {
-        let (active, windows) = (self.active.clone(), self.windows.clone());
+        let shown = [Some(self.active.clone()), self.elsewhere.clone()];
+        let windows = self.windows.clone();
         self.workspaces
-            .retain(|(_, n)| *n == active || windows.contains(n));
+            .retain(|(_, n)| shown.contains(&Some(n.clone())) || windows.contains(n));
     }
 
     /// Shows the windows that have started by now.
@@ -130,6 +151,14 @@ impl Hyprland {
             "j/workspaces" => {
                 let names: Vec<String> = self.workspaces.iter().map(|(_, n)| n.clone()).collect();
                 Value::Array(names.iter().map(|n| self.workspace_json(n)).collect()).to_string()
+            }
+            "j/monitors" => {
+                let shown = [Some(self.active.clone()), self.elsewhere.clone()];
+                let monitors = shown.into_iter().flatten().map(|name| {
+                    let id = self.ensure(&name);
+                    json!({ "name": monitor_of(&name), "x": 0, "y": 0, "width": 1920.0, "height": 1080.0, "scale": 1.0, "activeWorkspace": { "id": id, "name": name } })
+                });
+                Value::Array(monitors.collect()).to_string()
             }
             "j/clients" => {
                 let windows = self.windows.clone();
@@ -170,6 +199,12 @@ impl Hyprland {
                             let on = on.split(" silent").next().unwrap();
                             let on = on.strip_prefix("name:").unwrap_or(on).to_string();
                             self.browser_on = script.contains("enabled = true").then_some(on);
+                        } else if script.contains("spaces.show(") {
+                            let name = script.split("spaces.show(\"").nth(1).unwrap();
+                            let name = name.split('"').next().unwrap();
+                            assert!(self.workspaces.iter().any(|(_, n)| n == name));
+                            self.elsewhere = Some(name.to_string());
+                            self.tidy();
                         } else {
                             // Windows moved and workspaces renamed or gone
                             // to by a script, one to a line.
@@ -276,9 +311,15 @@ impl Hyprland {
             return "error: attempt to index a nil value (global 'o')".into();
         }
         if expression.starts_with("hl.dsp.focus(") {
+            if let Some(monitor) = field(expression, "monitor") {
+                if monitor_of(&self.active) != monitor {
+                    let there = self.elsewhere.clone().expect("a second monitor");
+                    self.go(there);
+                }
+                return "ok".into();
+            }
             let target = selector(quoted(expression).unwrap());
-            self.ensure(&target);
-            self.active = target;
+            self.go(target);
         } else if expression.starts_with("hl.dsp.window.close(") {
             let address = field(expression, "window").unwrap();
             let address = address.strip_prefix("address:0x").unwrap();
@@ -319,9 +360,12 @@ impl Hyprland {
                 return "error: no such window".into();
             }
         } else if expression.starts_with("o.workspaces.focus(") {
-            let target = number(expression).unwrap().to_string();
-            self.ensure(&target);
-            self.active = target;
+            let block = if monitor_of(&self.active) == "DP-1" {
+                10
+            } else {
+                0
+            };
+            self.go((number(expression).unwrap() + block).to_string());
         } else if expression.starts_with("hl.dsp.window.move(")
             || expression.starts_with("o.workspaces.move_window(")
         {
@@ -694,6 +738,24 @@ impl Env {
         let mut hypr = self.hypr.lock().unwrap();
         hypr.ensure(name);
         hypr.active = name.into();
+    }
+
+    /// Plugs in a second monitor, showing a workspace, numbered 11-20.
+    fn plug_in(&self, shows: &str) {
+        fs::create_dir_all(self.home().join(".local/state/omarchy")).unwrap();
+        fs::write(
+            self.home().join(".local/state/omarchy/monitor-workspaces"),
+            "0\teDP-1\tBOE\n1\tDP-1\tStudioDisplay\n",
+        )
+        .unwrap();
+        let mut hypr = self.hypr.lock().unwrap();
+        hypr.ensure(shows);
+        hypr.elsewhere = Some(shows.into());
+    }
+
+    /// What the monitor you aren't on shows.
+    fn elsewhere(&self) -> String {
+        self.hypr.lock().unwrap().elsewhere.clone().unwrap()
     }
 
     fn add_window(&self, workspace: &str) -> String {
@@ -1446,18 +1508,20 @@ fn tab_rename_names_home_tabs_by_workspace() {
     env.set_active("3");
     let tabs = |env: &Env| env.ls_json()[0]["tabs"].clone();
 
-    // From home, tab 3 is the focused monitor's: workspace 3, not 13.
+    // The number is the workspace's, as the second monitor's tab 3 is 13.
     assert_eq!(
         env.ok(&["tab", "rename", "home:3", "mail"]),
         "Named tab 3 'mail'\n"
     );
     assert_eq!(tabs(&env), serde_json::json!({ "3": "mail" }));
 
-    // From a space, the tab 3 meant is ambiguous with two monitors.
+    // From a space too.
     env.add_window("s1:1");
     env.set_active("s1:1");
-    let err = env.fails(&["tab", "rename", "home:3", "x"]);
-    assert!(err.contains("more than one monitor"), "{err}");
+    assert_eq!(
+        env.ok(&["tab", "rename", "home:13", "x"]),
+        "Named tab 3 'x'\n"
+    );
     env.close_window(&other);
     env.ok(&["tab", "rename", "home:3", "inbox"]);
     assert_eq!(tabs(&env), serde_json::json!({ "3": "inbox" }));
@@ -2707,4 +2771,134 @@ fn emptied_does_nothing_once_things_have_moved_on() {
     env.ok(&["emptied", "2"]);
     assert!(env.dispatched().is_empty());
     assert_eq!(env.active(), "2");
+}
+
+#[test]
+fn each_monitor_has_its_own_tabs() {
+    let env = Env::new();
+    env.add_window("s1:1");
+    env.add_window("s1:2");
+    env.add_window("s1:11");
+    env.set_active("s1:2");
+    env.plug_in("s1:11");
+
+    // Next and previous keep to the monitor's own.
+    env.ok(&["tab", "next"]);
+    assert_eq!(env.active(), "s1:1");
+
+    // On the second monitor, its tab 2 is s1:12, and a new one comes after.
+    env.hypr.lock().unwrap().go("s1:11".into());
+    env.ok(&["tab", "go", "2"]);
+    assert_eq!(env.active(), "s1:12");
+    assert_eq!(env.elsewhere(), "s1:1");
+    env.ok(&["tab", "go", "1"]);
+    env.ok(&["tab", "new"]);
+    assert_eq!(env.active(), "s1:12");
+    env.ok(&["window", "tab", "3"]);
+    assert_eq!(env.windows().last().unwrap(), "s1:13");
+
+    // A tab by its workspace is the one, wherever you are.
+    env.ok(&["tab", "go", "s1:2"]);
+    assert_eq!(env.active(), "s1:2");
+    env.ok(&["tab", "rename", "s1:13", "logs"]);
+    assert_eq!(env.ls_json()[1]["tabs"], json!({ "13": "logs" }));
+    let err = env.fails(&["tab", "go", "s1:9"]);
+    assert!(err.contains("has no tab 9"), "{err}");
+}
+
+#[test]
+fn a_space_opens_where_you_are_on_the_monitor_you_are_on() {
+    let env = Env::new();
+    env.add_window("s1:2");
+    env.add_window("s1:12");
+    env.add_window("s1:13");
+    env.add_window("s2:1");
+    env.set_active("s1:2");
+    env.plug_in("s1:12");
+
+    // Left from the second monitor, gone back to from the first: where you
+    // were on the first.
+    env.hypr.lock().unwrap().go("s1:12".into());
+    env.ok(&["go", "s2"]);
+    assert_eq!(env.active(), "s2:11", "nothing there yet, on this monitor");
+    env.hypr.lock().unwrap().go("s2:1".into());
+    env.ok(&["go", "s1"]);
+    assert_eq!(env.active(), "s1:2");
+
+    // Back from the second, the tab it was left on.
+    env.hypr.lock().unwrap().go("s2:11".into());
+    env.ok(&["go", "s1"]);
+    assert!(env.active().starts_with("s1:1"), "{}", env.active());
+    assert_ne!(env.active(), "s1:1");
+}
+
+#[test]
+fn a_new_space_and_a_new_tab_open_on_this_monitor() {
+    let env = Env::new();
+    env.add_window("1");
+    env.add_window("11");
+    env.set_active("11");
+    env.hypr.lock().unwrap().elsewhere = Some("1".into());
+    env.plug_in("1");
+    env.ok(&["new", env.dir("ren").to_str().unwrap()]);
+    assert_eq!(env.active(), "s1:11");
+
+    // An empty tab, as the other monitor has, takes the new one's terminal.
+    env.hypr.lock().unwrap().go("s1:1".into());
+    env.ok(&["tab", "new"]);
+    assert_eq!(env.active(), "s1:1");
+    assert_eq!(env.windows().last().unwrap(), "s1:1");
+    env.ok(&["tab", "new"]);
+    assert_eq!(env.active(), "s1:2");
+}
+
+#[test]
+fn a_space_ends_only_once_no_monitor_has_any_of_its_windows() {
+    let env = Env::new();
+    env.add_window("1");
+    let here = env.add_window("s1:1");
+    let there = env.add_window("s1:12");
+    let beside = env.add_window("s1:11");
+    env.set_active("s1:1");
+    env.plug_in("s1:12");
+
+    // Its last one on this monitor: you stay, as the other has more.
+    env.close_window(&here);
+    env.ok(&["emptied", "s1:1"]);
+    assert_eq!(env.active(), "s1:1");
+
+    // The other monitor goes on to its next tab, without you.
+    env.close_window(&there);
+    env.ok(&["emptied", "s1:12"]);
+    assert_eq!(env.active(), "s1:1");
+    assert_eq!(env.elsewhere(), "s1:11");
+
+    // The last of all ends it, on whichever monitor.
+    env.close_window(&beside);
+    env.ok(&["emptied", "s1:11"]);
+    assert_eq!(env.active(), "1");
+}
+
+#[test]
+fn a_tab_sent_to_another_space_stays_on_its_monitor() {
+    let env = Env::new();
+    env.add_window("s1:1");
+    env.add_window("s1:12");
+    env.add_window("s2:1");
+    env.set_active("s1:1");
+    env.plug_in("s1:12");
+
+    assert_eq!(
+        env.ok(&["tab", "send", "s1:12", "s2"]),
+        "Moved tab 2 to 's2'\n"
+    );
+    assert_eq!(env.active(), "s2:11", "the first of that monitor's");
+    assert_eq!(env.windows(), ["s1:1", "s2:11", "s2:1"]);
+    let synced = env.hypr.lock().unwrap().evaluated.clone();
+    assert!(synced.last().unwrap().contains("spaces.sync()"));
+
+    // Reordered among its own monitor's.
+    env.add_window("s2:12");
+    env.ok(&["tab", "reorder", "s2:12", "1"]);
+    assert_eq!(env.windows(), ["s1:1", "s2:12", "s2:1", "s2:11"]);
 }
