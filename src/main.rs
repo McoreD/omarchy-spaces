@@ -59,7 +59,9 @@ enum Cmd {
         second: Option<String>,
     },
     /// Move a space up or down the sidebar, to a position counting from 1
-    /// below `home`, which stays first.
+    /// below `home`, which stays first, or a tab, as `<space>:<n>`, to a
+    /// position among its space's tabs.
+    #[command(override_usage = "space reorder <SPACE | SPACE:N> <POSITION>")]
     Reorder {
         /// What it's called, or its id.
         space: String,

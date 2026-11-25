@@ -102,6 +102,15 @@ impl Last {
         self.visits.insert(space.to_string(), Visit { slot, at });
     }
 
+    /// Follows a space's tabs to their new slots, when they were left.
+    pub fn renumber(&mut self, space: &str, slots: &BTreeMap<u8, u8>) {
+        if let Some(visit) = self.visits.get_mut(space)
+            && let Some(slot) = slots.get(&visit.slot)
+        {
+            visit.slot = *slot;
+        }
+    }
+
     /// Forgets a space, as if it was never visited.
     pub fn remove(&mut self, space: &str) {
         self.visits.remove(space);
@@ -181,6 +190,11 @@ mod tests {
 
         last.remove("b");
         assert_eq!(last.latest_except("x", |_| true), Some("c"));
+
+        last.renumber("c", &[(3, 1), (1, 2)].into());
+        assert_eq!(last.get("c"), Some(Visit { slot: 1, at: 200 }));
+        last.renumber("a", &[(3, 1)].into());
+        assert_eq!(last.get("a").unwrap().slot, 1, "its tab didn't move");
     }
 
     #[test]

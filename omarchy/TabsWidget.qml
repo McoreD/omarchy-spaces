@@ -16,6 +16,11 @@ import "Spaces.mjs" as Spaces
 // to another space or closes it. On a vertical bar there is room only for the tabs'
 // numbers.
 //
+// Drag a tab along the bar to move it, as a space in the sidebar: a press
+// turns into a drag only once it has moved a good part of the bar's
+// thickness, so a click stays a click, and the tabs between slide aside to
+// show where it will drop. Not on a vertical bar.
+//
 // The bar parts where the windows begin, by the sidebar's rail or by the
 // whole sidebar. Before that line it shows the background, shaded as the
 // sidebar below it is, with the menu on it. Past it, the tabs and the rest of
@@ -36,7 +41,20 @@ BarWidget {
   id: root
   moduleName: "com.t4t5.spaces"
 
-  readonly property var model: tabs.model
+  // The tabs shown: while one is dragged, as they were when it began, so the
+  // drag isn't cut short when an agent's status changes; and once dropped, as
+  // they will be, until Hyprland has them so.
+  readonly property var model: root.heldTabs || tabs.model
+  property var heldTabs: null
+  // The tab being dragged, where it would drop, and how far it has moved.
+  property int dragFrom: -1
+  property int dragTo: -1
+  property real dragDx: 0
+  // Each tab's width when the drag began.
+  property var dragWidths: []
+  readonly property real dragPitch: root.dragFrom < 0 ? 0 : root.dragWidths[root.dragFrom] + row.spacing
+  // How far a press has to move along the bar to become a drag.
+  readonly property real dragThreshold: Math.round(root.barSize * 0.4)
   readonly property color foreground: root.bar ? root.bar.barForeground : Commons.Color.bar.text
   readonly property color accent: Commons.Color.accent
   readonly property color hover: Commons.Color.menu.selectedBackground
@@ -126,6 +144,93 @@ BarWidget {
       if (tab) widths.push(tab.natural)
     }
     return Math.max(Style.spacing.rowPaddingX * 2 + root.fontSize * 2, Spaces.fairCap(widths, room))
+  }
+
+  function startDrag(index) {
+    if (root.sidebar) {
+      root.sidebar.closeMenu()
+      root.sidebar.endNaming(false)
+    }
+    settling.stop()
+    var widths = []
+    for (var i = 0; i < tabRepeater.count; i++) widths.push(tabRepeater.itemAt(i).width)
+    root.dragWidths = widths
+    root.heldTabs = root.model
+    root.dragTo = index
+    root.dragFrom = index
+  }
+
+  function drag(dx) {
+    root.dragDx = Spaces.tabDragOffset(root.dragWidths, root.dragFrom, dx, row.spacing)
+    root.dragTo = Spaces.tabDropIndex(root.dragWidths, root.dragFrom, root.dragDx, row.spacing)
+  }
+
+  function endDrag() {
+    root.dragFrom = -1
+    root.dragTo = -1
+    root.dragDx = 0
+    root.heldTabs = null
+  }
+
+  // Drops the dragged tab. The bar shows the new order at once rather than
+  // waiting for Hyprland to have it, so the tab doesn't jump back first.
+  function drop() {
+    var from = root.dragFrom
+    var to = root.dragTo
+    var held = root.heldTabs
+    if (from < 0 || !held) return
+    root.dragFrom = -1
+    root.dragTo = -1
+    root.dragDx = 0
+    if (from === to) {
+      root.heldTabs = null
+      return
+    }
+    root.heldTabs = Spaces.reorderTabs(held, from, to)
+    settling.restart()
+    // Positions count from the first tab.
+    root.run(["space", "reorder", held.space + ":" + held.tabs[from].slot, String(to + 1)])
+  }
+
+  // A drag doesn't outlive the tabs it's among: going to another space, or a
+  // tab opening or closing, ends it. A drop is over once Hyprland has it.
+  Connections {
+    target: tabs
+    function onModelChanged() {
+      if (!root.heldTabs) return
+      if (root.dragFrom < 0) {
+        if (Spaces.sameTabs(root.heldTabs, tabs.model)) root.settle()
+        return
+      }
+      var slots = function(model) { return model.space + model.tabs.map(function(tab) { return ":" + tab.slot }).join("") }
+      if (slots(root.heldTabs) !== slots(tabs.model)) Qt.callLater(root.endDrag)
+    }
+  }
+
+  function settle() {
+    settling.stop()
+    if (root.dragFrom < 0) root.heldTabs = null
+  }
+
+  // Hyprland might never have it, if something else changed meanwhile or the
+  // tab couldn't move.
+  Timer {
+    id: settling
+    interval: 1000
+    onTriggered: root.settle()
+  }
+
+  // Where the tabs take the mouse. The bar lays an area of its own over each
+  // widget, to drag it along the bar, which a press on a tab would go to
+  // first; this lies over that one, in the bar's window, where the tabs are.
+  // The `+` and the header stay under the bar's, to drag the widget by.
+  Item {
+    id: tabMouse
+    parent: root.QsWindow.contentItem || root
+    visible: root.visible && row.visible
+    z: 1
+    x: (parent === root ? 0 : root.origin.x) + row.x
+    y: (parent === root ? 0 : root.origin.y) + row.y
   }
 
   function tabLabel(tab) {
@@ -354,9 +459,24 @@ BarWidget {
       model: root.vertical ? [] : root.model.tabs
 
       TabButton {
+        id: tabButton
         required property var modelData
+        required property int index
         text: root.tabLabel(modelData)
         number: String(modelData.slot)
+        mouseLayer: tabMouse
+        dragged: root.dragFrom === index
+        shift: Spaces.dragShift(index, root.dragFrom, root.dragTo, root.dragPitch)
+        onDragMoved: function(dx) {
+          if (root.dragFrom < 0) {
+            if (root.model.tabs.length < 2 || Math.abs(dx) < root.dragThreshold) return
+            root.startDrag(tabButton.index)
+          }
+          if (tabButton.dragged) root.drag(dx)
+        }
+        // Later: the new order makes new tabs, this one among them.
+        onDropped: Qt.callLater(root.drop)
+        onDragCanceled: root.endDrag()
         editing: !!root.sidebar && root.sidebar.renaming === root.model.space + ":" + modelData.slot
         status: modelData.status
         current: modelData.active
@@ -412,6 +532,18 @@ BarWidget {
     property bool hasMenu: false
     signal menuRequested(real x, real y)
     property bool menuOpen: false
+    // Where it takes the mouse, over the bar's own area, when it can be
+    // dragged; how far a press has moved along the bar, and how it ended.
+    property Item mouseLayer: null
+    property bool dragged: false
+    signal dragMoved(real dx)
+    signal dropped()
+    signal dragCanceled()
+    // Aside, to open the gap a dragged tab would drop into.
+    property real shift: 0
+    Behavior on shift { NumberAnimation { duration: Style.duration(120); easing.type: Easing.OutCubic } }
+    z: button.dragged ? 1 : 0
+    transform: Translate { x: button.dragged ? root.dragDx : button.shift }
 
     // Room after the label for the status's dot, on a horizontal bar.
     readonly property real dotRoom: button.status !== "" && !root.vertical ? dot.width + Style.spacing.sm : 0
@@ -429,7 +561,7 @@ BarWidget {
       anchors.margins: Style.spacing.xs
       radius: Style.cornerRadius
       color: button.editing ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.08)
-        : button.menuOpen || (mouse.containsMouse && !button.current) ? root.hover : "transparent"
+        : button.menuOpen || button.dragged || (mouse.containsMouse && !button.current && root.dragFrom < 0) ? root.hover : "transparent"
       border.width: button.editing ? Math.max(1, Style.space(1)) : 0
       border.color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.6)
     }
@@ -544,12 +676,31 @@ BarWidget {
 
     MouseArea {
       id: mouse
-      anchors.fill: parent
+      // Where the press was, on the layer, which doesn't move with the tab;
+      // and whether it became a drag, which isn't a click.
+      property real pressX: 0
+      property bool wasDrag: false
+      parent: button.mouseLayer || button
+      x: button.mouseLayer ? button.x : 0
+      width: button.width
+      height: button.height
       hoverEnabled: true
-      cursorShape: button.editing ? Qt.IBeamCursor : Qt.PointingHandCursor
+      preventStealing: true
+      cursorShape: button.editing ? Qt.IBeamCursor : button.dragged ? Qt.ClosedHandCursor : Qt.PointingHandCursor
       acceptedButtons: button.hasMenu ? Qt.LeftButton | Qt.RightButton : Qt.LeftButton
+      onPressed: function(event) {
+        mouse.wasDrag = false
+        mouse.pressX = mouse.x + event.x
+      }
+      onPositionChanged: function(event) {
+        if (!button.mouseLayer || button.editing || !(mouse.pressedButtons & Qt.LeftButton)) return
+        button.dragMoved(mouse.x + event.x - mouse.pressX)
+        if (button.dragged) mouse.wasDrag = true
+      }
+      onReleased: if (button.dragged) button.dropped()
+      onCanceled: if (button.dragged) button.dragCanceled()
       onClicked: function(event) {
-        if (button.editing) return
+        if (button.editing || mouse.wasDrag) return
         if (event.button !== Qt.RightButton) {
           button.clicked()
           return

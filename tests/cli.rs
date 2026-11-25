@@ -171,11 +171,14 @@ impl Hyprland {
                             let on = on.strip_prefix("name:").unwrap_or(on).to_string();
                             self.browser_on = script.contains("enabled = true").then_some(on);
                         } else {
-                            // Windows moved by a script, one to a line.
+                            // Windows moved and workspaces renamed or gone
+                            // to by a script, one to a line.
                             for line in script.lines() {
-                                let moved = line
-                                    .strip_prefix("hl.dispatch(")
-                                    .filter(|l| l.starts_with("hl.dsp.window.move("));
+                                let moved = line.strip_prefix("hl.dispatch(").filter(|l| {
+                                    l.starts_with("hl.dsp.window.move(")
+                                        || l.starts_with("hl.dsp.workspace.rename(")
+                                        || l.starts_with("hl.dsp.focus({ workspace")
+                                });
                                 if let Some(moved) = moved {
                                     self.dispatch(moved);
                                 }
@@ -1652,6 +1655,68 @@ fn send_tab_moves_the_windows_of_homes_tabs() {
     assert_eq!(env.ls_json()[0]["tabs"], serde_json::json!({ "2": "mail" }));
     env.ok(&["go", "ren"]);
     assert_eq!(env.active(), "s1:1");
+}
+
+#[test]
+fn reorder_moves_a_tab_among_its_spaces() {
+    let env = Env::new();
+    env.add_terminal("s1:1", &env.dir("ren"));
+    env.add_window("s1:2");
+    env.add_window("s1:4");
+    env.add_window("s2:1");
+    env.set_active("s1:2");
+    env.ok(&["rename", "s1:4", "server"]);
+    let tabs = |env: &Env| env.ls_json()[1]["tabs"].clone();
+
+    // Last to first: the others make room, on the numbers the space has.
+    assert_eq!(env.ok(&["reorder", "s1:4", "1"]), "Moved tab 4 to 1\n");
+    assert_eq!(env.windows(), ["s1:2", "s1:4", "s1:1", "s2:1"]);
+    assert_eq!(env.active(), "s1:4", "still on the same tab");
+    assert_eq!(tabs(&env), serde_json::json!({ "1": "server" }));
+
+    // And back, past the end being last.
+    env.ok(&["reorder", "ren:1", "9"]);
+    assert_eq!(env.windows(), ["s1:1", "s1:2", "s1:4", "s2:1"]);
+    assert_eq!(env.active(), "s1:2");
+    assert_eq!(tabs(&env), serde_json::json!({ "4": "server" }));
+
+    // Going back to the space lands on the tab you left, wherever it is now.
+    env.ok(&["go", "s2"]);
+    env.ok(&["reorder", "s1:2", "1"]);
+    assert_eq!(env.windows(), ["s1:2", "s1:1", "s1:4", "s2:1"]);
+    assert_eq!(env.active(), "s2:1");
+    env.ok(&["go", "s1"]);
+    assert_eq!(env.active(), "s1:1");
+
+    // Where it is already, nowhere, or no tab.
+    env.ok(&["reorder", "s1:1", "1"]);
+    assert_eq!(env.windows(), ["s1:2", "s1:1", "s1:4", "s2:1"]);
+    let err = env.fails(&["reorder", "s1:1", "0"]);
+    assert!(err.contains("positions start at 1"), "{err}");
+    let err = env.fails(&["reorder", "s1:3", "1"]);
+    assert!(err.contains("has no tab 3"), "{err}");
+}
+
+#[test]
+fn reorder_moves_the_windows_of_homes_tabs() {
+    let env = Env::new();
+    env.add_window("1");
+    env.add_window("2");
+    env.add_window("2");
+    env.add_window("13");
+    // Tab 3 is empty, but it's the one you're on.
+    env.set_active("3");
+    env.ok(&["rename", "home:2", "mail"]);
+
+    env.ok(&["reorder", "home:3", "1"]);
+    assert_eq!(env.windows(), ["2", "3", "3", "13"]);
+    assert_eq!(env.active(), "1");
+    assert_eq!(env.ls_json()[0]["tabs"], serde_json::json!({ "3": "mail" }));
+
+    env.ok(&["reorder", "home:3", "2"]);
+    assert_eq!(env.windows(), ["3", "2", "2", "13"]);
+    assert_eq!(env.active(), "1");
+    assert_eq!(env.ls_json()[0]["tabs"], serde_json::json!({ "2": "mail" }));
 }
 
 #[test]

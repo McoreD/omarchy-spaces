@@ -601,6 +601,52 @@ export function dragShift(index, from, to, pitch) {
   return 0
 }
 
+// How far a tab dragged `dx` from `from` goes, kept among the tabs, which are
+// `widths` wide and `spacing` apart.
+export function tabDragOffset(widths, from, dx, spacing) {
+  const along = (list) => list.reduce((sum, width) => sum + width + spacing, 0)
+  return Math.max(-along(widths.slice(0, from)), Math.min(along(widths.slice(from + 1)), dx))
+}
+
+// Where it would drop: past each tab whose middle its leading edge has
+// crossed, as tabs aren't equally wide.
+export function tabDropIndex(widths, from, dx, spacing) {
+  let to = from
+  let reach = 0
+  if (dx > 0) {
+    for (let i = from + 1; i < widths.length; i++) {
+      if (dx <= reach + spacing + widths[i] / 2) break
+      reach += spacing + widths[i]
+      to = i
+    }
+  } else {
+    for (let i = from - 1; i >= 0; i--) {
+      if (-dx <= reach + spacing + widths[i] / 2) break
+      reach += spacing + widths[i]
+      to = i
+    }
+  }
+  return to
+}
+
+// The tabs (tabsFor) once `space reorder` has moved the one at `from` to
+// `to`: the same numbers, with what's on them moved along.
+export function reorderTabs(model, from, to) {
+  return {
+    space: model.space,
+    tabs: moveRow(model.tabs, from, to).map((tab, i) => Object.assign({}, tab, { slot: model.tabs[i].slot })),
+  }
+}
+
+// Whether two lists of tabs show the same, whatever their agents are doing.
+export function sameTabs(a, b) {
+  return a.space === b.space && a.tabs.length === b.tabs.length && a.tabs.every((tab, i) => {
+    const other = b.tabs[i]
+    return tab.slot === other.slot && tab.label === other.label && tab.windows === other.windows
+      && tab.active === other.active
+  })
+}
+
 // The rows with the one at `from` moved to `to`.
 export function moveRow(rows, from, to) {
   const out = rows.slice()

@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { appName, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, barToggle, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, statusColors, tabActions, tabsFor, terminalsByAddress, moreUrgent, windowMotion, startsDrag, dropIndex, dragShift, moveRow } from "../Spaces.mjs"
+import { appName, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, barToggle, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, freshen, gapLeft, initialIndex, locate, nameInput, parseRows, recessAlpha, rowActions, score, stepAction, statusColors, tabActions, tabsFor, terminalsByAddress, moreUrgent, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs } from "../Spaces.mjs"
 
 const json = JSON.stringify([
   { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
@@ -429,6 +429,30 @@ test("offers an icon, and its removal once there is one", () => {
   assert.deepEqual(ids({ id: "s1", icon: "", windows: 1 }), ["rename", "icon", "close"])
   assert.deepEqual(ids({ id: "s1", icon: "🚀", windows: 1 }), ["rename", "icon", "clear-icon", "close"])
   assert.equal(rowActions({ id: "s1", icon: "🚀" })[1].label, "Change icon")
+})
+
+test("drags tabs, which aren't equally wide", () => {
+  const widths = [40, 100, 60]
+  assert.equal(tabDropIndex(widths, 0, 0, 4), 0)
+  assert.equal(tabDropIndex(widths, 0, 54, 4), 0, "up to the next one's middle")
+  assert.equal(tabDropIndex(widths, 0, 55, 4), 1)
+  assert.equal(tabDropIndex(widths, 0, 139, 4), 2)
+  assert.equal(tabDropIndex(widths, 2, -55, 4), 1)
+  assert.equal(tabDropIndex(widths, 2, -129, 4), 0)
+  assert.equal(tabDropIndex(widths, 1, -25, 4), 0)
+  assert.equal(tabDragOffset(widths, 1, -500, 4), -44, "no further than the first")
+  assert.equal(tabDragOffset(widths, 1, 500, 4), 64, "nor than the last")
+  assert.equal(tabDragOffset(widths, 1, 12, 4), 12)
+})
+
+test("a moved tab takes its place's number", () => {
+  const tab = (slot, label, active) => ({ slot, label, named: false, status: "", windows: 1, active })
+  const model = { space: "s1", tabs: [tab(1, "a", true), tab(2, "b", false), tab(4, "c", false)] }
+  const moved = reorderTabs(model, 2, 0)
+  assert.deepEqual(moved, { space: "s1", tabs: [tab(1, "c", false), tab(2, "a", true), tab(4, "b", false)] })
+  assert.equal(sameTabs(model, moved), false)
+  assert.equal(sameTabs(moved, { space: "s1", tabs: moved.tabs.map((t) => Object.assign({}, t, { status: "done" })) }), true)
+  assert.equal(sameTabs(model, { space: "s2", tabs: model.tabs }), false)
 })
 
 test("drags spaces, never home, only past the threshold", () => {

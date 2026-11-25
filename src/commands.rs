@@ -1839,10 +1839,13 @@ pub fn icon(target: Option<String>, new_icon: String) -> Result<()> {
 
 /// `space reorder <space> <position>`: moves a space to `position` in the
 /// sidebar, counting from 1 below `home`, which stays first. Past the end
-/// puts it last.
+/// puts it last. `<space>:<n>` moves a tab (`reorder_tab`).
 pub fn reorder(target: String, position: usize) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (mut store, rows, _) = lock_rows(Some(&hypr))?;
+    if let Some((space, slot)) = tab_target(&rows, &target) {
+        return reorder_tab(&hypr, store, &rows, space, slot, position);
+    }
     let id = resolve(&rows, &target)?;
     if id == HOME {
         bail!("'home' is the plain workspaces; it stays first");
@@ -1855,18 +1858,178 @@ pub fn reorder(target: String, position: usize) -> Result<()> {
         .map(|r| r.id)
         .filter(|r| r != HOME)
         .collect();
-    let order = moved(order, &id, position - 1);
+    let order = moved(order, id, position - 1);
     restamp(&mut store, &order);
     store.save()?;
     Ok(())
 }
 
-/// `order` with `id` taken out and put back at `index`, or last.
-fn moved(mut order: Vec<String>, id: &str, index: usize) -> Vec<String> {
-    order.retain(|other| other != id);
+/// `order` with `item` taken out and put back at `index`, or last.
+fn moved<T: PartialEq>(mut order: Vec<T>, item: T, index: usize) -> Vec<T> {
+    order.retain(|other| *other != item);
     let index = index.min(order.len());
-    order.insert(index, id.to_string());
+    order.insert(index, item);
     order
+}
+
+/// `space reorder <space>:<n> <position>`: moves a tab to `position` among
+/// its space's tabs, counting from 1, past the end being last. The space
+/// keeps the numbers it has tabs on: what's on them moves along, with the
+/// names you gave them, and you stay on the tab you're on.
+fn reorder_tab(
+    hypr: &Hypr,
+    mut store: Store,
+    rows: &[Row],
+    space: &str,
+    slot: u8,
+    position: usize,
+) -> Result<()> {
+    if position == 0 {
+        bail!("positions start at 1, the space's first tab");
+    }
+    let (id, key) = find_tab(hypr, rows, space, slot)?;
+    let active = hypr.active_workspace()?;
+    // The tabs there are, as the bar shows them: in `home`, its monitor's.
+    let tabs: Vec<u8> = hypr
+        .workspaces()?
+        .iter()
+        .filter_map(|ws| match name::locate(ws.id, &ws.name) {
+            Location::Space { name, slot } => (name == id).then_some(slot),
+            Location::Home { .. } => {
+                (id == HOME && ws.id > 0 && block(ws.id) == block(i64::from(key)))
+                    .then(|| u8::try_from(ws.id).ok())
+                    .flatten()
+            }
+        })
+        .collect::<BTreeSet<u8>>()
+        .into_iter()
+        .collect();
+    let order = moved(tabs.clone(), key, position - 1);
+    // Where each tab that moves goes.
+    let moves: BTreeMap<u8, u8> = order
+        .into_iter()
+        .zip(tabs)
+        .filter(|(from, to)| from != to)
+        .collect();
+    let Some(&to) = moves.get(&key) else {
+        return Ok(());
+    };
+
+    if id == HOME {
+        reorder_home(hypr, &active, key, &moves)?;
+    } else {
+        hypr.eval(&rename_tabs(&id, key, &moves))?;
+    }
+
+    if let Some(entry) = store.spaces.get_mut(&id) {
+        entry.tabs = std::mem::take(&mut entry.tabs)
+            .into_iter()
+            .map(|(tab, name)| (*moves.get(&tab).unwrap_or(&tab), name))
+            .collect();
+        store.save()?;
+    }
+    drop(store);
+
+    // Where you left the space is still the tab you left.
+    let slot_of = |key: u8| (key - 1) % name::SLOTS + 1;
+    let slots: BTreeMap<u8, u8> = moves
+        .iter()
+        .map(|(from, to)| (slot_of(*from), slot_of(*to)))
+        .collect();
+    if let Err(e) = Last::update(&paths::state_dir(), |last| last.renumber(&id, &slots)) {
+        eprintln!("space: warning: {e:#}");
+    }
+    println!("Moved tab {slot} to {}", slot_of(to));
+    Ok(())
+}
+
+/// The tabs that move in the order to move them, each into the place the one
+/// before it left, once the tab `first` is out of the way.
+fn in_turn(first: u8, moves: &BTreeMap<u8, u8>) -> Vec<(u8, u8)> {
+    let mut free = first;
+    let mut steps = Vec::new();
+    while let Some((&from, &to)) = moves.iter().find(|(_, to)| **to == free) {
+        if from == first {
+            break;
+        }
+        steps.push((from, to));
+        free = from;
+    }
+    steps
+}
+
+/// Where a tab waits for the others to make room. All of it happens between
+/// two frames, so nothing else sees it.
+const ASIDE: &str = "name:omarchy-spaces-moving";
+
+/// The Lua that renames a space's workspaces as `moves` says, `first` being
+/// the tab the others make room for, which leaves their windows as they are.
+fn rename_tabs(space: &str, first: u8, moves: &BTreeMap<u8, u8>) -> String {
+    let tab = |key: u8| session_selector(space, key);
+    let name = |key: u8| session_workspace(space, key);
+    let aside = ASIDE.trim_start_matches("name:").to_string();
+    let mut renames = vec![(tab(first), aside)];
+    renames.extend(
+        in_turn(first, moves)
+            .into_iter()
+            .map(|(from, to)| (tab(from), name(to))),
+    );
+    renames.push((ASIDE.to_string(), name(moves[&first])));
+    renames
+        .iter()
+        .map(|(from, to)| format!("hl.dispatch({})\n", hypr::rename_workspace(from, to)))
+        .collect()
+}
+
+/// Moves what's on `home`'s tabs as `moves` says, `first` being the tab the
+/// others make room for. Their workspaces are Hyprland's numbered ones, which
+/// keep their numbers, so each window moves, and the tiles are split again as
+/// they were.
+fn reorder_home(
+    hypr: &Hypr,
+    active: &hypr::Workspace,
+    first: u8,
+    moves: &BTreeMap<u8, u8>,
+) -> Result<()> {
+    let snapshot = snapshot(hypr)?;
+    let tab = |key: u8| session_selector(HOME, key);
+    let tabs: BTreeMap<u8, MovingTab> = moves
+        .keys()
+        .map(|key| {
+            let on_tab = |w: &&SpaceWindow| w.space == HOME && w.tab == Some(*key);
+            let windows: Vec<&SpaceWindow> = snapshot.space_windows.iter().filter(on_tab).collect();
+            (*key, MovingTab::of(&snapshot, HOME, *key, &windows))
+        })
+        .collect();
+
+    let mut script = String::from(
+        "local animated = hl.get_config(\"animations.enabled\")\n\
+         hl.config({ animations = { enabled = false } })\n\
+         local ok, err = pcall(function()\n",
+    );
+    script.push_str(&tabs[&first].moves(ASIDE));
+    for (from, to) in in_turn(first, moves) {
+        script.push_str(&tabs[&from].moves(&tab(to)));
+    }
+    script.push_str(&tabs[&first].moves(&tab(moves[&first])));
+    let here = u8::try_from(active.id)
+        .ok()
+        .filter(|_| matches!(name::locate(active.id, &active.name), Location::Home { .. }));
+    if let Some(to) = here.and_then(|here| moves.get(&here)) {
+        script.push_str(&format!(
+            "hl.dispatch({})\n",
+            hypr::focus_workspace(&tab(*to))
+        ));
+    }
+    for moving in tabs.values().filter(|t| !t.layout.is_plain()) {
+        script.push_str(&format!("do\n{}end\n", moving.layout.script()));
+    }
+    script.push_str(
+        "end)\n\
+         hl.config({ animations = { enabled = animated } })\n\
+         if not ok then error(err) end\n",
+    );
+    hypr.eval(&script)
 }
 
 /// Gives the spaces `created` times in `order`, from the times they have:
@@ -2244,44 +2407,61 @@ fn move_tab(
         ));
     }
 
-    // A group moves as one, by the window of it that shows.
-    let mut shown: Vec<&SpaceWindow> = windows.to_vec();
-    shown.sort_by_key(|w| w.focus);
-    let mut seen: BTreeSet<&str> = BTreeSet::new();
-    shown.retain(|w| {
-        let first = !seen.contains(w.address.as_str());
-        seen.extend(w.grouped.iter().map(String::as_str));
-        first
-    });
-    let saved: Vec<session::Window> = shown
-        .iter()
-        .filter_map(|w| session_window(snapshot, w, &[]))
-        .collect();
-    let layout = session_layout(snapshot, from, key, &saved, &[]);
-    let address = |n: &usize| saved.get(*n).map(|w| w.address.clone());
-    let tab = layout::Tab {
-        tiles: layout.tiles.as_ref().and_then(|t| t.filter_map(&address)),
-        focused: layout.focused.as_ref().and_then(address),
-        ..Default::default()
-    };
-
-    let mut script = String::new();
-    for window in &shown {
-        script.push_str(&format!(
-            "hl.dispatch({})\n",
-            hypr::move_window_to(&window.address, &selector)
-        ));
-    }
+    let moving = MovingTab::of(snapshot, from, key, windows);
+    let mut script = moving.moves(&selector);
     // There first: the script comes back to where you were, which may be the
     // tab that just went.
     script.push_str(&format!(
         "hl.dispatch({})\n",
         hypr::focus_workspace(&selector)
     ));
-    if !tab.is_plain() {
-        script.push_str(&tab.script());
+    if !moving.layout.is_plain() {
+        script.push_str(&moving.layout.script());
     }
     hypr.eval(&script)
+}
+
+/// A tab whose windows move one by one to another.
+struct MovingTab {
+    /// The windows to move: a group moves as one, by the one that shows.
+    windows: Vec<String>,
+    /// How its tiles are split, to split them again there.
+    layout: layout::Tab,
+}
+
+impl MovingTab {
+    fn of(snapshot: &Snapshot, space: &str, key: u8, windows: &[&SpaceWindow]) -> Self {
+        let mut shown: Vec<&SpaceWindow> = windows.to_vec();
+        shown.sort_by_key(|w| w.focus);
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        shown.retain(|w| {
+            let first = !seen.contains(w.address.as_str());
+            seen.extend(w.grouped.iter().map(String::as_str));
+            first
+        });
+        let saved: Vec<session::Window> = shown
+            .iter()
+            .filter_map(|w| session_window(snapshot, w, &[]))
+            .collect();
+        let layout = session_layout(snapshot, space, key, &saved, &[]);
+        let address = |n: &usize| saved.get(*n).map(|w| w.address.clone());
+        Self {
+            windows: shown.iter().map(|w| w.address.clone()).collect(),
+            layout: layout::Tab {
+                tiles: layout.tiles.as_ref().and_then(|t| t.filter_map(&address)),
+                focused: layout.focused.as_ref().and_then(address),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// The Lua that moves its windows to a workspace.
+    fn moves(&self, selector: &str) -> String {
+        self.windows
+            .iter()
+            .map(|w| format!("hl.dispatch({})\n", hypr::move_window_to(w, selector)))
+            .collect()
+    }
 }
 
 /// Goes from a space's tab that is ending, on the workspace `from`, to its
@@ -2628,9 +2808,18 @@ mod tests {
     fn reorders_spaces() {
         let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let order = ids(&["s1", "s2", "s3"]);
-        assert_eq!(moved(order.clone(), "s3", 0), ids(&["s3", "s1", "s2"]));
-        assert_eq!(moved(order.clone(), "s1", 1), ids(&["s2", "s1", "s3"]));
-        assert_eq!(moved(order.clone(), "s1", 9), ids(&["s2", "s3", "s1"]));
+        assert_eq!(
+            moved(order.clone(), "s3".to_string(), 0),
+            ids(&["s3", "s1", "s2"])
+        );
+        assert_eq!(
+            moved(order.clone(), "s1".to_string(), 1),
+            ids(&["s2", "s1", "s3"])
+        );
+        assert_eq!(
+            moved(order.clone(), "s1".to_string(), 9),
+            ids(&["s2", "s3", "s1"])
+        );
 
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::load(dir.path()).unwrap();
