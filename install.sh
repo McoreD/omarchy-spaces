@@ -9,8 +9,8 @@
 #                         it as it starts. Links the Hyprland part, installs
 #                         `space` if there is none, and asks whether to take
 #                         Omarchy's menu and workspaces off the bar
-#   --bar replace|keep    the answer to that. The bar is the user's, so nothing
-#                         but `replace` changes it
+#   --bar replace         a yes to that. The bar is the user's, so nothing else
+#                         changes it
 
 set -euo pipefail
 
@@ -21,9 +21,9 @@ fail() {
 
 update=0
 case "$*" in
-"" | --setup | "--bar replace" | "--bar keep") ;;
+"" | --setup | "--bar replace") ;;
 --update) update=1 ;;
-*) fail "usage: install.sh [--update | --setup | --bar replace|keep]" ;;
+*) fail "usage: install.sh [--update | --setup | --bar replace]" ;;
 esac
 
 plugin_dir=$(dirname "${BASH_SOURCE[0]}")
@@ -88,30 +88,26 @@ setup() {
     echo "$said"
   fi
 
-  # Until it's answered, each time the shell starts. Not if the tabs were put
+  # Until they're replaced, each time the shell starts. Not if the tabs were put
   # elsewhere on the bar: they only take the others' place in the left section.
   [[ ! -e $answer ]] || return 0
   omarchy-shell shell listShellConfig |
     jq -e --arg id "$id" 'any(.bar.layout.left[]?; (.id? // .) == $id)' >/dev/null || return 0
   if enabled omarchy.menu || enabled omarchy.workspaces; then
-    # A click on the card itself is the first one's, so that changes nothing.
     notify -u critical --transient "Replace Omarchy's menu and workspaces?" \
       "Spaces takes their place on the bar. A right-click on the logo still opens the menu." \
-      --action "Keep both" "$PWD/install.sh" --bar keep \
       --action "Replace" "$PWD/install.sh" --bar replace
   fi
 }
 
-bar() {
-  if [[ $1 == replace ]]; then
-    # Asked a while ago, maybe: enabling it would turn it back on.
-    enabled "$id" || fail "the plugin is off"
-    omarchy plugin enable "$id" --section left --index 0
-    omarchy plugin disable omarchy.menu
-    omarchy plugin disable omarchy.workspaces
-  fi
+replace_bar() {
+  # Asked a while ago, maybe: enabling it would turn it back on.
+  enabled "$id" || fail "the plugin is off"
+  omarchy plugin enable "$id" --section left --index 0
+  omarchy plugin disable omarchy.menu
+  omarchy plugin disable omarchy.workspaces
   mkdir -p "$state"
-  echo "$1" >"$answer"
+  echo replace >"$answer"
 }
 
 case ${1:-} in
@@ -120,7 +116,7 @@ case ${1:-} in
   exit
   ;;
 --bar)
-  bar "$2"
+  replace_bar
   exit
   ;;
 esac

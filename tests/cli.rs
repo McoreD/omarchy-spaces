@@ -3322,9 +3322,14 @@ fn install_setup_asks_before_it_changes_the_bar() {
     // Putting the workspaces back later doesn't bring the question back.
     assert_eq!(run(&plugin, &["--setup"]).1, "");
 
+    // There's no keeping both.
     fs::remove_file(&answer).unwrap();
-    assert_eq!(run(&plugin, &["--bar", "keep"]).1, "");
-    assert_eq!(run(&plugin, &["--setup"]).1, "");
+    let (out, did) = run(&plugin, &["--bar", "keep"]);
+    assert!(!out.status.success());
+    assert_eq!(did, "");
+    assert!(!answer.exists());
+    let (_, did) = run(&plugin, &["--setup"]);
+    assert_eq!(did.matches("--action").count(), 1, "{did}");
 
     // A Hyprland file that's the user's own stays.
     fs::remove_file(&link).unwrap();
@@ -3444,7 +3449,7 @@ fn uninstall_undoes_the_setup_once_the_plugin_is_gone() {
     fs::remove_file(&link).unwrap();
     fs::write(&link, "-- mine\n").unwrap();
     fs::write(&space, "#!/bin/sh\n# omarchy-spaces, built here\n").unwrap();
-    fs::write(state.join("bar"), "keep\n").unwrap();
+    fs::remove_file(state.join("bar")).unwrap();
     let did = run();
     assert!(!did.contains("omarchy bar"), "{did}");
     assert!(link.exists() && space.exists() && !state.exists());
