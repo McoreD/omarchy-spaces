@@ -194,7 +194,7 @@ space close [space]          # close a space's windows, the active one by defaul
 
 # Tabs
 space tab new                # open a tab in the active space, with a terminal in its folder
-space tab go <n>             # go to tab n of the active space on this monitor, or to a tab as s1:2
+space tab go <n>             # go to tab n of the active space on this monitor, or to a tab by its id
 space tab next / space tab prev  # its next or previous tab, wrapping around
 space tab rename [tab] <name>  # name a tab, the one you are on by default; "" for its window's name
 space tab reorder <tab> <n>  # move a tab to position n among its space's tabs
@@ -206,15 +206,17 @@ space window send <space|next|prev> [--silent]  # the window to another space, o
 space window tab <n> [--silent]  # the window to tab n of the active space on this monitor
 
 # The rest
-space ls [--json]            # list spaces with window counts; --json as { version, spaces }
+space ls [--json]            # list spaces with window counts; --json, for scripts, with their tabs
 space restore                # open the spaces from before the last restart again
 space restore <file>         # or those of an earlier session
 space terminal               # a terminal in the folder you are in, or the space's
 space status <working|waiting|done|idle> [--window <addr>] [--pid <pid>]  # report agent status for this terminal
-space watch [--sounds]       # print the monitors, their tabs and the spaces, as a line of JSON each time they change; --sounds also rings for agents
+space watch [--sounds]       # what the plugin runs, and for it alone; --sounds also rings for agents
 ```
 
-A space can be given by what it's called or by its id (`s1`, as `space ls` shows), and a tab by its space and what its workspace is numbered (`s1:2`, `work:2`). Each monitor's are numbered as Omarchy numbers workspaces, 1-10 on the first and 11-20 on the next, each shown as 1-10: the second monitor's tab 2 is `s1:12`. In what `space` prints as JSON, a `tab` or a `key` is what its workspace is numbered, 12, and a `slot` what it shows as, 2. `space tab go 2` goes to tab 2 of the monitor you are on. `space close` asks each app to close, as `super+w` does, so an app can still stop to save.
+A space can be given by what it's called or by its id (`s1`, as `space ls` shows), and a tab by its id, as `space ls --json` shows it. `space tab go 2` goes to the tab that shows as 2 on the monitor you are on. `space close` asks each app to close, as `super+w` does, so an app can still stop to save.
+
+`space ls --json` prints `{ version, spaces }`. A space has its `tabs`, each with its `id`, for commands, and its `slot`, the number it shows on its `monitor` (`null` for none). Pass a tab's id as it is rather than reading or making one up: what it's made of can change, and moving a tab gives it another. A terminal's `tab` is its tab's id. `version` goes up only when a change would break a script; new fields can come without. `space watch` promises nothing of the kind: what it prints is for the plugin, and changes with it.
 
 After you log out or restart, the plugin opens the spaces that were up again by itself (it runs `space restore`, unless `[restore]` in the config sets `enabled = false`), `home` included: their names, icons and tab names, and their terminals, each in its folder and arranged as they were (splits and their sizes, groups, floating and fullscreen windows, monitors). A terminal that was running Claude Code picks its conversation up again (`claude --resume`), unless `[restore]` sets `agents = false`; with a terminal `command` of your own, that takes one that runs `space shell`. Chromium's windows and web apps come back among them with their tabs, unless `[restore]` sets `browser = false`: the tab you were on comes first, and the tabs load anew, without their history, groups or pins. Incognito windows don't, nor do windows of a browser on another data folder. If Chromium is set to continue where you left off, that's left to it. It then goes back to the space you were in, unless you have started on something else. Other programs in the terminals, what they had printed, and other apps' windows don't come back; the windows beside one take its room. Splits are restored in Hyprland's dwindle layout; in others, windows come back in the order they were opened.
 
@@ -241,7 +243,7 @@ just reload             # after changing the plugin; the shell doesn't reload it
 just stress             # goes between your spaces quickly, and checks that what shows keeps up
 ```
 
-The justfile's `install` and `setup` do Install's steps for a clone you work in, building into `~/.cargo/bin` and adding the `require` line for you. The plugin and `space` go together: after changing what `space watch` prints, do both `just install` and `just reload`, and raise `VERSION` in `src/view.rs` and `omarchy/Spaces.mjs` if the one can't read the other.
+The justfile's `install` and `setup` do Install's steps for a clone you work in, building into `~/.cargo/bin` and adding the `require` line for you. The plugin and `space` go together: after changing what `space watch` prints, do both `just install` and `just reload`, and raise `VERSION` in `src/view.rs` and `omarchy/Spaces.mjs` if the one can't read the other. What `space ls --json` prints is apart from it, in `src/list.rs`, with a `VERSION` of its own: scripts read that one, so add to it rather than change it.
 
 `space` and the plugin share one version, in `Cargo.toml` and `manifest.json`; the tests fail if they differ. CI (`.github/workflows/ci.yml`) runs on pull requests and on `main`: the tests above, `cargo fmt --check`, `cargo clippy` with warnings as errors, a syntax check of the Lua, and a check that there are no symlinks, which `omarchy plugin add` refuses.
 

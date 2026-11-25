@@ -744,6 +744,24 @@ impl Env {
         }
     }
 
+    /// The names given to tabs, by their ids, of the space in row `n`.
+    fn tab_names(&self, n: usize) -> Value {
+        let rows = self.ls_json();
+        let named = rows[n]["tabs"].as_array().unwrap().iter();
+        named
+            .filter(|tab| tab["named"] == true)
+            .map(|tab| (tab["id"].as_str().unwrap().into(), tab["label"].clone()))
+            .collect::<serde_json::Map<_, _>>()
+            .into()
+    }
+
+    /// The ids of the first space's tabs and the numbers they show.
+    fn tab_slots(&self) -> Value {
+        let rows = self.ls_json();
+        let tabs = rows[1]["tabs"].as_array().unwrap().iter();
+        tabs.map(|tab| json!([tab["id"], tab["slot"]])).collect()
+    }
+
     fn run(&self, args: &[&str]) -> Output {
         self.command(args).output().unwrap()
     }
@@ -1235,7 +1253,11 @@ fn restore_opens_the_last_sessions_spaces_once() {
     let work = rows.iter().find(|r| r["id"] == "s2").unwrap();
     assert_eq!(work["label"], "Work");
     assert_eq!(work["icon"], "x");
-    assert_eq!(work["tabs"]["2"], "logs");
+    let tab = &work["tabs"][1];
+    assert_eq!(
+        (&tab["id"], &tab["label"]),
+        (&json!("s2:2"), &json!("logs"))
+    );
 
     env.ok(&["restore"]);
     assert_eq!(env.hypr.lock().unwrap().windows.len(), 4);
@@ -1256,7 +1278,7 @@ fn restore_brings_back_home_and_where_you_were() {
 
     env.ok(&["restore"]);
     assert_eq!(env.hypr.lock().unwrap().windows, ["1", "3", "s1:1", "s1:2"]);
-    assert_eq!(env.ls_json()[0]["tabs"]["3"], "notes");
+    assert_eq!(env.tab_names(0), json!({ "home:3": "notes" }));
     assert_eq!(env.active(), "s1:2");
     assert!(env.hypr.lock().unwrap().evaluated.is_empty());
 }
@@ -1543,31 +1565,27 @@ fn tab_rename_names_a_tab_until_cleared_or_closed() {
     env.add_terminal("s1:1", &env.dir("ren"));
     let second = env.add_window("s1:2");
     env.set_active("s1:1");
-    let tabs = |env: &Env| env.ls_json()[1]["tabs"].clone();
+    let tabs = |env: &Env| env.tab_names(1);
 
     assert_eq!(
         env.ok(&["tab", "rename", "s1:2", "server"]),
         "Named tab 2 'server'\n"
     );
-    assert_eq!(tabs(&env), serde_json::json!({ "2": "server" }));
-    env.ok(&["tab", "rename", "ren:1", "editor"]);
-    assert_eq!(
-        tabs(&env),
-        serde_json::json!({ "1": "editor", "2": "server" }),
-        "by what the space is called"
-    );
+    assert_eq!(tabs(&env), json!({ "s1:2": "server" }));
+    env.ok(&["tab", "rename", "s1:1", "editor"]);
+    assert_eq!(tabs(&env), json!({ "s1:1": "editor", "s1:2": "server" }));
     assert_eq!(
         env.ok(&["tab", "rename", "s1:1", ""]),
         "Tab 1 is called after its window again\n"
     );
-    assert_eq!(tabs(&env), serde_json::json!({ "2": "server" }));
+    assert_eq!(tabs(&env), json!({ "s1:2": "server" }));
 
     // The name goes with its tab, so a new tab there starts without it.
     env.close_window(&second);
     assert_eq!(tabs(&env), serde_json::json!({}));
 
     let err = env.fails(&["tab", "rename", "s1:4", "x"]);
-    assert!(err.contains("'ren' has no tab 4"), "{err}");
+    assert!(err.contains("there's no tab s1:4"), "{err}");
 }
 
 #[test]
@@ -1576,14 +1594,14 @@ fn tab_rename_names_home_tabs_by_workspace() {
     let mail = env.add_window("3");
     let other = env.add_window("13");
     env.set_active("3");
-    let tabs = |env: &Env| env.ls_json()[0]["tabs"].clone();
+    let tabs = |env: &Env| env.tab_names(0);
 
     // The number is the workspace's, as the second monitor's tab 3 is 13.
     assert_eq!(
         env.ok(&["tab", "rename", "home:3", "mail"]),
         "Named tab 3 'mail'\n"
     );
-    assert_eq!(tabs(&env), serde_json::json!({ "3": "mail" }));
+    assert_eq!(tabs(&env), json!({ "home:3": "mail" }));
 
     // From a space too.
     env.add_window("s1:1");
@@ -1594,7 +1612,7 @@ fn tab_rename_names_home_tabs_by_workspace() {
     );
     env.close_window(&other);
     env.ok(&["tab", "rename", "home:3", "inbox"]);
-    assert_eq!(tabs(&env), serde_json::json!({ "3": "inbox" }));
+    assert_eq!(tabs(&env), json!({ "home:3": "inbox" }));
 
     assert_eq!(
         env.ok(&["tab", "rename", "home:3", ""]),
@@ -1602,7 +1620,7 @@ fn tab_rename_names_home_tabs_by_workspace() {
     );
     assert_eq!(tabs(&env), serde_json::json!({}));
     let err = env.fails(&["tab", "rename", "home:5", "x"]);
-    assert!(err.contains("'home' has no tab 5"), "{err}");
+    assert!(err.contains("there's no tab home:5"), "{err}");
 
     // The name goes with its workspace, once Hyprland drops it.
     env.ok(&["tab", "rename", "home:3", "mail"]);
@@ -1738,8 +1756,9 @@ fn tab_send_renames_a_tab_into_another_space_and_goes_there() {
     assert_eq!(env.active(), "s2:2", "after mail's tabs");
     assert_eq!(env.windows(), ["s1:1", "s2:2", "s2:2", "s2:1"]);
     let rows = env.ls_json();
-    assert_eq!(rows[1]["tabs"], serde_json::json!({}));
-    assert_eq!(rows[2]["tabs"], serde_json::json!({ "2": "server" }));
+    assert_eq!(rows.len(), 3);
+    assert_eq!(env.tab_names(1), json!({}));
+    assert_eq!(env.tab_names(2), json!({ "s2:2": "server" }));
 
     // Going back lands on a tab ren still has.
     env.ok(&["go", "ren"]);
@@ -1747,7 +1766,7 @@ fn tab_send_renames_a_tab_into_another_space_and_goes_there() {
 
     // Another tab than the one you're on, and ren's only one: it ends.
     env.ok(&["go", "mail"]);
-    env.ok(&["tab", "send", "ren:1", "s2"]);
+    env.ok(&["tab", "send", "s1:1", "s2"]);
     assert_eq!(env.active(), "s2:3");
     assert_eq!(env.ls_json().len(), 2);
     let visits = fs::read_to_string(env.state().join("last")).unwrap();
@@ -1778,15 +1797,15 @@ fn tab_send_moves_the_windows_of_homes_tabs() {
     assert_eq!(env.windows(), ["1", "s1:2", "s1:2", "s1:1"]);
     assert_eq!(env.active(), "s1:2");
     assert_eq!(
-        env.ls_json()[1]["tabs"],
-        serde_json::json!({ "2": "mail" }),
+        env.tab_names(1),
+        json!({ "s1:2": "mail" }),
         "it keeps its name"
     );
 
     env.ok(&["tab", "send", "home"]);
     assert_eq!(env.windows(), ["1", "2", "2", "s1:1"]);
     assert_eq!(env.active(), "2");
-    assert_eq!(env.ls_json()[0]["tabs"], serde_json::json!({ "2": "mail" }));
+    assert_eq!(env.tab_names(0), json!({ "home:2": "mail" }));
     env.ok(&["go", "ren"]);
     assert_eq!(env.active(), "s1:1");
 }
@@ -1800,7 +1819,7 @@ fn tab_reorder_moves_a_tab_among_its_spaces() {
     env.add_window("s2:1");
     env.set_active("s1:2");
     env.ok(&["tab", "rename", "s1:4", "server"]);
-    let tabs = |env: &Env| env.ls_json()[1]["tabs"].clone();
+    let tabs = |env: &Env| env.tab_names(1);
 
     // Last to first: the others make room, on the numbers the space has.
     assert_eq!(
@@ -1809,13 +1828,13 @@ fn tab_reorder_moves_a_tab_among_its_spaces() {
     );
     assert_eq!(env.windows(), ["s1:2", "s1:4", "s1:1", "s2:1"]);
     assert_eq!(env.active(), "s1:4", "still on the same tab");
-    assert_eq!(tabs(&env), serde_json::json!({ "1": "server" }));
+    assert_eq!(tabs(&env), json!({ "s1:1": "server" }));
 
     // And back, past the end being last.
-    env.ok(&["tab", "reorder", "ren:1", "9"]);
+    env.ok(&["tab", "reorder", "s1:1", "9"]);
     assert_eq!(env.windows(), ["s1:1", "s1:2", "s1:4", "s2:1"]);
     assert_eq!(env.active(), "s1:2");
-    assert_eq!(tabs(&env), serde_json::json!({ "4": "server" }));
+    assert_eq!(tabs(&env), json!({ "s1:4": "server" }));
 
     // Going back to the space lands on the tab you left, wherever it is now.
     env.ok(&["go", "s2"]);
@@ -1831,7 +1850,7 @@ fn tab_reorder_moves_a_tab_among_its_spaces() {
     let err = env.fails(&["tab", "reorder", "s1:1", "0"]);
     assert!(err.contains("positions start at 1"), "{err}");
     let err = env.fails(&["tab", "reorder", "s1:3", "1"]);
-    assert!(err.contains("has no tab 3"), "{err}");
+    assert!(err.contains("there's no tab s1:3"), "{err}");
 }
 
 #[test]
@@ -1848,12 +1867,12 @@ fn tab_reorder_moves_the_windows_of_homes_tabs() {
     env.ok(&["tab", "reorder", "home:3", "1"]);
     assert_eq!(env.windows(), ["2", "3", "3", "13"]);
     assert_eq!(env.active(), "1");
-    assert_eq!(env.ls_json()[0]["tabs"], serde_json::json!({ "3": "mail" }));
+    assert_eq!(env.tab_names(0), json!({ "home:3": "mail" }));
 
     env.ok(&["tab", "reorder", "home:3", "2"]);
     assert_eq!(env.windows(), ["3", "2", "2", "13"]);
     assert_eq!(env.active(), "1");
-    assert_eq!(env.ls_json()[0]["tabs"], serde_json::json!({ "2": "mail" }));
+    assert_eq!(env.tab_names(0), json!({ "home:2": "mail" }));
 }
 
 #[test]
@@ -1888,12 +1907,12 @@ fn tab_close_closes_a_tabs_windows_and_moves_on_to_another() {
 
     // The one you're on: the next tab, or with none after it, the one before.
     assert_eq!(
-        env.ok(&["tab", "close", "ren:1"]),
+        env.ok(&["tab", "close", "s1:1"]),
         "Closed 1 window on tab 1\n"
     );
     assert_eq!(env.active(), "s1:4");
     let err = env.fails(&["tab", "close", "s1:9"]);
-    assert!(err.contains("has no tab 9"), "{err}");
+    assert!(err.contains("there's no tab s1:9"), "{err}");
 
     // Empty, it's only left.
     env.set_active("s1:6");
@@ -1922,10 +1941,7 @@ fn tab_rename_and_close_take_the_tab_you_are_on() {
         env.ok(&["tab", "rename", "server"]),
         "Named tab 2 'server'\n"
     );
-    assert_eq!(
-        env.ls_json()[1]["tabs"],
-        serde_json::json!({ "2": "server" })
-    );
+    assert_eq!(env.tab_names(1), json!({ "s1:2": "server" }));
     assert_eq!(env.ok(&["tab", "close"]), "Closed 1 window on tab 2\n");
     assert_eq!(env.windows(), ["1", "s1:1"]);
     assert_eq!(env.active(), "s1:1");
@@ -1951,20 +1967,19 @@ fn spaces_and_tabs_have_their_own_commands() {
         &["tab", "rename", "s1", "x"][..],
         &["tab", "reorder", "s1", "1"],
         &["tab", "close", "s1"],
+        // Nor is what a space is called with a number one.
+        &["tab", "close", "ren:2"],
     ] {
         let err = env.fails(args);
-        assert!(err.contains("'s1' isn't a tab"), "{err}");
+        assert!(err.contains("isn't a tab"), "{err}");
     }
     assert_eq!(env.windows(), ["s1:1", "s1:2"]);
 
     // Even for a space called as a tab would be given.
-    env.ok(&["rename", "s1", "work:2"]);
-    env.ok(&["tab", "rename", "work:2:2", "server"]);
-    assert_eq!(
-        env.ls_json()[1]["tabs"],
-        serde_json::json!({ "2": "server" })
-    );
-    env.ok(&["close", "work:2"]);
+    env.ok(&["rename", "s1", "s1:2"]);
+    env.ok(&["tab", "rename", "s1:2", "server"]);
+    assert_eq!(env.tab_names(1), json!({ "s1:2": "server" }));
+    env.ok(&["close", "s1:2"]);
     assert!(env.windows().is_empty());
 }
 
@@ -2030,6 +2045,8 @@ fn ls_lists_spaces_with_counts() {
     env.set_active("s1:2");
     // One named by something else isn't a space.
     env.add_window("tax:1");
+    let firefox = "org.mozilla.firefox".to_string();
+    env.hypr.lock().unwrap().classes.insert(3, firefox);
 
     assert_eq!(
         env.ok(&["ls"]),
@@ -2037,7 +2054,13 @@ fn ls_lists_spaces_with_counts() {
          * s1    ren   2 windows    ~/Projects/ren\n"
     );
     let rows = env.ls_json();
-    assert_eq!(rows[1]["workspaces"], json!([1, 2]));
+    assert_eq!(
+        rows[1]["tabs"],
+        json!([
+            { "id": "s1:1", "slot": 1, "monitor": "eDP-1", "label": "ren", "named": false, "shown": false, "windows": 1, "status": null },
+            { "id": "s1:2", "slot": 2, "monitor": "eDP-1", "label": "Firefox", "named": false, "shown": true, "windows": 1, "status": null },
+        ])
+    );
     assert_eq!(rows[0]["folder"], Value::Null);
     assert_eq!(rows[1]["left_at"], 0, "never left");
     assert_eq!(rows.len(), 2);
@@ -2098,13 +2121,13 @@ fn ls_lists_each_spaces_terminals_by_what_they_run() {
     let rows = env.ls_json();
     assert_eq!(
         rows[0]["terminals"],
-        json!([{ "address": notes, "tab": 1, "folder": env.dir("").display().to_string(), "program": null, "label": "~", "status": null }])
+        json!([{ "address": notes, "tab": "home:1", "folder": env.dir("").display().to_string(), "program": null, "label": "~", "status": null }])
     );
     assert_eq!(
         rows[1]["terminals"],
         json!([
-            { "address": agent, "tab": 1, "folder": ren.display().to_string(), "program": "claude", "label": "claude", "status": null },
-            { "address": shell, "tab": 2, "folder": ren.join("src").display().to_string(), "program": null, "label": "src", "status": null },
+            { "address": agent, "tab": "s1:1", "folder": ren.display().to_string(), "program": "claude", "label": "claude", "status": null },
+            { "address": shell, "tab": "s1:2", "folder": ren.join("src").display().to_string(), "program": null, "label": "src", "status": null },
         ])
     );
     // The space still goes by its first terminal's checkout.
@@ -2211,7 +2234,7 @@ fn watch_shows_what_core_reports_and_clears_done_once_seen() {
     let other = env.add_window("s1:2");
     let u = core.add(&other, &ren);
     env.add_window("1");
-    env.set_active("1");
+    env.set_active("s1:1");
 
     let watch = Watch::start(&env);
     let status = |rows: &[Value]| rows[1]["status"].clone();
@@ -2220,6 +2243,8 @@ fn watch_shows_what_core_reports_and_clears_done_once_seen() {
         Value::Null
     );
     watch.joined(&env);
+    // Its tabs show, and you are in neither window.
+    env.event("activewindowv2>>");
 
     // Core says so as it happens.
     core.event(
@@ -2247,9 +2272,8 @@ fn watch_shows_what_core_reports_and_clears_done_once_seen() {
         "activewindowv2>>{}",
         agent.trim_start_matches("0x")
     ));
-    let rows = watch.next_rows(Duration::from_secs(1));
-    assert_eq!(rows[1]["terminals"][0]["status"], Value::Null);
-    assert_eq!(rows[1]["terminals"][1]["status"], "done");
+    let tabs = watch.next_tabs(Duration::from_secs(1));
+    assert_eq!(tabs, [Value::Null, json!("done")]);
 
     // Its next turn ends while you're elsewhere: done again.
     env.event("activewindowv2>>");
@@ -2265,11 +2289,7 @@ fn watch_shows_what_core_reports_and_clears_done_once_seen() {
         json!({ "status": { "state": "done" }, "records": {}, "reported": true }),
     );
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        let rows = watch.next_rows(Duration::from_secs(2));
-        if rows[1]["terminals"][0]["status"] == "done" {
-            break;
-        }
+    while watch.next_tabs(Duration::from_secs(2))[0] != "done" {
         assert!(std::time::Instant::now() < deadline, "never done again");
     }
 
@@ -2535,7 +2555,7 @@ fn watch_shows_native_status_clears_done_on_focus_and_prunes() {
     let agent = env.add_terminal("s1:1", &app);
     let other = env.add_terminal("s1:2", &app);
     env.add_window("1");
-    env.set_active("1");
+    env.set_active("s1:1");
 
     let watch = Watch::start(&env);
     let status = |rows: &[Value]| rows[1]["status"].clone();
@@ -2544,6 +2564,8 @@ fn watch_shows_native_status_clears_done_on_focus_and_prunes() {
         Value::Null
     );
     watch.joined(&env);
+    // Its tabs show, and you are in neither window.
+    env.event("activewindowv2>>");
 
     env.ok(&["status", "working", "--window", &agent]);
     assert_eq!(status(&watch.next_rows(Duration::from_secs(1))), "working");
@@ -2551,13 +2573,7 @@ fn watch_shows_native_status_clears_done_on_focus_and_prunes() {
     env.ok(&["status", "done", "--window", &agent]);
     env.ok(&["status", "done", "--window", &other]);
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        let rows = watch.next_rows(Duration::from_secs(2));
-        if rows[1]["terminals"][0]["status"] == "done"
-            && rows[1]["terminals"][1]["status"] == "done"
-        {
-            break;
-        }
+    while watch.next_tabs(Duration::from_secs(2)) != ["done", "done"] {
         assert!(std::time::Instant::now() < deadline, "never both done");
     }
 
@@ -2567,23 +2583,16 @@ fn watch_shows_native_status_clears_done_on_focus_and_prunes() {
         "activewindowv2>>{}",
         agent.trim_start_matches("0x")
     ));
-    let rows = watch.next_rows(Duration::from_secs(1));
-    assert_eq!(rows[1]["terminals"][0]["status"], Value::Null);
-    assert_eq!(rows[1]["terminals"][1]["status"], "done");
+    let tabs = watch.next_tabs(Duration::from_secs(1));
+    assert_eq!(tabs, [Value::Null, json!("done")]);
     assert_eq!(env.ls_json()[1]["terminals"][0]["status"], Value::Null);
 
     // Its next turn ends while you're elsewhere: `done` again.
     env.event("activewindowv2>>");
     env.ok(&["status", "working", "--window", &agent]);
-    assert_eq!(
-        watch.next_rows(Duration::from_secs(1))[1]["terminals"][0]["status"],
-        "working"
-    );
+    assert_eq!(watch.next_tabs(Duration::from_secs(1))[0], "working");
     env.ok(&["status", "done", "--window", &agent]);
-    assert_eq!(
-        watch.next_rows(Duration::from_secs(1))[1]["terminals"][0]["status"],
-        "done"
-    );
+    assert_eq!(watch.next_tabs(Duration::from_secs(1))[0], "done");
 
     // Closing a window prunes its status file.
     let status_file = env
@@ -2768,6 +2777,15 @@ impl Watch {
             .as_array()
             .unwrap()
             .clone()
+    }
+
+    /// What the agents in the first monitor's tabs are doing, in the next line
+    /// it prints within `within`.
+    #[track_caller]
+    fn next_tabs(&self, within: std::time::Duration) -> Vec<Value> {
+        let state = self.next_state(within);
+        let tabs = state["monitors"][0]["tabs"].as_array().unwrap().iter();
+        tabs.map(|tab| tab["status"].clone()).collect()
     }
 
     /// The next line it prints within `within`.
@@ -2968,7 +2986,7 @@ fn watch_shows_each_monitors_tabs() {
     let env = Env::new();
     let (ren, notes) = (env.dir("ren"), env.dir("notes"));
     env.add_terminal("s1:1", &ren);
-    env.add_terminal("s1:3", &notes);
+    let agent = env.add_terminal("s1:3", &notes);
     env.add_window("s1:12");
     env.add_window("s2:1");
     env.add_window("2");
@@ -2986,7 +3004,7 @@ fn watch_shows_each_monitors_tabs() {
         tabs.iter()
             .map(|t| {
                 json!([
-                    t["key"],
+                    t["id"],
                     t["slot"],
                     t["label"],
                     t["named"],
@@ -2998,31 +3016,42 @@ fn watch_shows_each_monitors_tabs() {
     };
     let watch = Watch::start(&env);
     let state = watch.settled(Duration::from_millis(400));
-    assert_eq!(state["version"], 1);
+    assert_eq!(state["version"], 2);
     assert_eq!(state["focused"], "eDP-1");
     assert_eq!(state["monitors"][0]["space"], "s1");
-    assert_eq!(state["monitors"][0]["tab"], 3);
+    assert_eq!(state["monitors"][0]["tab"], "s1:3");
     assert_eq!(state["monitors"][0]["tiled"], true);
     assert_eq!(
         tabs(&state, 0),
         [
-            json!([1, 1, "server", true, 1, false]),
-            json!([3, 3, "notes", false, 1, true]),
+            json!(["s1:1", 1, "server", true, 1, false]),
+            json!(["s1:3", 3, "notes", false, 1, true]),
         ]
     );
     assert_eq!(state["monitors"][1]["name"], "DP-1");
     assert_eq!(
         tabs(&state, 1),
-        [json!([12, 2, "Firefox", false, 1, true])],
+        [json!(["s1:12", 2, "Firefox", false, 1, true])],
         "another monitor's are its own"
     );
+
+    env.ok(&["status", "waiting", "--window", &agent]);
+    let state = watch.settled(Duration::from_millis(600));
+    let shown: Vec<_> = state["monitors"][0]["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .collect();
+    assert_eq!(shown[0]["status"], Value::Null);
+    assert_eq!(shown[1]["status"], "waiting");
+    assert_eq!(state["spaces"][1]["status"], "waiting");
 
     // A new tab is empty until something opens on it.
     watch.joined(&env);
     env.set_active("s1:4");
     env.event("workspacev2>>-1,s1:4");
     let state = watch.settled(Duration::from_millis(400));
-    assert_eq!(tabs(&state, 0)[2], json!([4, 4, "", false, 0, true]));
+    assert_eq!(tabs(&state, 0)[2], json!(["s1:4", 4, "", false, 0, true]));
     assert_eq!(state["monitors"][0]["tiled"], false);
 
     // `home`'s are numbers until named.
@@ -3030,7 +3059,7 @@ fn watch_shows_each_monitors_tabs() {
     env.event("workspacev2>>2,2");
     let state = watch.settled(Duration::from_millis(400));
     assert_eq!(state["monitors"][0]["space"], "home");
-    assert_eq!(tabs(&state, 0)[1], json!([2, 2, "", false, 1, true]));
+    assert_eq!(tabs(&state, 0)[1], json!(["home:2", 2, "", false, 1, true]));
 
     // Unplugged, its tabs come after the ones left.
     env.set_active("s1:3");
@@ -3041,9 +3070,12 @@ fn watch_shows_each_monitors_tabs() {
     let keys: Vec<Value> = tabs(&state, 0)
         .iter()
         .map(|t| json!([t[0], t[1]]))
-        .filter(|t| t[0] != 4)
+        .filter(|t| t[0] != "s1:4")
         .collect();
-    assert_eq!(keys, [json!([1, 1]), json!([12, 2]), json!([3, 3])]);
+    assert_eq!(
+        keys,
+        [json!(["s1:1", 1]), json!(["s1:12", 2]), json!(["s1:3", 3])]
+    );
 }
 
 #[test]
@@ -3185,9 +3217,9 @@ fn each_monitor_has_its_own_tabs() {
     env.ok(&["tab", "go", "s1:2"]);
     assert_eq!(env.active(), "s1:2");
     env.ok(&["tab", "rename", "s1:13", "logs"]);
-    assert_eq!(env.ls_json()[1]["tabs"], json!({ "13": "logs" }));
+    assert_eq!(env.tab_names(1), json!({ "s1:13": "logs" }));
     let err = env.fails(&["tab", "go", "s1:9"]);
-    assert!(err.contains("has no tab 9"), "{err}");
+    assert!(err.contains("there's no tab s1:9"), "{err}");
 }
 
 #[test]
@@ -3297,8 +3329,10 @@ fn an_unplugged_monitors_tabs_are_numbered_among_the_ones_left() {
     env.set_active("s1:2");
     env.unplug();
     env.ok(&["tab", "rename", "s1:11", "test"]);
-    let guests = |env: &Env| env.ls_json()[1]["guests"].clone();
-    assert_eq!(guests(&env), json!({ "11": 3 }));
+    assert_eq!(
+        env.tab_slots(),
+        json!([["s1:1", 1], ["s1:2", 2], ["s1:11", 3]])
+    );
 
     // By its number, or stepping to it as they show.
     env.ok(&["tab", "go", "3"]);
@@ -3315,7 +3349,7 @@ fn an_unplugged_monitors_tabs_are_numbered_among_the_ones_left() {
     assert_eq!(env.active(), "s1:11");
     env.ok(&["tab", "new"]);
     assert_eq!(env.active(), "s1:4");
-    assert_eq!(guests(&env), json!({ "11": 3 }));
+    assert_eq!(env.tab_slots()[2], json!(["s1:11", 3]));
 
     // Where you left the space is still there.
     env.ok(&["tab", "go", "3"]);
@@ -3325,8 +3359,13 @@ fn an_unplugged_monitors_tabs_are_numbered_among_the_ones_left() {
 
     // Back, it's the other monitor's tab 1 again, with the name it had.
     env.plug_in("s1:11");
-    assert_eq!(guests(&env), json!({}));
-    assert_eq!(env.ls_json()[1]["tabs"], json!({ "11": "test" }));
+    assert!(
+        env.tab_slots()
+            .as_array()
+            .unwrap()
+            .contains(&json!(["s1:11", 1]))
+    );
+    assert_eq!(env.tab_names(1), json!({ "s1:11": "test" }));
 }
 
 #[test]
@@ -3345,9 +3384,11 @@ fn an_unplugged_monitors_tab_put_somewhere_by_hand_stays() {
     );
     assert_eq!(env.windows(), ["s1:2", "s1:3", "s1:1"]);
     assert_eq!(env.active(), "s1:3", "with you on the tab you were on");
-    let row = &env.ls_json()[1];
-    assert_eq!(row["guests"], json!({}));
-    assert_eq!(row["tabs"], json!({ "1": "test" }));
+    assert_eq!(
+        env.tab_slots(),
+        json!([["s1:1", 1], ["s1:2", 2], ["s1:3", 3]])
+    );
+    assert_eq!(env.tab_names(1), json!({ "s1:1": "test" }));
 }
 
 #[test]

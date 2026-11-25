@@ -91,8 +91,8 @@ enum Cmd {
         #[arg(long)]
         pid: Option<u32>,
     },
-    /// Print the monitors and the spaces, with each monitor's tabs, as a line
-    /// of JSON each time they change.
+    /// Print what the plugin shows, as a line of JSON each time it changes. For
+    /// the plugin alone, it changes with it: scripts read `space ls --json`.
     Watch {
         /// Play a sound when an agent needs you or finishes unseen.
         #[arg(long)]
@@ -106,9 +106,8 @@ enum Cmd {
     /// on: go to another tab, or end the space.
     #[command(hide = true)]
     Emptied { workspace: String },
-    /// Open, go to, name, arrange, close and move tabs. A tab is given as
-    /// `<space>:<n>`, by what its space is called or its id, and what its
-    /// workspace is numbered: 1-10 on the first monitor, 11-20 on the next.
+    /// Open, go to, name, arrange, close and move tabs. A tab is given by its
+    /// id, as `space ls --json` shows it.
     #[command(subcommand)]
     Tab(TabCmd),
     /// Move the focused window to another space or tab.
@@ -121,8 +120,7 @@ enum TabCmd {
     /// Open a new tab in the active space, with a terminal in its folder; in
     /// `home`, an empty one.
     New,
-    /// Go to tab N of the active space on this monitor, or a tab given as
-    /// `<space>:<n>`.
+    /// Go to tab N of the active space on this monitor, or a tab by its id.
     Go {
         #[arg(value_name = "N", value_parser = tab)]
         tab: String,
@@ -133,29 +131,29 @@ enum TabCmd {
     Prev,
     /// Name a tab, the one you are on unless you say which. An empty name has
     /// it called after its window again (in `home`, just its number).
-    #[command(override_usage = "space tab rename [SPACE:N] <NAME>")]
+    #[command(override_usage = "space tab rename [TAB] <NAME>")]
     Rename {
-        #[arg(value_name = "SPACE:N")]
+        #[arg(value_name = "TAB")]
         first: String,
         #[arg(value_name = "NAME")]
         second: Option<String>,
     },
     /// Move a tab to a position among its space's tabs, counting from 1.
     Reorder {
-        #[arg(value_name = "SPACE:N")]
+        #[arg(value_name = "TAB")]
         tab: String,
         position: usize,
     },
     /// Close every window of a tab, the one you are on unless you say which.
     Close {
-        #[arg(value_name = "SPACE:N")]
+        #[arg(value_name = "TAB")]
         tab: Option<String>,
     },
     /// Move a tab, the one you are on unless you say which, to another space
     /// (or next or prev), after the tabs there, and go with it.
-    #[command(override_usage = "space tab send [SPACE:N] <SPACE>")]
+    #[command(override_usage = "space tab send [TAB] <SPACE>")]
     Send {
-        #[arg(value_name = "SPACE:N")]
+        #[arg(value_name = "TAB")]
         first: String,
         #[arg(value_name = "SPACE")]
         second: Option<String>,
@@ -189,7 +187,7 @@ fn slot(raw: &str) -> Result<u8, String> {
     name::parse_slot(raw).ok_or_else(|| format!("'{raw}' isn't a tab: use 1-{}", name::SLOTS))
 }
 
-/// A slot, or a tab as `<space>:<n>`.
+/// A slot, or a tab's id.
 fn tab(raw: &str) -> Result<String, String> {
     if !raw.contains(':') {
         slot(raw)?;

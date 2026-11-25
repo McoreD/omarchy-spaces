@@ -2,18 +2,18 @@
 // and the sidebar show of the spaces comes from one line of `space watch`.
 
 // The version of its lines this reads (src/view.rs).
-const VERSION = 1
+const VERSION = 2
 
 // Before there is any.
 export const EMPTY = { focused: "", monitors: [], spaces: [] }
-const NO_MONITOR = { name: "", space: "", key: 0, refresh: 0, tiled: false, tabs: [] }
+const NO_MONITOR = { name: "", space: "", tab: "", refresh: 0, tiled: false, tabs: [] }
 
 // A line of `space watch`, or throws with a readable message:
 //   focused:  the monitor you are on, by name
-//   monitors: [{ name, space, key, refresh, tiled, tabs }], the space and tab
-//             each shows (key 0 on a workspace without a number), and the
-//             tabs its bar does: [{ key, slot, label, named, status, windows,
-//             active }], slot 0 for no number
+//   monitors: [{ name, space, tab, refresh, tiled, tabs }], the space and tab
+//             each shows, by their ids (tab "" on a workspace without a
+//             number), and the tabs its bar does: [{ id, slot, label, named,
+//             status, windows, active }], slot 0 for no number
 //   spaces:   the rows, in the sidebar's order
 export function parseState(text) {
   let state
@@ -37,13 +37,13 @@ export function parseState(text) {
       .map((monitor) => ({
         name: monitor.name,
         space: monitor.space,
-        key: number(monitor.tab),
+        tab: typeof monitor.tab === "string" ? monitor.tab : "",
         refresh: number(monitor.refresh),
         tiled: monitor.tiled === true,
         tabs: (Array.isArray(monitor.tabs) ? monitor.tabs : [])
-          .filter((tab) => tab && number(tab.key) > 0)
+          .filter((tab) => tab && typeof tab.id === "string" && tab.id !== "")
           .map((tab) => ({
-            key: tab.key,
+            id: tab.id,
             slot: number(tab.slot),
             label: typeof tab.label === "string" ? tab.label : "",
             named: tab.named === true,
@@ -59,7 +59,6 @@ export function parseState(text) {
         label: typeof row.label === "string" && row.label ? row.label : row.id,
         named: row.named === true,
         icon: typeof row.icon === "string" ? row.icon : "",
-        folder: typeof row.folder === "string" ? row.folder : "",
         active: row.active === true,
         windows: typeof row.windows === "number" ? row.windows : -1,
         leftAt: number(row.left_at),
@@ -82,11 +81,11 @@ export function focusedMonitor(state) {
   return monitorNamed(state, state.focused)
 }
 
-// The monitor that shows a tab, given as its workspace (`s1:2`), and the tab:
-// `{ monitor, tab }`, or null when none does.
-export function findTab(state, workspace) {
+// The monitor whose bar has a tab, by its id, and the tab: `{ monitor, tab }`,
+// or null when none does.
+export function findTab(state, id) {
   for (const monitor of state.monitors) {
-    const tab = monitor.tabs.find((t) => monitor.space + ":" + t.key === workspace)
+    const tab = monitor.tabs.find((t) => t.id === id)
     if (tab) return { monitor, tab }
   }
   return null
@@ -172,7 +171,7 @@ export function rowActions(row) {
 // `home` doesn't.
 export function tabActions(tab, model, elsewhere) {
   if (!tab) return []
-  const leavable = model.space !== "home" || model.tabs.some((t) => t.key !== tab.key && t.windows > 0)
+  const leavable = model.space !== "home" || model.tabs.some((t) => t.id !== tab.id && t.windows > 0)
   return [
     { id: "rename-tab", icon: "\u{f0cb6}", label: "Rename", enabled: true, hint: "", separatorBefore: false },
     {
@@ -215,8 +214,8 @@ export function stepAction(actions, from, by) {
   return -1
 }
 
-// The command that gives a space (its id) or a tab (its workspace, `s1:2`) a
-// name. Ids never have a colon.
+// The command that gives a space or a tab, by its id, a name. Only tabs' ids
+// have a colon.
 export function renameCommand(target, name) {
   return target.includes(":") ? ["space", "tab", "rename", target, name] : ["space", "rename", target, name]
 }
@@ -574,7 +573,7 @@ export function tabDropIndex(widths, from, dx, spacing) {
 export function reorderTabs(model, from, to) {
   return {
     space: model.space,
-    tabs: moveRow(model.tabs, from, to).map((tab, i) => Object.assign({}, tab, { key: model.tabs[i].key, slot: model.tabs[i].slot })),
+    tabs: moveRow(model.tabs, from, to).map((tab, i) => Object.assign({}, tab, { id: model.tabs[i].id, slot: model.tabs[i].slot })),
   }
 }
 

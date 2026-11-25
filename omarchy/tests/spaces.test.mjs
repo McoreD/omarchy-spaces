@@ -4,35 +4,35 @@ import assert from "node:assert/strict"
 import { cursorIndex, EMPTY, filterIcons, gridMove, isGlyph, parseEmojis, parseGlyphs, badgeColor, headerOnBar, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs } from "../Spaces.mjs"
 
 // A line of `space watch`, with a tab on each of two monitors.
-const line = (spaces, more) => JSON.stringify({ version: 1, focused: "eDP-1", monitors: [
-  { name: "eDP-1", space: "s1", tab: 2, refresh: 120, tiled: true, tabs: [
-    { key: 1, slot: 1, label: "server", named: true, status: "waiting", windows: 2, active: false },
-    { key: 2, slot: 2, label: "claude", named: false, status: null, windows: 1, active: true },
+const line = (spaces, more) => JSON.stringify({ version: 2, focused: "eDP-1", monitors: [
+  { name: "eDP-1", space: "s1", tab: "s1:2", refresh: 120, tiled: true, tabs: [
+    { id: "s1:1", slot: 1, label: "server", named: true, status: "waiting", windows: 2, active: false },
+    { id: "s1:2", slot: 2, label: "claude", named: false, status: null, windows: 1, active: true },
   ] },
-  { name: "DP-1", space: "s1", tab: 11, refresh: 60, tiled: false, tabs: [
-    { key: 11, slot: 1, label: "", named: false, status: null, windows: 0, active: true },
+  { name: "DP-1", space: "s1", tab: "s1:11", refresh: 60, tiled: false, tabs: [
+    { id: "s1:11", slot: 1, label: "", named: false, status: null, windows: 0, active: true },
   ] },
 ], spaces, ...more })
 const rowsOf = (spaces) => parseState(line(spaces)).spaces
 
 const json = JSON.stringify([
-  { id: "home", label: "home", named: false, folder: null, active: false, windows: 4, workspaces: [1, 2], last: 2, left_at: 1000 },
-  { id: "s1", label: "ren", named: false, folder: "/home/me/Projects/ren", active: true, windows: 3, workspaces: [1], last: 1, left_at: 3000 },
-  { id: "s2", label: "renspace", named: false, folder: "/home/me/dev/ren/renspace", active: false, windows: 0, workspaces: [], last: 1, left_at: 2000 },
-  { id: "s3", label: "Tax 2026", named: true, folder: "/home/me/tax", active: false, windows: null, workspaces: null, last: 1, left_at: 0 },
+  { id: "home", label: "home", named: false, active: false, windows: 4, left_at: 1000 },
+  { id: "s1", label: "ren", named: false, active: true, windows: 3, left_at: 3000 },
+  { id: "s2", label: "renspace", named: false, active: false, windows: 0, left_at: 2000 },
+  { id: "s3", label: "Tax 2026", named: true, active: false, windows: null, left_at: 0 },
 ])
 
 test("parses a line of space watch", () => {
   const state = parseState(line(JSON.parse(json)))
   assert.equal(state.focused, "eDP-1")
-  assert.deepEqual(state.monitors[0].tabs[1], { key: 2, slot: 2, label: "claude", named: false, status: "", windows: 1, active: true })
-  assert.deepEqual(state.monitors.map((m) => [m.name, m.space, m.key, m.refresh, m.tiled]), [["eDP-1", "s1", 2, 120, true], ["DP-1", "s1", 11, 60, false]])
+  assert.deepEqual(state.monitors[0].tabs[1], { id: "s1:2", slot: 2, label: "claude", named: false, status: "", windows: 1, active: true })
+  assert.deepEqual(state.monitors.map((m) => [m.name, m.space, m.tab, m.refresh, m.tiled]), [["eDP-1", "s1", "s1:2", 120, true], ["DP-1", "s1", "s1:11", 60, false]])
   const rows = state.spaces
   assert.equal(rows.length, 4)
-  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, icon: "", folder: "", active: false, windows: 4, leftAt: 1000, status: "" })
+  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, icon: "", active: false, windows: 4, leftAt: 1000, status: "" })
   assert.equal(rows[3].windows, -1, "no count without Hyprland")
   assert.equal(rows[3].named, true)
-  assert.deepEqual(rowsOf([{ folder: "/x" }]), [], "rows without an id are dropped")
+  assert.deepEqual(rowsOf([{ label: "x" }]), [], "rows without an id are dropped")
   assert.equal(rowsOf([{ id: "s9" }])[0].label, "s9", "no label: the id")
   assert.deepEqual(rowsOf([{ id: "s1", status: "waiting" }, { id: "s2", status: "asleep" }]).map((r) => r.status), ["waiting", ""], "an unknown status is idle")
 })
@@ -42,13 +42,13 @@ test("says when space watch isn't one it can read", () => {
   assert.throws(() => parseState("{}"), /unexpected/)
   assert.throws(() => parseState("null"), /unexpected/)
   assert.throws(() => parseState(json), /older than the plugin/)
-  assert.throws(() => parseState(line([], { version: 2 })), /different versions/)
+  assert.throws(() => parseState(line([], { version: 1 })), /different versions/)
 })
 
 test("finds monitors and their tabs", () => {
   const state = parseState(line([]))
   assert.equal(focusedMonitor(state).name, "eDP-1")
-  assert.equal(monitorNamed(state, "DP-1").key, 11)
+  assert.equal(monitorNamed(state, "DP-1").tab, "s1:11")
   assert.deepEqual(monitorNamed(state, "HDMI-1").tabs, [], "unknown yet: no tabs")
   assert.equal(focusedMonitor(EMPTY).space, "")
   assert.equal(findTab(state, "s1:1").tab.label, "server")
@@ -261,7 +261,7 @@ test("renames a space or a tab with its own command", () => {
 })
 
 test("offers to rename, move or close a tab", () => {
-  const tab = (slot, windows, active) => ({ key: slot, slot, label: "", windows, active })
+  const tab = (slot, windows, active) => ({ id: "s1:" + slot, slot, label: "", windows, active })
   const closes = (space, tabs) => tabActions(tabs[0], { space, tabs }).map((a) => [a.id, a.enabled]).at(-1)
   const moves = (tab, elsewhere) => tabActions(tab, { space: "s1", tabs: [] }, elsewhere).find((a) => a.id === "move-tab").enabled
   assert.deepEqual(tabActions(tab(2, 1, true), { space: "s1", tabs: [] }).map((a) => a.id), ["rename-tab", "move-tab", "close-tab"])
@@ -369,7 +369,7 @@ test("drags tabs, which aren't equally wide", () => {
 })
 
 test("a moved tab takes its place's number", () => {
-  const tab = (slot, label, active) => ({ key: slot, slot, label, named: false, status: "", windows: 1, active })
+  const tab = (slot, label, active) => ({ id: "s1:" + slot, slot, label, named: false, status: "", windows: 1, active })
   const model = { space: "s1", tabs: [tab(1, "a", true), tab(2, "b", false), tab(4, "c", false)] }
   const moved = reorderTabs(model, 2, 0)
   assert.deepEqual(moved, { space: "s1", tabs: [tab(1, "c", false), tab(2, "a", true), tab(4, "b", false)] })

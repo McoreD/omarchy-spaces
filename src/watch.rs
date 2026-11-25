@@ -1,6 +1,5 @@
-//! `space watch`: the monitors with their tabs, and the spaces as `space ls
-//! --json` lists them (`view.rs`), printed again, one line of JSON each time,
-//! whenever they change. The shell plugin draws the bar and the sidebar from
+//! `space watch`: the monitors with their tabs, and the spaces (`view.rs`),
+//! printed again, one line of JSON each time, whenever they change. The shell plugin draws the bar and the sidebar from
 //! it and nothing else, so where you are is decided here alone, each line
 //! being the whole of it: the plugin must not put it together from Hyprland's
 //! events too, which reach it in another order.

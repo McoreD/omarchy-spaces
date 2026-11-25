@@ -8,15 +8,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
-use serde::Serialize;
 
 use crate::browser::{self, Browser, Browsers};
 use crate::config::{self, Config};
 use crate::core;
-use crate::folder::{self, Folder};
+use crate::folder::Folder;
 use crate::hypr::{self, Hypr};
 use crate::layout::{self, Rect, Tree};
-use crate::monitors::{self, Blocks, Strip};
+use crate::list;
+use crate::monitors::{Blocks, Strip};
 use crate::name::{self, HOME, Location};
 use crate::paths;
 use crate::reserve;
@@ -26,7 +26,6 @@ use crate::spaces::{self, Store};
 use crate::state::{self, Last};
 use crate::status::{self, Status};
 use crate::terminal;
-use crate::view;
 
 /// Where `space tab go`, `new`, `next` and `prev` go. A space's workspaces
 /// are its tabs.
@@ -73,7 +72,7 @@ pub fn go_to_tab(target: Target) -> Result<()> {
     Ok(())
 }
 
-/// `space tab go <space>:<n>`: a tab of any space, on whichever monitor it is.
+/// `space tab go <id>`: a tab of any space, on whichever monitor it is.
 pub fn go_to_named_tab(tab: String) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (rows, _) = load_rows(Some(&hypr))?;
@@ -250,9 +249,6 @@ pub(crate) struct Snapshot {
     windows: BTreeMap<String, u32>,
     /// Each space's tabs, by their keys.
     workspaces: BTreeMap<String, BTreeSet<u8>>,
-    /// Where a tab shows as another number than its own, by space and key:
-    /// an unplugged monitor's, on the one that's left (`monitors::slots`).
-    guests: BTreeMap<String, BTreeMap<u8, u8>>,
     /// The windows on spaces' workspaces, `home`'s included.
     pub space_windows: Vec<SpaceWindow>,
     /// Every window, spaces' or not, for the browser's to be told apart.
@@ -272,7 +268,6 @@ pub(crate) struct Live {
     active: Option<String>,
     windows: BTreeMap<String, u32>,
     workspaces: BTreeMap<String, BTreeSet<u8>>,
-    guests: BTreeMap<String, BTreeMap<u8, u8>>,
     terminals: BTreeMap<String, Vec<Terminal>>,
     /// Windows that reported a native status via `space status` without being
     /// recognized as a terminal in `/proc`.
@@ -404,7 +399,6 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
             );
         }
     }
-    snapshot.guests = guests(&snapshot.places, &snapshot.blocks);
     if clients.iter().any(|c| c.grouped.len() > 1) {
         snapshot.group_bar = group_bar(hypr);
     }
@@ -449,31 +443,6 @@ pub(crate) fn snapshot(hypr: &Hypr) -> Result<Snapshot> {
         }
     }
     Ok(snapshot)
-}
-
-/// The tabs that show as another number than their own.
-fn guests(
-    places: &BTreeMap<(String, u8), TabPlace>,
-    blocks: &Blocks,
-) -> BTreeMap<String, BTreeMap<u8, u8>> {
-    let mut strips: BTreeMap<(&str, u8), Vec<u8>> = BTreeMap::new();
-    for ((space, key), place) in places {
-        if space != HOME
-            && let Some(block) = blocks.block(&place.monitor)
-        {
-            strips.entry((space, block)).or_default().push(*key);
-        }
-    }
-    let mut guests: BTreeMap<String, BTreeMap<u8, u8>> = BTreeMap::new();
-    for ((space, block), keys) in strips {
-        for (key, slot) in monitors::slots(keys, block) {
-            if name::block_of(key) != block {
-                let of = guests.entry(space.to_string()).or_default();
-                of.insert(key, slot);
-            }
-        }
-    }
-    guests
 }
 
 /// How high a group's bar is, as Hyprland works it out. A stacked one depends
@@ -537,7 +506,6 @@ pub(crate) fn live_from(
         active: snapshot.active().map(str::to_string),
         windows: snapshot.windows.clone(),
         workspaces: snapshot.workspaces.clone(),
-        guests: snapshot.guests.clone(),
         terminals,
         extra_agents,
         addresses,
@@ -545,21 +513,23 @@ pub(crate) fn live_from(
     }
 }
 
-fn live(hypr: &Hypr) -> Result<Live> {
+fn live(hypr: &Hypr) -> Result<Seen> {
     let core = core::list().ok().map(core::Terminals::new);
     let reports = status::load_reports(&paths::status_dir());
+    let snapshot = snapshot(hypr)?;
     let mut live = live_from(
-        &snapshot(hypr)?,
+        &snapshot,
         |window| terminal::shell_of(window.place, core.as_ref(), None),
         &reports,
     );
     // What you've seen, as `watch` notes it on core's terminals and native reports.
     live.set_statuses(terminal::Agent::seen);
-    Ok(live)
+    Ok((snapshot, live))
 }
 
-/// One space, as `space ls` and the sidebar show it.
-#[derive(Debug, Serialize)]
+/// One space, with what's known about it. What's printed of it is up to
+/// `view.rs` and `list.rs`.
+#[derive(Debug)]
 pub struct Row {
     /// What Hyprland's workspaces are named after: `s1` for `s1:1`.
     pub id: String,
@@ -571,7 +541,6 @@ pub struct Row {
     pub icon: Option<String>,
     /// The checkout (or folder) its terminal is in. `None` for `home`, and
     /// for a space that never had a terminal.
-    #[serde(flatten, serialize_with = "folder::or_null")]
     pub folder: Option<Folder>,
     pub active: bool,
     /// `None` when Hyprland can't be reached.
@@ -591,13 +560,10 @@ pub struct Row {
     pub status: Option<Status>,
     /// The names you gave its tabs, by what their workspaces are numbered.
     pub tabs: BTreeMap<u8, String>,
-    /// What its tabs that an unplugged monitor left on another show as there,
-    /// by what their workspaces are numbered; 0 for no number.
-    pub guests: BTreeMap<u8, u8>,
 }
 
 /// A terminal window, as the bar names its tab.
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct TerminalRow {
     /// Hyprland's address for the window: `0x55a4...`.
     pub address: String,
@@ -605,7 +571,6 @@ pub struct TerminalRow {
     /// a workspace without a number.
     pub tab: Option<u8>,
     /// The folder its shell is in.
-    #[serde(flatten)]
     pub folder: Folder,
     /// What runs in it (`claude`, `nvim`), or `None` at the prompt.
     pub program: Option<String>,
@@ -732,10 +697,6 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
                     .max()
             }),
             tabs,
-            guests: live
-                .and_then(|l| l.guests.get(id))
-                .cloned()
-                .unwrap_or_default(),
         }
     };
 
@@ -760,9 +721,12 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
     out
 }
 
+/// What Hyprland said, and what was made of it.
+type Seen = (Snapshot, Live);
+
 /// Reads the spaces and saves what changed about them. A failure to save is
 /// only a warning: the list itself is right.
-fn load_rows(hypr: Option<&Hypr>) -> Result<(Vec<Row>, Option<Live>)> {
+fn load_rows(hypr: Option<&Hypr>) -> Result<(Vec<Row>, Option<Seen>)> {
     let (_, rows, live) = lock_rows(hypr)?;
     Ok((rows, live))
 }
@@ -770,7 +734,7 @@ fn load_rows(hypr: Option<&Hypr>) -> Result<(Vec<Row>, Option<Live>)> {
 /// `load_rows`, with the store it read still locked, to change it further.
 /// The windows and their terminals are read before it's locked, so a slow one
 /// holds up only this command.
-fn lock_rows(hypr: Option<&Hypr>) -> Result<(Store, Vec<Row>, Option<Live>)> {
+fn lock_rows(hypr: Option<&Hypr>) -> Result<(Store, Vec<Row>, Option<Seen>)> {
     let state_dir = paths::state_dir();
     let mut known = Store::load(&state_dir)?.spaces;
     loop {
@@ -786,7 +750,7 @@ fn lock_rows(hypr: Option<&Hypr>) -> Result<(Store, Vec<Row>, Option<Live>)> {
             continue;
         }
         let last = Last::load(&state_dir)?;
-        let rows = rows(&mut store, live.as_ref(), &last);
+        let rows = rows(&mut store, live.as_ref().map(|(_, live)| live), &last);
         if let Err(e) = store.save() {
             eprintln!("space: warning: {e:#}");
         }
@@ -2002,7 +1966,7 @@ fn moved<T: PartialEq>(mut order: Vec<T>, item: T, index: usize) -> Vec<T> {
     order
 }
 
-/// `space tab reorder <space>:<n> <position>`: moves a tab to `position` among
+/// `space tab reorder <tab> <position>`: moves a tab to `position` among
 /// its space's tabs, counting from 1, past the end being last. The space
 /// keeps the numbers it has tabs on: what's on them moves along, with the
 /// names you gave them, and you stay on the tab you're on.
@@ -2040,7 +2004,10 @@ pub fn reorder_tab(tab: String, position: usize) -> Result<()> {
         .filter(elsewhere)
         .find(|ws| moves.values().any(|to| is_tab(&id, *to, ws.id, &ws.name)))
     {
-        bail!("tab {} is on another monitor", taken.name);
+        bail!(
+            "tab {} is on another monitor",
+            shown_id(taken.id, &taken.name)
+        );
     }
     let Some(&to) = moves.get(&key) else {
         return Ok(());
@@ -2180,8 +2147,16 @@ struct Tab {
     slot: u8,
 }
 
-/// The tab given as `<space>:<n>` (`s1:2`, `ren:2`), `n` being its key, or
-/// with none, the one you are on.
+/// The id of the tab a workspace is, to say which.
+fn shown_id(ws_id: i64, ws_name: &str) -> String {
+    let location = name::locate(ws_id, ws_name);
+    match location.key() {
+        Some(key) => name::tab_id(location.space(), key),
+        None => ws_name.to_string(),
+    }
+}
+
+/// The tab given by its id, or with none, the one you are on.
 fn tab_or_active(
     hypr: &Hypr,
     rows: &[Row],
@@ -2190,17 +2165,16 @@ fn tab_or_active(
 ) -> Result<Tab> {
     let here = name::locate(active.id, &active.name);
     let (space, key) = match tab {
-        Some(tab) => tab
-            .rsplit_once(':')
-            .and_then(|(space, key)| Some((space, name::parse_key(key)?)))
-            .with_context(|| format!("'{tab}' isn't a tab: give it as s1:2"))?,
+        Some(tab) => name::parse_tab_id(tab).with_context(|| {
+            format!("'{tab}' isn't a tab: give its id, as `space ls --json` shows it")
+        })?,
         None => (here.space(), here.key().context("you aren't on a tab")?),
     };
-    let id = resolve(rows, space)?;
-    let row = rows.iter().find(|r| r.id == id).expect("resolved");
-    let open = row.workspaces.as_deref().unwrap_or_default();
-    if !open.contains(&key) {
-        bail!("'{}' has no tab {key}", row.label);
+    let id = space.to_string();
+    let row = rows.iter().find(|r| r.id == id);
+    let open = row.and_then(|r| r.workspaces.as_deref());
+    if !open.is_some_and(|open| open.contains(&key)) {
+        bail!("there's no tab {}", name::tab_id(&id, key));
     }
     let workspaces = hypr.workspaces()?;
     let on = workspaces
@@ -2212,7 +2186,7 @@ fn tab_or_active(
     Ok(Tab { id, key, slot })
 }
 
-/// `space tab rename [<space>:<n>] <name>`: gives a tab, the one you are on
+/// `space tab rename [tab] <name>`: gives a tab, the one you are on
 /// by default, a name that stays, in place of its window's. An empty name has
 /// it follow its window again, or, in `home`, show just its number.
 pub fn rename_tab(tab: Option<String>, new_name: String) -> Result<()> {
@@ -2243,7 +2217,7 @@ pub fn rename_tab(tab: Option<String>, new_name: String) -> Result<()> {
 pub fn close(target: Option<String>) -> Result<()> {
     let hypr = Hypr::from_env()?;
     let (rows, live) = load_rows(Some(&hypr))?;
-    let live = live.expect("read from Hyprland");
+    let (_, live) = live.expect("read from Hyprland");
     let id = match target {
         Some(target) => resolve(&rows, &target)?,
         None => live.active.clone().unwrap_or_else(|| HOME.to_string()),
@@ -2287,7 +2261,7 @@ pub fn close(target: Option<String>) -> Result<()> {
     Ok(())
 }
 
-/// `space tab close [<space>:<n>]`: closes every window on a tab, the one you
+/// `space tab close [tab]`: closes every window on a tab, the one you
 /// are on by default, which ends it. If you are on it, you go to another of
 /// the space's tabs, as when its last window closes (`emptied`), and closing
 /// its only tab ends the space. `home` doesn't end: you stay on its last tab.
@@ -2344,7 +2318,7 @@ fn tab_beside(
     after.or(before).copied()
 }
 
-/// `space tab send [<space>:<n>] <space|next|prev>`: moves a tab, the one you
+/// `space tab send [tab] <space|next|prev>`: moves a tab, the one you
 /// are on by default, to another space, after the tabs it has, and goes
 /// there with it. Its windows stay arranged as they are and it keeps the name
 /// you gave it. A space whose only tab it was ends.
@@ -2620,13 +2594,6 @@ pub fn emptied(workspace: &str) -> Result<()> {
     leave_tab(&hypr, &id, key, emptied, focused)
 }
 
-/// What `space ls --json` prints.
-#[derive(Serialize)]
-struct List<'a> {
-    version: u32,
-    spaces: &'a [Row],
-}
-
 /// `space ls`: every space, the active one marked, with a window count.
 pub fn ls(json: bool) -> Result<()> {
     let hypr = match Hypr::from_env() {
@@ -2636,22 +2603,19 @@ pub fn ls(json: bool) -> Result<()> {
             None
         }
     };
-    let rows = match load_rows(hypr.as_ref()) {
-        Ok((rows, _)) => rows,
+    let (rows, live) = match load_rows(hypr.as_ref()) {
+        Ok(read) => read,
         Err(e) if hypr.is_some() => {
             eprintln!("space: no window counts: {e:#}");
-            load_rows(None)?.0
+            load_rows(None)?
         }
         Err(e) => return Err(e),
     };
 
     let mut out = std::io::stdout().lock();
     if json {
-        let list = List {
-            version: view::VERSION,
-            spaces: &rows,
-        };
-        serde_json::to_writer_pretty(&mut out, &list)?;
+        let hyprland = live.as_ref().map(|(snapshot, live)| (snapshot, live));
+        serde_json::to_writer_pretty(&mut out, &list::list(&rows, hyprland))?;
         writeln!(out)?;
     } else {
         write!(out, "{}", format_rows(&rows))?;
@@ -2894,7 +2858,6 @@ mod tests {
             left_at: 0,
             terminals: Vec::new(),
             status: None,
-            guests: BTreeMap::new(),
             tabs: BTreeMap::new(),
         }
     }

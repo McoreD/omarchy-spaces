@@ -18,11 +18,11 @@ def run(*command):
 
 
 def locate(workspace):
-    """The space and tab a workspace is, as `space` reads its name."""
-    match = re.fullmatch(r"(s[1-9][0-9]*):([0-9]+)", workspace["name"])
+    """The space and tab a workspace is, by their ids, as `space` reads its name."""
+    match = re.fullmatch(r"(s[1-9][0-9]*):[0-9]+", workspace["name"])
     if match:
-        return match[1], int(match[2])
-    return "home", max(workspace["id"], 0)
+        return match[1], match[0]
+    return "home", f"home:{workspace['id']}" if workspace["id"] > 0 else ""
 
 
 def hyprland():
@@ -35,7 +35,7 @@ def hyprland():
 def shell():
     said = run("omarchy-shell", "shell", "call", PLUGIN, "shown", "")
     shown = json.loads(said)
-    where = {m["name"]: (m["space"], m["key"]) for m in shown["monitors"]}
+    where = {m["name"]: (m["space"], m["tab"]) for m in shown["monitors"]}
     return shown["space"], shown["focused"], where
 
 

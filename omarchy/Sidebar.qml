@@ -57,7 +57,7 @@ Item {
   property bool searching: false
   property bool searchOnly: false
   // What is being renamed: a space's id, as `space rename` takes it, or a
-  // tab's workspace (`s1:2`), as `space tab rename` does. The name typed so
+  // tab's, as `space tab rename` does. The name typed so
   // far, and whether all of it is selected, as it starts, for typing to
   // replace. The name it had, and whether you had given it that name.
   property string renaming: ""
@@ -72,7 +72,7 @@ Item {
   // Whatever holds the keyboard: the search or a name being typed.
   readonly property bool typing: searching || naming
   // The id of the space whose menu is open, its row, and where on the screen
-  // it opens; or, opened on a tab, its workspace (`s1:2`) and the tab, which
+  // it opens; or, opened on a tab, its id and the tab, which
   // is only there while you are in its space.
   property string menuFor: ""
   readonly property var menuRow: menuFor ? rows.find(function(row) { return row.id === menuFor }) || null : null
@@ -366,11 +366,9 @@ Item {
   }
 
   // Opens the menu of a tab of the space you are in, as it does a space's.
-  function openTabMenu(key, x, y, screen) {
-    var space = screen ? Spaces.monitorNamed(root.now, screen.name).space : ""
-    if (!space) return
+  function openTabMenu(id, x, y, screen) {
     root.placeMenu(x, y, screen)
-    root.menuTabFor = space + ":" + key
+    root.menuTabFor = id
   }
 
   function placeMenu(x, y, screen) {
@@ -411,12 +409,12 @@ Item {
       return
     }
     var here = root.here
-    if (!here.key) return
+    if (!here.tab) return
     root.placeMenu(0, 0, root.focusedScreen())
     // Before the tab, so its menu doesn't flash up first.
     root.moveCentered = true
     root.movingTab = true
-    root.menuTabFor = here.space + ":" + here.key
+    root.menuTabFor = here.tab
   }
 
   // Sends the tab to a space, and you with it.
@@ -438,7 +436,7 @@ Item {
   function act(id, row) {
     root.closeMenu()
     if (id === "rename") root.startRename(row)
-    else if (id === "rename-tab") root.renameTab(row.key)
+    else if (id === "rename-tab") root.renameTab(row.id)
     else if (id === "icon") root.openIconPicker(row)
     else if (id === "clear-icon") root.run(["space", "icon", row.id, ""])
     else if (id === "close") root.run(["space", "close", row.id])
@@ -487,10 +485,10 @@ Item {
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
-  // Names a tab of the space you are in, by its key, or (0) the one you are on: the
+  // Names a tab of the space you are in, by its id, or ("") the one you are on: the
   // bar shows the name as you type it. A sidebar shown just for a search goes.
-  function renameTab(key) {
-    var target = root.here.space + ":" + (key || root.here.key)
+  function renameTab(id) {
+    var target = id || root.here.tab
     var found = Spaces.findTab(root.now, target)
     if (!found) return
     var tab = found.tab

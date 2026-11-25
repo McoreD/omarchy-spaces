@@ -226,7 +226,7 @@ BarWidget {
     root.heldTabs = Spaces.reorderTabs(held, from, to)
     settling.restart()
     // Positions count from the first tab.
-    root.run(["space", "tab", "reorder", held.space + ":" + held.tabs[from].key, String(to + 1)])
+    root.run(["space", "tab", "reorder", held.tabs[from].id, String(to + 1)])
   }
 
   // A drag doesn't outlive the tabs it's among: going to another space, or a
@@ -238,8 +238,8 @@ BarWidget {
       if (root.heldTabs.space !== root.live.space || Spaces.sameTabs(root.heldTabs, root.live)) root.settle()
       return
     }
-    var slots = function(model) { return model.space + model.tabs.map(function(tab) { return ":" + tab.key }).join("") }
-    if (slots(root.heldTabs) !== slots(root.live)) Qt.callLater(root.endDrag)
+    var ids = function(model) { return model.space + " " + model.tabs.map(function(tab) { return tab.id }).join(" ") }
+    if (ids(root.heldTabs) !== ids(root.live)) Qt.callLater(root.endDrag)
   }
 
   function settle() {
@@ -278,11 +278,11 @@ BarWidget {
 
   // Opens a tab's menu at a point on the bar's window, which need not start
   // at its screen's top when the bar is at the bottom.
-  function openTabMenu(key, x, y) {
+  function openTabMenu(id, x, y) {
     var window = root.QsWindow.window
     if (!root.sidebar || !window || !window.screen) return
     var top = root.bar && root.bar.position === "bottom" ? window.screen.height - window.height : 0
-    root.sidebar.openTabMenu(key, x, top + y, window.screen)
+    root.sidebar.openTabMenu(id, x, top + y, window.screen)
   }
 
   // The background, from the screen's edge to where the windows begin, over
@@ -508,16 +508,16 @@ BarWidget {
         // Later: the new order makes new tabs, this one among them.
         onDropped: Qt.callLater(root.drop)
         onDragCanceled: root.endDrag()
-        editing: !!root.sidebar && root.sidebar.renaming === root.model.space + ":" + modelData.key
+        editing: !!root.sidebar && root.sidebar.renaming === modelData.id
         status: modelData.status
         current: modelData.active
         cap: root.tabCap
-        onClicked: root.run(["space", "tab", "go", root.model.space + ":" + modelData.key])
+        onClicked: root.run(["space", "tab", "go", modelData.id])
         hasMenu: true
-        menuOpen: !!root.sidebar && root.sidebar.menuTabFor === root.model.space + ":" + modelData.key
+        menuOpen: !!root.sidebar && root.sidebar.menuTabFor === modelData.id
           && !!root.sidebar.menuScreen && root.sidebar.menuScreen.name === root.screenName
-        onDoubleClicked: if (root.sidebar) root.sidebar.renameTab(modelData.key)
-        onMenuRequested: function(x, y) { root.openTabMenu(modelData.key, x, y) }
+        onDoubleClicked: if (root.sidebar) root.sidebar.renameTab(modelData.id)
+        onMenuRequested: function(x, y) { root.openTabMenu(modelData.id, x, y) }
       }
     }
 
@@ -541,7 +541,7 @@ BarWidget {
         text: root.tabLabel(modelData)
         status: modelData.status
         current: modelData.active
-        onClicked: root.run(["space", "tab", "go", root.model.space + ":" + modelData.key])
+        onClicked: root.run(["space", "tab", "go", modelData.id])
       }
     }
   }

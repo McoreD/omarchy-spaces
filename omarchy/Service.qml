@@ -31,7 +31,7 @@ Item {
   function endSearch() { sidebarItem.endSearch() }
   function toggleSidebar(screen) { sidebarItem.toggleSidebar(screen) }
   function renameSpace() { sidebarItem.renameSpace() }
-  function renameTab() { sidebarItem.renameTab(0) }
+  function renameTab() { sidebarItem.renameTab("") }
   function sendTab() { sidebarItem.sendTab() }
 
   // What the sidebar and the bars show, for `just stress` to check.
@@ -39,7 +39,7 @@ Item {
     return JSON.stringify({
       space: sidebarItem.shownRows.filter(function(row) { return row.active }).map(function(row) { return row.id }),
       focused: watchItem.now.focused,
-      monitors: watchItem.now.monitors.map(function(m) { return { name: m.name, space: m.space, key: m.key } }),
+      monitors: watchItem.now.monitors.map(function(m) { return { name: m.name, space: m.space, tab: m.tab } }),
     })
   }
 

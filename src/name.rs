@@ -65,6 +65,18 @@ pub fn workspace_name(space: &str, key: u8) -> String {
     format!("{space}:{key}")
 }
 
+/// A tab's id: `s1:3`, `home:3`. Commands take it and print it, as what it's
+/// made of, the key, is for nobody else to work with.
+pub fn tab_id(space: &str, key: u8) -> String {
+    format!("{space}:{key}")
+}
+
+/// The space and key of a tab's id.
+pub fn parse_tab_id(id: &str) -> Option<(&str, u8)> {
+    let (space, key) = id.split_once(':')?;
+    (space == HOME || is_id(space)).then_some((space, parse_key(key)?))
+}
+
 /// Where a workspace sits in Spaces' terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Location {
@@ -216,6 +228,16 @@ mod tests {
             "chat", "ren:1", "S1:1", "s1:0", "s1:251", "home:1", "s1:", ":1",
         ] {
             assert_eq!(locate(-5, name), Location::Home { key: None }, "{name}");
+        }
+    }
+
+    #[test]
+    fn reads_tab_ids() {
+        for (space, key) in [("s1", 12), (HOME, 3)] {
+            assert_eq!(parse_tab_id(&tab_id(space, key)), Some((space, key)));
+        }
+        for bad in ["s1", "s1:", "s1:0", "s1:251", "ren:1", "work:2:2", "3"] {
+            assert_eq!(parse_tab_id(bad), None, "{bad}");
         }
     }
 
