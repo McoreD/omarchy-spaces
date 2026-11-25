@@ -6,11 +6,11 @@ A plugin that organizes [Omarchy](https://omarchy.org) by project.
   <img src="assets/screenshot.png" width="627" alt="A sidebar listing your spaces, beside the tabs of the open one">
 </p>
 
-Each project gets its own **space**, listed in the sidebar. Each space has its own **tabs**, shown on the bar. A tab is a regular workspace, so it can hold any windows you like.
-
-The dots show what Claude Code is doing in a space: yellow when it's working, red when it's waiting for you, and green when it's done.
-
-Your spaces are restored when you restart your computer.
+- Every project gets its own **space**.
+- Every space has its own **tabs**.
+- Every tab is a regular workspace.
+- Agent status in the sidebar, like [Herdr](https://herdr.dev).
+- Spaces are restored after a restart.
 
 ## Install
 
@@ -32,6 +32,8 @@ if package.searchpath("hypr.omarchy-spaces", package.path) then
   o.rebind("SUPER + B", "Show or hide spaces", spaces.toggle_sidebar())
 end
 ```
+
+There are [more keys you can add](docs/guide/keys.md).
 
 ## Use
 
