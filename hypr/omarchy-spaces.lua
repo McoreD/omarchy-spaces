@@ -312,16 +312,6 @@ local function move_window(slot, follow_it)
   end
 end
 
--- Omarchy's workspace keys (default/hypr/bindings/tiling.lua), for tabs.
-local function bind_tab_keys()
-  for n = 1, SLOTS do
-    local key = "code:" .. (n + 9)
-    o.rebind("SUPER + " .. key, "Go to tab " .. n, focus(n))
-    o.rebind("SUPER + SHIFT + " .. key, "Move window to tab " .. n, move_window(n))
-    o.rebind("SUPER + SHIFT + ALT + " .. key, "Move window silently to tab " .. n, move_window(n, false))
-  end
-end
-
 local PLUGIN = "com.t4t5.spaces"
 
 -- Runs a `space` command.
@@ -336,6 +326,21 @@ local function shell_call(action)
   return function()
     return "omarchy-shell shell call " .. PLUGIN .. " " .. action .. " ''"
   end
+end
+
+local next_tab, prev_tab = run("tab next"), run("tab prev")
+
+-- Omarchy's workspace keys (default/hypr/bindings/tiling.lua), for tabs. Its
+-- own next and previous go through every space's, as they are all workspaces.
+local function bind_tab_keys()
+  for n = 1, SLOTS do
+    local key = "code:" .. (n + 9)
+    o.rebind("SUPER + " .. key, "Go to tab " .. n, focus(n))
+    o.rebind("SUPER + SHIFT + " .. key, "Move window to tab " .. n, move_window(n))
+    o.rebind("SUPER + SHIFT + ALT + " .. key, "Move window silently to tab " .. n, move_window(n, false))
+  end
+  o.rebind("SUPER + TAB", "Next tab", next_tab())
+  o.rebind("SUPER + SHIFT + TAB", "Previous tab", prev_tab())
 end
 
 local function find_space()
@@ -386,8 +391,8 @@ local M = {
   rename_space = shell_call("renameSpace"),
 
   new_tab = run("tab new"),
-  next_tab = run("tab next"),
-  prev_tab = run("tab prev"),
+  next_tab = next_tab,
+  prev_tab = prev_tab,
   bind_tab_keys = bind_tab_keys,
   go_to_tab = focus,
   rename_tab = shell_call("renameTab"),

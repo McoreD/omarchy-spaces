@@ -42,7 +42,7 @@ Bind these actions rather than `space` commands: they stay the same if the comma
 | Action | Does |
 |---|---|
 | `spaces.new_tab()` | New tab, with a terminal in the space's folder |
-| `spaces.bind_tab_keys()` | Binds Omarchy's workspace keys to tabs, by itself: `super+1`–`0` to go to one, with `shift` to move the window there, and with `shift+alt` to move it and stay where you are. For other keys, bind `go_to_tab` and `move_window_to_tab` |
+| `spaces.bind_tab_keys()` | Binds Omarchy's workspace keys to tabs, by itself: `super+1`–`0` to go to one, with `shift` to move the window there, with `shift+alt` to move it and stay where you are, and `super+tab` and `super+shift+tab` for the next and previous tab. For other keys, bind the actions below |
 | `spaces.go_to_tab(n)` | Go to tab N |
 | `spaces.next_tab()` / `spaces.prev_tab()` | Next / previous tab |
 | `spaces.rename_tab()` | Name the tab you are on: type over its name on the bar, Enter to keep it, Escape to stop. An empty name has it called after its window again |

@@ -122,7 +122,9 @@ o.rebind = function(keys, _, action)
   count = count + 1
 end
 spaces.bind_tab_keys()
-equal(count, 30)
+equal(count, 32)
+equal(bound["SUPER + TAB"], "space tab next")
+equal(bound["SUPER + SHIFT + TAB"], "space tab prev")
 bound["SUPER + code:10"]()
 bound["SUPER + SHIFT + code:19"]()
 bound["SUPER + SHIFT + ALT + code:11"]()
