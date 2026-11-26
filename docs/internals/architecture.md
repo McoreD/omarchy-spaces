@@ -6,7 +6,7 @@ Spaces has three parts: a command in Rust, an Omarchy shell plugin in QML, and a
 
 It keeps no state about windows: it asks Hyprland over its socket, then dispatches.
 
-- **Terminals**: their folders and foreground programs come from their shells in `/proc`, as Omarchy's `omarchy-cmd-terminal-cwd` does. A terminal's program is the leader of the foreground process group on its shell's tty.
+- **Terminals**: their folders and foreground programs come from their shells in `/proc`, as Omarchy's `omarchy-cmd-terminal-cwd` does, plus directly launched agent sessions (like `omarchy agent`). A shell terminal's program is the leader of the foreground process group on its shell's tty.
 - **Agents**: what an agent is doing, and the conversation it's in, come from its adapter in `src/agent/`, which reads what the agent itself keeps on disk, so none needs hooks.
 - **Browsers**: what browser windows hold comes from an adapter in `src/browser/`. Chromium's reads the session files that it and those made from it keep open in their profile, matching them to Hyprland's windows by title, or the order they were opened in.
 
