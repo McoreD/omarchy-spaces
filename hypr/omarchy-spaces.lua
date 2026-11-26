@@ -379,8 +379,15 @@ local function send_tab(to)
   return run("tab send")() .. " " .. o.shell_quote(to)
 end
 
+-- With no space to send it to, you pick one.
+local pick_for_window = shell_call("sendWindow")
 local function send_window(to, follow_it)
-  assert(to, "spaces.send_window takes a space, \"next\" or \"prev\"")
+  if not to then
+    if follow_it == false then
+      return "omarchy-shell shell call " .. PLUGIN .. " sendWindow 'silent'"
+    end
+    return pick_for_window()
+  end
   return run("window send")() .. " " .. o.shell_quote(to) .. (follow_it == false and " --silent" or "")
 end
 
