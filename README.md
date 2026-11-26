@@ -13,7 +13,7 @@ Inspired by multiplexer apps like [Herdr](https://herdr.dev) and [Rex](https://s
 
 You need Omarchy 4.5 or newer.
 
-**1. Add the plugin.** Press Enter when it asks where to put it, then say yes to the notification that asks to replace the menu and workspaces on your bar.
+**1. Add the plugin.** Choose "Left" (default) when it asks where to put it. The tabs take the place of the menu and workspaces on your bar.
 
 ```sh
 omarchy plugin add https://github.com/t4t5/omarchy-spaces.git --enable

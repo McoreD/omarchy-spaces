@@ -20,13 +20,7 @@ omarchy restart shell
 
 ## The bar
 
-A notification asks whether Spaces should replace Omarchy's menu and workspaces on the bar, if you put it in the left section. Until you say yes, it asks again each time the shell starts. To do it without the notification:
-
-```sh
-~/.config/omarchy/plugins/com.t4t5.spaces/install.sh --bar replace
-```
-
-To put Omarchy's back:
+If you put the tabs in the left section, they take the place of Omarchy's menu and workspaces as the plugin first starts. A right-click on the logo still opens the menu. Spaces does this only once, so if you put Omarchy's back, they stay:
 
 ```sh
 omarchy plugin enable omarchy.menu --section left --index 0

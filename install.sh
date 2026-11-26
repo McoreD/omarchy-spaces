@@ -7,10 +7,8 @@
 #                         its version differs from the plugin's
 #   --setup               what's missing of the rest: the plugin's service runs
 #                         it as it starts. Links the Hyprland part, installs
-#                         `space` if there is none, and asks whether to take
-#                         Omarchy's menu and workspaces off the bar
-#   --bar replace         a yes to that. The bar is the user's, so nothing else
-#                         changes it
+#                         `space` if there is none, and puts the tabs in place
+#                         of Omarchy's menu and workspaces on the bar
 
 set -euo pipefail
 
@@ -21,9 +19,9 @@ fail() {
 
 update=0
 case "$*" in
-"" | --setup | "--bar replace") ;;
+"" | --setup) ;;
 --update) update=1 ;;
-*) fail "usage: install.sh [--update | --setup | --bar replace]" ;;
+*) fail "usage: install.sh [--update | --setup]" ;;
 esac
 
 plugin_dir=$(dirname "${BASH_SOURCE[0]}")
@@ -42,7 +40,7 @@ esac
 bin="$HOME/.local/bin"
 state="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-spaces"
 marker="$state/installed"
-answer="$state/bar"
+replaced="$state/bar"
 
 # Whether a plugin is on: for a widget, on the bar.
 enabled() {
@@ -88,35 +86,23 @@ setup() {
     echo "$said"
   fi
 
-  # Until they're replaced, each time the shell starts. Not if the tabs were put
-  # elsewhere on the bar: they only take the others' place in the left section.
-  [[ ! -e $answer ]] || return 0
+  # Once: the bar is the user's after that, so putting the workspaces back keeps
+  # them. Not if the tabs were put elsewhere on the bar: they only take the
+  # others' place in the left section.
+  [[ ! -e $replaced ]] || return 0
   omarchy-shell shell listShellConfig |
     jq -e --arg id "$id" 'any(.bar.layout.left[]?; (.id? // .) == $id)' >/dev/null || return 0
-  if enabled omarchy.menu || enabled omarchy.workspaces; then
-    notify -u critical --transient "Replace Omarchy's menu and workspaces?" \
-      "Spaces takes their place on the bar. A right-click on the logo still opens the menu." \
-      --action "Replace" "$PWD/install.sh" --bar replace
-  fi
-}
-
-replace_bar() {
-  # Asked a while ago, maybe: enabling it would turn it back on.
-  enabled "$id" || fail "the plugin is off"
+  enabled omarchy.menu || enabled omarchy.workspaces || return 0
   omarchy plugin enable "$id" --section left --index 0
   omarchy plugin disable omarchy.menu
   omarchy plugin disable omarchy.workspaces
   mkdir -p "$state"
-  echo replace >"$answer"
+  echo replace >"$replaced"
 }
 
 case ${1:-} in
 --setup)
   setup
-  exit
-  ;;
---bar)
-  replace_bar
   exit
   ;;
 esac

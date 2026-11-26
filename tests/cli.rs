@@ -3243,14 +3243,14 @@ fn install_update_replaces_only_its_own_outdated_binary() {
 }
 
 #[test]
-fn install_setup_asks_before_it_changes_the_bar() {
+fn install_setup_replaces_omarchys_menu_and_workspaces_once() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let version = env!("CARGO_PKG_VERSION");
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
     let installed = home.join(".local/bin/space");
     let link = home.join(".config/hypr/omarchy-spaces.lua");
-    let answer = home.join(".local/state/omarchy-spaces/bar");
+    let replaced = home.join(".local/state/omarchy-spaces/bar");
     let plugin = tmp.path().join("plugin");
     fs::create_dir_all(plugin.join("hypr")).unwrap();
     for file in [
@@ -3319,7 +3319,7 @@ fn install_setup_asks_before_it_changes_the_bar() {
     let (out, did) = run(&plugin, &["--setup"]);
     assert!(!out.status.success());
     assert!(did.contains("Couldn't install"), "{did}");
-    assert!(!did.contains("--bar"), "{did}");
+    assert!(!did.contains("omarchy plugin"), "{did}");
     assert!(did.contains("hyprctl reload"), "{did}");
     assert_eq!(
         fs::read_link(&link).unwrap(),
@@ -3337,47 +3337,33 @@ fn install_setup_asks_before_it_changes_the_bar() {
     assert!(out.status.success(), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stdout).starts_with("Installed space "));
     assert!(installed.exists());
-    assert!(did.contains("--bar replace"), "{did}");
-    assert!(!did.contains("omarchy plugin"), "{did}");
-
-    // It asks until there's an answer, and installs only once.
-    let (out, did) = run(&plugin, &["--setup"]);
-    assert!(out.stdout.is_empty(), "{out:?}");
-    assert!(did.contains("--bar replace"), "{did}");
-
-    // Not with the tabs elsewhere on the bar, or nothing to replace.
-    shell(&["omarchy.workspaces"], true, true);
-    assert_eq!(run(&plugin, &["--setup"]).1, "");
-    shell(&["com.t4t5.spaces"], false, true);
-    assert_eq!(run(&plugin, &["--setup"]).1, "");
-
-    // An answer to a plugin that's off by now doesn't turn it on.
-    shell(&["omarchy.workspaces"], true, false);
-    let (out, did) = run(&plugin, &["--bar", "replace"]);
-    assert!(!out.status.success());
-    assert_eq!(did, "");
-    assert!(!answer.exists());
-
-    shell(&["omarchy.workspaces", "com.t4t5.spaces"], true, true);
-    let (out, did) = run(&plugin, &["--bar", "replace"]);
-    assert!(out.status.success(), "{out:?}");
     assert_eq!(
         did,
         "omarchy plugin enable com.t4t5.spaces --section left --index 0\n\
          omarchy plugin disable omarchy.menu\n\
          omarchy plugin disable omarchy.workspaces\n"
     );
-    // Putting the workspaces back later doesn't bring the question back.
-    assert_eq!(run(&plugin, &["--setup"]).1, "");
+    assert_eq!(fs::read_to_string(&replaced).unwrap(), "replace\n");
 
-    // There's no keeping both.
-    fs::remove_file(&answer).unwrap();
-    let (out, did) = run(&plugin, &["--bar", "keep"]);
+    // Only once, and it installs only once: putting the workspaces back later
+    // keeps them.
+    let (out, did) = run(&plugin, &["--setup"]);
+    assert!(out.stdout.is_empty(), "{out:?}");
+    assert_eq!(did, "");
+
+    // Not with the tabs elsewhere on the bar, or nothing to replace.
+    fs::remove_file(&replaced).unwrap();
+    shell(&["omarchy.workspaces"], true, true);
+    assert_eq!(run(&plugin, &["--setup"]).1, "");
+    shell(&["com.t4t5.spaces"], false, true);
+    assert_eq!(run(&plugin, &["--setup"]).1, "");
+    assert!(!replaced.exists());
+
+    // There's no asking, and nothing else to pass.
+    shell(&["omarchy.workspaces", "com.t4t5.spaces"], true, true);
+    let (out, did) = run(&plugin, &["--bar", "replace"]);
     assert!(!out.status.success());
     assert_eq!(did, "");
-    assert!(!answer.exists());
-    let (_, did) = run(&plugin, &["--setup"]);
-    assert_eq!(did.matches("--action").count(), 1, "{did}");
 
     // A Hyprland file that's the user's own stays.
     fs::remove_file(&link).unwrap();
