@@ -19,6 +19,8 @@ You need Omarchy 4.5 or newer.
 omarchy plugin add https://github.com/t4t5/omarchy-spaces.git --enable
 ```
 
+As it first starts, the plugin downloads the `space` command it runs on into `~/.local/bin`, from this repository's GitHub release. [What gets installed](docs/guide/install.md#what-gets-installed) lists everything it sets up.
+
 **2. Add the basic key bindings** to your `~/.config/hypr/bindings.lua` file (at the end):
 
 ```lua
