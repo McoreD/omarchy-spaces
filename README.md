@@ -1,12 +1,6 @@
 # Omarchy Spaces
 
-A plugin that organizes Omarchy by project.
-
-<p align="center">
-  <img src="assets/screenshot.png" width="627" alt="A sidebar listing your spaces, beside the tabs of the open one">
-</p>
-
-## Concept
+<img src="assets/screenshot.png" width="627" alt="A sidebar listing your spaces, beside the tabs of the open one">
 
 Inspired by multiplexer apps like [Herdr](https://herdr.dev) and [Rex](https://superlogical.com), but for your whole desktop:
 
