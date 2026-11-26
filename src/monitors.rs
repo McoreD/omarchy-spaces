@@ -245,6 +245,7 @@ mod tests {
     fn workspace(name: &str, monitor: &str) -> Workspace {
         Workspace {
             id: -1337,
+            address: name.into(),
             name: name.into(),
             windows: 0,
             monitor: monitor.into(),

@@ -57,6 +57,10 @@ struct Hyprland {
     /// How long going to a workspace takes it.
     slow: Duration,
     next_named_id: i64,
+    /// The address of each workspace that was renamed, by its name now. A
+    /// workspace made by `name:s1:2` keeps `s1:2` as its address when renamed
+    /// (Hyprland 0.57), and a selector `name:` matches the address.
+    addresses_of: std::collections::HashMap<String, String>,
 }
 
 /// What runs on the desktop the tests run on: none of it may, as it would open
@@ -138,6 +142,24 @@ impl Hyprland {
         id
     }
 
+    /// What `name:` matches: the workspace's address, the name it was made with.
+    fn address(&self, name: &str) -> String {
+        self.addresses_of
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
+    }
+
+    /// The name now of the workspace a `name:` selector means: the one with
+    /// that address, or, with none, the name a new one is made with.
+    fn resolve(&self, selector: String) -> String {
+        let selector = selector.strip_prefix("name:").unwrap_or(&selector);
+        self.workspaces
+            .iter()
+            .find(|(_, name)| self.address(name) == selector)
+            .map_or_else(|| selector.to_string(), |(_, name)| name.clone())
+    }
+
     fn workspace_json(&mut self, name: &str) -> Value {
         let id = self.ensure(name);
         let windows = self.windows.iter().filter(|w| *w == name).count();
@@ -147,7 +169,8 @@ impl Hyprland {
         } else {
             monitor_of(name)
         };
-        json!({ "id": id, "name": name, "monitor": monitor, "windows": windows, "tiledLayout": layout })
+        let address = self.address(name);
+        json!({ "id": id, "address": address, "name": name, "monitor": monitor, "windows": windows, "tiledLayout": layout })
     }
 
     /// Hyprland destroys empty workspaces that no monitor shows.
@@ -156,6 +179,8 @@ impl Hyprland {
         let windows = self.windows.clone();
         self.workspaces
             .retain(|(_, n)| shown.contains(&Some(n.clone())) || windows.contains(n));
+        let kept: Vec<String> = self.workspaces.iter().map(|(_, n)| n.clone()).collect();
+        self.addresses_of.retain(|name, _| kept.contains(name));
     }
 
     /// Shows the windows that have started by now.
@@ -279,7 +304,6 @@ impl Hyprland {
             let end = start + e[start..].find('"')?;
             Some(e[start..end].to_string())
         };
-        let selector = |s: String| s.strip_prefix("name:").map(str::to_string).unwrap_or(s);
         let number = |e: &str| {
             let start = e.find('(')? + 1;
             e[start..]
@@ -332,7 +356,7 @@ impl Hyprland {
                 .replace("\\\"", "\"")
                 .replace("\\\\", "\\");
             let workspace = field(expression, "workspace").unwrap();
-            let workspace = selector(workspace.trim_end_matches(" silent").to_string());
+            let workspace = self.resolve(workspace.trim_end_matches(" silent").to_string());
             std::process::Command::new("sh")
                 .arg("-c")
                 .arg(&command)
@@ -370,7 +394,7 @@ impl Hyprland {
                 }
                 return "ok".into();
             }
-            let target = selector(quoted(expression).unwrap());
+            let target = self.resolve(quoted(expression).unwrap());
             thread::sleep(self.slow);
             self.go(target);
         } else if expression.starts_with("hl.dsp.window.close(") {
@@ -383,12 +407,17 @@ impl Hyprland {
             self.windows.remove(index);
             self.addresses.remove(index);
         } else if expression.starts_with("hl.dsp.workspace.rename(") {
-            let from = selector(quoted(expression).unwrap());
+            let from = self.resolve(quoted(expression).unwrap());
             let to = field(expression, "name").unwrap();
+            let address = self.address(&from);
             let Some(renamed) = self.workspaces.iter_mut().find(|(_, n)| *n == from) else {
                 return "warning: no such workspace".into();
             };
             renamed.1 = to.clone();
+            self.addresses_of.remove(&from);
+            if address != to {
+                self.addresses_of.insert(to.clone(), address);
+            }
             for window in self.windows.iter_mut().filter(|w| **w == from) {
                 *window = to.clone();
             }
@@ -396,7 +425,7 @@ impl Hyprland {
                 self.active = to;
             }
         } else if expression.starts_with("hl.dsp.window.move(") && expression.contains("address:") {
-            let target = selector(quoted(expression).unwrap());
+            let target = self.resolve(quoted(expression).unwrap());
             let address = field(expression, "window").unwrap();
             let address = address.strip_prefix("address:0x").unwrap();
             let address = u32::from_str_radix(address, 16).unwrap();
@@ -424,7 +453,7 @@ impl Hyprland {
         {
             let (target, follow) = if expression.starts_with("hl.") {
                 (
-                    selector(quoted(expression).unwrap()),
+                    self.resolve(quoted(expression).unwrap()),
                     expression.contains("follow = true"),
                 )
             } else {
@@ -905,6 +934,107 @@ fn send_takes_the_window_to_another_space_where_you_left_it() {
     env.set_active("s1:5");
     env.ok(&["window", "send", "mail"]);
     assert!(env.dispatched().iter().all(|d| !d.contains("window.move")));
+}
+
+impl Env {
+    /// The names of the workspaces there are, as `space` reads them.
+    fn workspace_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .hypr
+            .lock()
+            .unwrap()
+            .workspaces
+            .iter()
+            .map(|(_, name)| name.clone())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The tabs of space `id` as `renumber` leaves them after its first tab
+    /// ended: the workspaces made as `s<n>:2` and `s<n>:3` are named `:1` and
+    /// `:2`, and keep their addresses (Hyprland 0.57), so `name:id:1` means no
+    /// workspace, and `name:id:2` the one named `:1`.
+    fn renamed_space(&self, id: &str, dir: &Path) {
+        self.add_terminal(&format!("{id}:2"), dir);
+        self.add_window(&format!("{id}:3"));
+        self.add_window(&format!("{id}:3"));
+        self.ok(&["renumber"]);
+        assert_eq!(
+            self.hypr.lock().unwrap().address(&format!("{id}:1")),
+            format!("{id}:2")
+        );
+    }
+}
+
+#[test]
+fn tabs_renamed_by_renumber_are_found_by_their_names() {
+    let env = Env::new();
+    env.renamed_space("s1", &env.dir("ren"));
+    env.set_active("s1:2");
+    let windows = env.windows();
+
+    // The first tab is the one with a window, not an empty new one.
+    env.ok(&["tab", "go", "1"]);
+    assert_eq!(env.active(), "s1:1");
+    env.ok(&["tab", "go", "2"]);
+    assert_eq!(env.active(), "s1:2");
+    assert_eq!(env.workspace_names(), ["s1:1", "s1:2"]);
+
+    // Past the last tab, a new one: not the one whose address its number is.
+    env.ok(&["tab", "go", "3"]);
+    assert_eq!(
+        env.workspace_names().len(),
+        3,
+        "{:?}",
+        env.workspace_names()
+    );
+    assert_eq!(env.windows(), windows, "no window moved");
+    env.ok(&["renumber"]);
+    assert_eq!(env.active(), "s1:3");
+    assert_eq!(env.workspace_names(), ["s1:1", "s1:2", "s1:3"]);
+}
+
+#[test]
+fn send_and_window_to_tab_find_renamed_tabs_by_their_names() {
+    let env = Env::new();
+    env.renamed_space("s1", &env.dir("ren"));
+    env.add_terminal("s2:1", &env.dir("mail"));
+    env.add_window("s2:1");
+    env.add_window("s2:1");
+    let tabs = ["s1:1", "s1:2", "s2:1"];
+    env.set_active("s1:1");
+    env.add_window("s1:1");
+    env.dispatched();
+
+    // Within a space whose tabs are renamed: the one the second key means.
+    env.ok(&["window", "tab", "2", "--silent"]);
+    assert_eq!(env.workspace_names(), tabs);
+    let on = |env: &Env, tab: &str| env.windows().iter().filter(|w| *w == tab).count();
+    assert_eq!(on(&env, "s1:2"), 3);
+
+    // Into it from another space, with you and silently: onto a tab that is
+    // there, not a second one of the same name.
+    for silent in [false, true] {
+        env.set_active("s2:1");
+        let before = on(&env, "s1:1") + on(&env, "s1:2");
+        let mut args = vec!["window", "send", "s1"];
+        if silent {
+            args.push("--silent");
+        }
+        env.ok(&args);
+        assert_eq!(env.workspace_names(), tabs, "silent: {silent}");
+        assert_eq!(on(&env, "s1:1") + on(&env, "s1:2"), before + 1);
+        env.ok(&["go", "s1"]);
+        assert!(["s1:1", "s1:2"].contains(&env.active().as_str()));
+    }
+    // Past the last tab: a new one, not the tab whose address is s1:3.
+    env.set_active("s1:1");
+    env.add_window("s1:1");
+    let before = on(&env, "s1:2");
+    env.ok(&["window", "tab", "3", "--silent"]);
+    assert_eq!(on(&env, "s1:2"), before, "not onto the tab named s1:2");
+    assert_eq!(env.windows().iter().filter(|w| *w == "s1:4").count(), 1);
 }
 
 #[test]
@@ -1867,6 +1997,24 @@ fn tab_reorder_moves_a_tab_among_its_spaces() {
     assert!(err.contains("positions start at 1"), "{err}");
     let err = env.fails(&["tab", "reorder", "s1:3", "1"]);
     assert!(err.contains("there's no tab s1:3"), "{err}");
+}
+
+#[test]
+fn tab_reorder_renames_the_tabs_it_means_when_they_were_renamed_before() {
+    let env = Env::new();
+    env.renamed_space("s1", &env.dir("ren"));
+    env.set_active("s1:2");
+    // One window on the first tab, two on the second.
+    let mut windows = env.windows();
+    windows.sort();
+    assert_eq!(windows, ["s1:1", "s1:2", "s1:2"]);
+
+    env.ok(&["tab", "reorder", "s1:2", "1"]);
+    let mut windows = env.windows();
+    windows.sort();
+    assert_eq!(windows, ["s1:1", "s1:1", "s1:2"], "the tabs swapped");
+    assert_eq!(env.active(), "s1:1", "still on the same tab");
+    assert_eq!(env.workspace_names(), ["s1:1", "s1:2"]);
 }
 
 #[test]

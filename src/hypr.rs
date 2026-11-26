@@ -25,6 +25,11 @@ fn nullable_i64<'de, D: Deserializer<'de>>(deserializer: D) -> std::result::Resu
 pub struct Workspace {
     #[serde(default, deserialize_with = "nullable_i64")]
     pub id: i64,
+    /// What a selector like `name:s1:2` matches. A named workspace is made
+    /// with its name as its address, and a rename (`space renumber`) changes
+    /// the name only. Hyprland 0.57+.
+    #[serde(default)]
+    pub address: String,
     pub name: String,
     #[serde(default)]
     pub windows: u32,
@@ -288,6 +293,28 @@ pub fn lua_string(value: &str) -> String {
     out
 }
 
+/// Hyprland's selector for the workspace called `name`, a tab's: `name:` and
+/// its address, which isn't its name once it's been renamed (`name:` alone
+/// matches the address, so it would find another workspace, or make a new one
+/// by the name). A numbered one is by its number. With no workspace of that
+/// name, the selector that makes one.
+pub fn selector_for(workspaces: &[Workspace], name: &str) -> String {
+    match workspaces.iter().find(|ws| ws.name == name) {
+        Some(ws) if ws.id > 0 => ws.id.to_string(),
+        Some(ws) if !ws.address.is_empty() => format!("name:{}", ws.address),
+        _ if name.bytes().all(|b| b.is_ascii_digit()) => name.to_string(),
+        _ => format!("name:{name}"),
+    }
+}
+
+/// Whether a workspace made by the name `name` would be a new one: no
+/// workspace has it as its name, and none a renamed one made by it as its address.
+pub fn name_is_free(workspaces: &[Workspace], name: &str) -> bool {
+    !workspaces
+        .iter()
+        .any(|ws| ws.name == name || ws.address == name)
+}
+
 /// Focus a workspace by Hyprland selector (`name:ren:1`, `3`), creating it if
 /// it doesn't exist.
 pub fn focus_workspace(selector: &str) -> String {
@@ -445,6 +472,35 @@ mod tests {
             close_window("0x55a4"),
             r#"hl.dsp.window.close({ window = "address:0x55a4" })"#
         );
+    }
+
+    fn named(address: &str, name: &str) -> Workspace {
+        serde_json::from_str(&format!(
+            r#"{{"address":"{address}","name":"{name}","monitor":"eDP-1","windows":1}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn selects_renamed_workspaces_by_address() {
+        // `s4:2` renamed `s4:1`, and `s6:1` and `s6:2` with their names swapped.
+        let all = [
+            named("s4:2", "s4:1"),
+            named("s6:1", "s6:2"),
+            named("s6:2", "s6:1"),
+            named("s5:1", "s5:1"),
+        ];
+        assert_eq!(selector_for(&all, "s4:1"), "name:s4:2");
+        assert_eq!(selector_for(&all, "s6:1"), "name:s6:2");
+        assert_eq!(selector_for(&all, "s6:2"), "name:s6:1");
+        assert_eq!(selector_for(&all, "s5:1"), "name:s5:1");
+        // None has the name: the selector that makes one.
+        assert_eq!(selector_for(&all, "s4:3"), "name:s4:3");
+        assert_eq!(selector_for(&all, "3"), "3");
+        assert!(name_is_free(&all, "s4:3"));
+        // `s4:2` is a workspace's address, so a new one can't be made by it.
+        assert!(!name_is_free(&all, "s4:2"));
+        assert!(!name_is_free(&all, "s4:1"));
     }
 
     #[test]

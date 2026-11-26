@@ -8,7 +8,7 @@ use anyhow::Result;
 
 use crate::browser::{Browser, Browsers};
 use crate::commands::{
-    fresh_space, remember, session_selector, session_workspace, wait_for_window,
+    fresh_space, live_selector, remember, session_selector, session_workspace, wait_for_window,
 };
 use crate::config::Config;
 use crate::folder::Folder;
@@ -353,7 +353,8 @@ fn go_back(
         {
             hypr.dispatch(&hypr::focus_monitor(monitor))?;
         }
-        hypr.dispatch(&hypr::focus_workspace(back))?;
+        let selector = hypr::selector_for(&hypr.workspaces()?, name);
+        hypr.dispatch(&hypr::focus_workspace(&selector))?;
     }
     Ok(true)
 }
@@ -395,7 +396,11 @@ impl Restoring {
     /// The tab you were on.
     fn back(&self) -> Option<String> {
         let first = self.saved.windows.first()?.tab;
-        Some(session_selector(&self.id, self.saved.last.unwrap_or(first)))
+        Some(session_selector(
+            &[],
+            &self.id,
+            self.saved.last.unwrap_or(first),
+        ))
     }
 
     /// Opens its terminals, calling `opening` once the first is on its way, or
@@ -542,7 +547,7 @@ fn reopen_terminal(
     let events = hypr.events()?;
     hypr.dispatch(&hypr::exec_on(
         &restored_command(config, terminal, token),
-        &format!("{} silent", session_selector(id, tab)),
+        &format!("{} silent", live_selector(hypr, id, tab)),
     ))?;
     opening()?;
     // You may be opening windows of your own there by now.
@@ -584,7 +589,7 @@ fn open_browser(
     }
     let workspace = session_workspace(id, window.tab);
     let rule = |enabled| {
-        let on = format!("{} silent", session_selector(id, window.tab));
+        let on = format!("{} silent", live_selector(hypr, id, window.tab));
         hypr.eval(&hypr::open_class_on(&browser.class_pattern(), &on, enabled))
     };
     let events = hypr.events()?;
@@ -662,7 +667,10 @@ fn arrange(
         && workspace.monitor != monitor
         && monitors.iter().any(|m| m.name == monitor)
     {
-        hypr.dispatch(&hypr::move_workspace(&session_selector(id, key), monitor))?;
+        hypr.dispatch(&hypr::move_workspace(
+            &live_selector(hypr, id, key),
+            monitor,
+        ))?;
         workspace = find()?.unwrap_or(workspace);
     }
 

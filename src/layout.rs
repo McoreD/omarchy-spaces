@@ -203,7 +203,7 @@ impl Tab {
         let mut lua = String::from(
             "local before, at = hl.get_active_window(), hl.get_active_workspace()\n\
              before = before and \"address:\" .. before.address\n\
-             at = at and { name = at.name, selector = at.id > 0 and tostring(at.id) or \"name:\" .. at.name }\n\
+             at = at and { name = at.name, id = at.id }\n\
              local pos = hl.get_cursor_pos()\n\
              local animated = hl.get_config(\"animations.enabled\")\n\
              local function go(a) pcall(function() hl.dispatch(a) end) end\n\
@@ -257,7 +257,9 @@ impl Tab {
              local back, why = pcall(function()\n\
              local now = hl.get_active_workspace()\n\
              if at and (not now or now.name ~= at.name) then\n\
-             go(hl.dsp.focus({ workspace = at.selector }))\n\
+             local to = (at.id or 0) > 0 and tostring(at.id) or \"name:\" .. at.name\n\
+             for _, w in ipairs(hl.get_workspaces()) do if w.name == at.name then to = w end end\n\
+             go(hl.dsp.focus({ workspace = to }))\n\
              end\n\
              if before and not (now and at and now.name == at.name) then focus(before) end\n\
              if pos then go(hl.dsp.cursor.move({ x = pos.x, y = pos.y })) end\n\
