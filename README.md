@@ -13,13 +13,13 @@ Inspired by multiplexer apps like [Herdr](https://herdr.dev) and [Rex](https://s
 
 You need Omarchy 4.5 or newer.
 
-**1. Add the plugin.** Choose "Left" (default) when it asks where to put it. The tabs take the place of the menu and workspaces on your bar.
+**1. Add the plugin.** Choose "Left" (the default) when it asks where to put it. This replaces the built-in `omarchy.menu` and `omarchy.workspaces` components with `com.t4t5.spaces`.
 
 ```sh
 omarchy plugin add https://github.com/t4t5/omarchy-spaces.git --enable
 ```
 
-**2. Add the keys** to the end of `~/.config/hypr/bindings.lua`:
+**2. Add the basic key bindings** to your `~/.config/hypr/bindings.lua` file (at the end):
 
 ```lua
 if package.searchpath("hypr.omarchy-spaces", package.path) then
@@ -30,7 +30,7 @@ if package.searchpath("hypr.omarchy-spaces", package.path) then
 end
 ```
 
-There are [more keys you can add](docs/guide/keys.md).
+For advanced workflows, check out [all the key bindings you can add](docs/guide/keys.md).
 
 ## Use
 
