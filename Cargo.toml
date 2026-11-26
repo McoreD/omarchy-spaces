@@ -1,6 +1,6 @@
 [package]
 name = "omarchy-spaces"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Project-based layout for Omarchy"
 license = "MIT AND Apache-2.0" # Apache-2.0 for Herdr's sounds, in the binary
