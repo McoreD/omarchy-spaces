@@ -5,6 +5,7 @@
 
 mod agy;
 mod claude;
+mod codex;
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
@@ -12,7 +13,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-const ADAPTERS: &[Adapter] = &[claude::ADAPTER, agy::ADAPTER];
+const ADAPTERS: &[Adapter] = &[claude::ADAPTER, agy::ADAPTER, codex::ADAPTER];
 
 fn is_uuid(id: &str) -> bool {
     id.len() == 36
@@ -125,6 +126,10 @@ mod tests {
         assert_eq!(
             parse_resume(&format!("agy {id}")),
             Some(format!("agy -r {id} || agy"))
+        );
+        assert_eq!(
+            parse_resume(&format!("codex {id}")),
+            Some(format!("codex resume {id} || codex"))
         );
         assert_eq!(parse_resume("claude x; rm -rf ~"), None);
         assert_eq!(parse_resume("agy x; rm -rf ~"), None);

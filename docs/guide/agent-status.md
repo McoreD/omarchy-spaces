@@ -16,6 +16,7 @@ These work out of the box, with nothing to set up:
 
 - **Claude Code**
 - **Antigravity CLI**
+- **Codex CLI**
 
 Other agents show as any program does, by name, without a status.
 
