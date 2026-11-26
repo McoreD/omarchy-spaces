@@ -8,12 +8,12 @@ A plugin that organizes Omarchy by project.
 
 ## Concept
 
-Inspired by multiplexer apps like [Herdr](https://herdr.dev) and [Rex](https://superlogical.com), but using Hyprland to integrate into the OS itself:
+Inspired by multiplexer apps like [Herdr](https://herdr.dev) and [Rex](https://superlogical.com), but for your whole desktop:
 
 - Every project gets its own **space**
-- Every space has its own **tabs** (workspaces)
-- Keep track of agent status across projects
-- Spaces are restored after a restart
+- Every space has its own **tabs** (Hyprland workspaces)
+- Keeps track of agent status across projects
+- Spaces are restored after a reboot
 
 ## Install
 
