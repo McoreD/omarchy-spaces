@@ -65,6 +65,19 @@ install-unreleased:
     # It carries on with its setup as it starts.
     omarchy restart shell
 
+# Raise the version of `space` and the plugin, such as `just bump 0.2.0`, commit that and tag it
+bump version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ {{quote(version)}} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Give a version such as 0.2.0, without the v" >&2; exit 1; }
+    sed -i 's/^version = ".*"$/version = "{{version}}"/' Cargo.toml
+    sed -i '/^name = "omarchy-spaces"$/{n;s/^version = ".*"$/version = "{{version}}"/}' Cargo.lock
+    # install.sh reads it with a sed of its own, so the line stays as it is.
+    sed -i 's/^  "version": ".*",$/  "version": "{{version}}",/' manifest.json
+    git commit --quiet -m "Release {{version}}" -- Cargo.toml Cargo.lock manifest.json
+    git tag v{{version}}
+    git show --stat --oneline HEAD
+
 # Make the icon picker's glyphs again, from a Nerd Fonts release's glyph names
 glyphs version="v3.4.0":
     mkdir -p target
