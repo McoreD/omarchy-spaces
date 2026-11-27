@@ -4248,3 +4248,40 @@ fn new_tab_new_and_terminal_run_commands() {
     assert!(env.fails(&["tab", "new", "--", ""]).contains("empty"));
     assert!(env.fails(&["terminal", "--", ""]).contains("empty"));
 }
+
+#[test]
+fn watch_exposes_folder_meta_and_terminals_for_widgets() {
+    use std::time::Duration;
+
+    let env = Env::new();
+    let app = env.dir("app");
+    let w1 = env.add_terminal("s1:1", &app);
+    env.set_active("s1:1");
+    env.ok(&[
+        "meta",
+        "set",
+        "-s",
+        "s1",
+        "git",
+        r#"{"branch":"main","dirty":true}"#,
+        "--json",
+    ]);
+    env.agent_is(&w1, "working");
+
+    let watch = Watch::start(&env);
+    let state = watch.next_state(Duration::from_secs(3));
+    let s1 = state["spaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "s1")
+        .unwrap();
+    assert_eq!(s1["folder"], app.to_str().unwrap());
+    assert_eq!(s1["meta"]["git"]["branch"], "main");
+    assert_eq!(s1["meta"]["git"]["dirty"], true);
+    assert_eq!(s1["terminals"][0]["address"], w1);
+    assert_eq!(s1["terminals"][0]["tab"], "s1:1");
+    assert_eq!(s1["terminals"][0]["folder"], app.to_str().unwrap());
+    assert_eq!(s1["terminals"][0]["status"], "working");
+    drop(watch);
+}

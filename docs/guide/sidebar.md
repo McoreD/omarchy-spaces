@@ -80,7 +80,8 @@ A widget for `tabsWidget` is an ordinary bar widget: Spaces sets `bar`, `moduleN
 `spaces` has:
 
 - `version`: the version of this API, now `1`.
-- `space`: the space shown on this screen, `{ id, label, named, icon, status }`. `icon` is a glyph, emoji, image path, or `""`; `status` is `""`, `"working"`, `"done"` or `"waiting"`.
+- `space`: the space shown on this screen, `{ id, label, named, icon, folder, meta, status, terminals }`. `icon` is a glyph, emoji, image path, or `""`; `folder` is the space's folder path or `""`; `meta` is its metadata object (`space meta`); `status` is `""`, `"working"`, `"done"` or `"waiting"`; `terminals` is its terminal windows, each `{ address, tab, folder, program, label, status }`.
+- `spaces`: every space in sidebar order, each `{ id, label, named, icon, folder, meta, status, active, windows, leftAt, terminals }`.
 - `tabs`: its tabs, each `{ id, slot, label, named, status, active }`. `slot` is the tab's number; `status` is `""`, `"working"`, `"done"` or `"waiting"`.
 - `sidebarOpen`: whether the sidebar is expanded on this screen.
 - `renaming`, `renameText` and `renameSelected`: the id of the tab being renamed, the name typed so far, and whether all of it is selected (so the next keypress replaces it). Spaces takes the keys: Enter keeps the name, Escape drops it.
@@ -130,3 +131,39 @@ Item {
   }
 }
 ```
+
+## Customizing the sidebar
+
+The `sidebar` key on the `com.t4t5.spaces` entry in `~/.config/omarchy/shell.json` sets the sidebar:
+
+```json
+{
+  "id": "com.t4t5.spaces",
+  "sidebar": {
+    "width": 240,
+    "space": {
+      "widgets": [{ "id": "space-git", "type": "qml" }]
+    }
+  }
+}
+```
+
+- `width`: how wide the sidebar is when expanded, `200` by default.
+- `space.widgets`: widgets to show on a line under each space's name, side by side, in order. Each is written as in the bar's own layout, as for `tabsWidget`: a plugin's widget by its id (in `plugins` as well), `{ "id": "my-widget", "type": "qml" }` for `~/.config/omarchy/bar/modules/my-widget.qml`, or `{ "source": "~/path/to/MyWidget.qml" }`. The rest of the entry is the widget's settings.
+
+With widgets, each row is tall enough for the two lines. They show only while the sidebar is expanded.
+
+### Writing a space widget
+
+A widget is a QML item. Spaces sets these properties once it loads, if it has them, and again as they change, so bind to them rather than marking them `required`:
+
+- `space`: the space, `{ id, label, named, icon, folder, meta, status, active, windows, leftAt, terminals }`, as in `spaces` for a tabs widget.
+- `settings`: the rest of its entry.
+- `foreground`, `accent` and `statusColors`: the sidebar's colours.
+- `maxWidth`: the room on the line.
+
+Spaces makes it as wide as its `implicitWidth`, or its share of the line when the widgets don't all fit, so elide text to its `width`. A widget with nothing to show sets `visible: false`, and takes no room. Widgets only show: a click on one goes to its space, and a drag moves the space, as anywhere else on the row.
+
+A widget's QML runs in the shell, once per space on each screen. Rather than running a command from each one, have a script keep what they show in [the space's metadata](cli.md#data-of-your-own) (`space meta`), and have the widget show `space.meta`. Scripts and agents can then read it too.
+
+[`examples/space-git`](../../examples/space-git) does this for each space's git branch: a script that keeps `meta.git` up to date, and a widget that shows it.

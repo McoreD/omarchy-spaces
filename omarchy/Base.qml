@@ -22,6 +22,10 @@ Scope {
   property string look: "opaque"
   // The shell's bar: its edge and its thickness on each screen.
   property var bar: null
+  // The widgets under each space's name (`sidebar.space.widgets`), and the
+  // bar's widget registry, where a plugin's widget is found.
+  property var spaceWidgets: []
+  property var barWidgetRegistry: null
 
   BarSurface {
     id: surface
@@ -80,6 +84,8 @@ Scope {
           sidebar: root.sidebar
           controller: root.controller
           foreground: surface.foreground
+          widgets: root.spaceWidgets
+          widgetRegistry: root.barWidgetRegistry
         }
       }
     }

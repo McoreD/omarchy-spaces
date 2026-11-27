@@ -160,9 +160,11 @@ BarWidget {
     id: spacesApi
     readonly property int version: 1
     // The space shown on this bar's screen:
-    // `{ id, label, named, icon, status }` (Spaces.publicSpace), and its tabs:
+    // `{ id, label, named, icon, folder, meta, status, terminals }`
+    // (Spaces.publicSpace), all spaces (Spaces.publicSpaceRow), and its tabs:
     // `{ id, slot, label, named, status, active }` (Spaces.publicTab).
     readonly property var space: Spaces.publicSpace(root.watchState, root.live.space)
+    readonly property var spaces: root.watchState.spaces.map(Spaces.publicSpaceRow)
     readonly property var tabs: root.live.tabs.map(Spaces.publicTab)
     readonly property bool sidebarOpen: !!root.sidebar && root.sidebar.opened
       && !!root.sidebar.screen && root.sidebar.screen.name === root.screenName

@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { cursorIndex, EMPTY, fileUrl, filterIcons, gridMove, isGlyph, isImageIcon, isVersionError, needsUpdate, parseEmojis, parseGlyphs, parseManifestVersion, badgeColor, parseBarEntry, tabsSlot, expandPath, customModuleUrl, headerOnBar, numeralFor, publicSpace, publicTab, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs, tabCells, tabGaps, tabShifts } from "../Spaces.mjs"
+import { cursorIndex, EMPTY, fileUrl, filterIcons, gridMove, isGlyph, isImageIcon, isVersionError, needsUpdate, parseEmojis, parseGlyphs, parseManifestVersion, badgeColor, parseBarEntry, pluginSettings, sidebarSlot, widgetWidths, tabsSlot, expandPath, customModuleUrl, headerOnBar, numeralFor, publicSpace, publicSpaceRow, publicTab, publicTerminal, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs, tabCells, tabGaps, tabShifts } from "../Spaces.mjs"
 
 // A line of `space watch`, with a tab on each of two monitors.
 const line = (spaces, more) => JSON.stringify({ version: 2, space: "0.1.0", focused: "eDP-1", monitors: [
@@ -30,7 +30,7 @@ test("parses a line of space watch", () => {
   assert.deepEqual(state.monitors.map((m) => [m.name, m.space, m.tab, m.refresh, m.tiled]), [["eDP-1", "s1", "s1:2", 120, true], ["DP-1", "s1", "s1:11", 60, false]])
   const rows = state.spaces
   assert.equal(rows.length, 4)
-  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, icon: "", active: false, windows: 4, leftAt: 1000, status: "" })
+  assert.deepEqual(rows[0], { id: "home", label: "home", named: false, icon: "", folder: "", meta: {}, active: false, windows: 4, leftAt: 1000, status: "", terminals: [] })
   assert.equal(rows[3].windows, -1, "no count without Hyprland")
   assert.equal(rows[3].named, true)
   assert.deepEqual(rowsOf([{ label: "x" }]), [], "rows without an id are dropped")
@@ -310,18 +310,58 @@ test("numbers tabs with custom numerals", () => {
 })
 
 test("hands widgets in a slot a space and tabs of their own", () => {
+  const term = { address: "0x1a", tab: "s1:2", folder: "/home/u/tax", program: "claude", label: "claude", status: "waiting" }
   const state = parseState(line([
-    { id: "s1", label: "Tax 2026", named: true, icon: "🚀", status: "waiting", windows: 3, active: true, left_at: 1000 },
+    { id: "s1", label: "Tax 2026", named: true, icon: "🚀", folder: "/home/u/tax", meta: { git: { branch: "main" } }, status: "waiting", windows: 3, active: true, left_at: 1000, terminals: [term] },
     { id: "s2", status: "bogus" },
   ]))
-  assert.deepEqual(publicSpace(state, "s1"), { id: "s1", label: "Tax 2026", named: true, icon: "🚀", status: "waiting" })
-  assert.deepEqual(publicSpace(state, "s2"), { id: "s2", label: "s2", named: false, icon: "", status: "" })
-  assert.deepEqual(publicSpace(EMPTY, "s9"), { id: "s9", label: "s9", named: false, icon: "", status: "" }, "before it's in spaces")
-  assert.deepEqual(publicSpace(EMPTY, ""), { id: "", label: "", named: false, icon: "", status: "" }, "before space watch")
+  assert.deepEqual(publicSpace(state, "s1"), { id: "s1", label: "Tax 2026", named: true, icon: "🚀", folder: "/home/u/tax", meta: { git: { branch: "main" } }, status: "waiting", terminals: [term] })
+  assert.deepEqual(publicSpace(state, "s2"), { id: "s2", label: "s2", named: false, icon: "", folder: "", meta: {}, status: "", terminals: [] })
+  assert.deepEqual(publicSpace(EMPTY, "s9"), { id: "s9", label: "s9", named: false, icon: "", folder: "", meta: {}, status: "", terminals: [] }, "before it's in spaces")
+  assert.deepEqual(publicSpace(EMPTY, ""), { id: "", label: "", named: false, icon: "", folder: "", meta: {}, status: "", terminals: [] }, "before space watch")
+  assert.deepEqual(publicSpaceRow(state.spaces[0]), { id: "s1", label: "Tax 2026", named: true, icon: "🚀", folder: "/home/u/tax", meta: { git: { branch: "main" } }, status: "waiting", active: true, windows: 3, leftAt: 1000, terminals: [term] })
+  assert.deepEqual(publicTerminal({ address: "0x1a", status: "bogus" }), { address: "0x1a", tab: "", folder: "", program: "", label: "", status: "" })
 
   const tab = publicTab({ id: "s1:2", slot: 2, label: "claude", named: false, status: "working", windows: 1, active: true, pid: 99 })
   assert.deepEqual(tab, { id: "s1:2", slot: 2, label: "claude", named: false, status: "working", active: true })
   assert.deepEqual(publicTab({ id: "s1:1", status: "bogus" }), { id: "s1:1", slot: 0, label: "", named: false, status: "", active: false })
+})
+
+test("reads the sidebar's settings and space widgets from barConfig", () => {
+  const barConfig = {
+    layout: {
+      left: [{ id: "com.t4t5.spaces", sidebar: { width: 260, space: { widgets: [
+        { id: "space-git", type: "qml" },
+        "io.github.someone.pr",
+        { source: "~/Widget.qml", compact: true },
+        "com.t4t5.spaces",
+        { nothing: true },
+      ] } } }],
+    },
+  }
+  const settings = pluginSettings(barConfig, "com.t4t5.spaces")
+  assert.deepEqual(sidebarSlot(settings, "com.t4t5.spaces"), {
+    width: 260,
+    widgets: [
+      { id: "space-git", settings: { type: "qml" } },
+      { id: "io.github.someone.pr", settings: {} },
+      { id: "", settings: { source: "~/Widget.qml", compact: true } },
+    ],
+    misplaced: false,
+  })
+  assert.deepEqual(sidebarSlot(pluginSettings({ layout: { left: ["com.t4t5.spaces"] } }, "com.t4t5.spaces"), "com.t4t5.spaces"),
+    { width: 0, widgets: [], misplaced: false })
+  assert.deepEqual(sidebarSlot({ sidebar: { space: { widgets: "space-git" } } }).widgets, [], "widgets is a list")
+  assert.equal(sidebarSlot({ sidebar: "io.github.someone.sidebar" }).misplaced, true)
+  assert.equal(sidebarSlot({ sidebar: { source: "~/Sidebar.qml" } }).misplaced, true)
+  assert.equal(sidebarSlot({ sidebar: { width: -10 } }).width, 0)
+})
+
+test("shares a line between a space's widgets", () => {
+  assert.deepEqual(widgetWidths([40, 30], 200, 6), [40, 30], "room for both")
+  assert.deepEqual(widgetWidths([150, 30], 106, 6), [70, 30], "the wide one gives way")
+  assert.deepEqual(widgetWidths([150, 0, 150], 106, 6), [50, 0, 50], "no gap for one that's hidden")
+  assert.deepEqual(widgetWidths([], 100, 6), [])
 })
 
 test("offers rename, an icon and close, saying why close doesn't apply", () => {
