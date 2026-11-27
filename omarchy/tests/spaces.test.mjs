@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { cursorIndex, EMPTY, fileUrl, filterIcons, gridMove, isGlyph, isImageIcon, isVersionError, needsUpdate, parseEmojis, parseGlyphs, parseManifestVersion, badgeColor, headerOnBar, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs, tabCells, tabGaps, tabShifts } from "../Spaces.mjs"
+import { cursorIndex, EMPTY, fileUrl, filterIcons, gridMove, isGlyph, isImageIcon, isVersionError, needsUpdate, parseEmojis, parseGlyphs, parseManifestVersion, badgeColor, parseBarEntry, tabsSlot, expandPath, customModuleUrl, headerOnBar, numeralFor, publicSpace, publicTab, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs, tabCells, tabGaps, tabShifts } from "../Spaces.mjs"
 
 // A line of `space watch`, with a tab on each of two monitors.
 const line = (spaces, more) => JSON.stringify({ version: 2, space: "0.1.0", focused: "eDP-1", monitors: [
@@ -242,6 +242,7 @@ test("reads the bar's background look", () => {
 test("reads whether the sidebar's header is on the bar", () => {
   const id = "com.t4t5.spaces"
   assert.equal(headerOnBar({ layout: { left: [{ id }] } }, id), true)
+  assert.equal(headerOnBar({ layout: { left: [id] } }, id), true)
   assert.equal(headerOnBar({ layout: { left: [{ id }, { id: "omarchy.menu" }] } }, id), true)
   assert.equal(headerOnBar({ position: "bottom", layout: { left: [{ id }] } }, id), true)
   assert.equal(headerOnBar({ layout: { left: [{ id: "omarchy.menu" }, { id }] } }, id), false, "the menu has the corner")
@@ -251,6 +252,76 @@ test("reads whether the sidebar's header is on the bar", () => {
   assert.equal(headerOnBar({ layout: { left: [null, { id }] } }, id), false)
   assert.equal(headerOnBar({ layout: { left: [] } }, id), false)
   assert.equal(headerOnBar(null, id), false)
+})
+
+test("reads a bar widget entry", () => {
+  assert.deepEqual(parseBarEntry("io.github.someone.tabs"), { id: "io.github.someone.tabs", settings: {} })
+  assert.deepEqual(parseBarEntry({ id: "io.github.someone.tabs", compact: true }), { id: "io.github.someone.tabs", settings: { compact: true } })
+  assert.equal(parseBarEntry(""), null)
+  assert.equal(parseBarEntry({}), null)
+  assert.deepEqual(parseBarEntry({ source: "~/Tabs.qml" }), { id: "", settings: { source: "~/Tabs.qml" } }, "source alone names a custom module")
+  assert.deepEqual(parseBarEntry({ type: "qml" }), { id: "", settings: { type: "qml" } }, "type alone names an incomplete module entry")
+  assert.equal(parseBarEntry(["io.github.someone.tabs"]), null)
+})
+
+test("reads the tabs slot from its two keys", () => {
+  const own = { shown: true, settings: {}, widget: null, misplaced: false }
+  assert.deepEqual(tabsSlot(null), own)
+  assert.deepEqual(tabsSlot({}), own)
+  assert.deepEqual(tabsSlot({ tabs: null }), own, "null is unset")
+  assert.deepEqual(tabsSlot({ tabs: false }), { ...own, shown: false })
+  assert.deepEqual(tabsSlot({ tabs: false, tabsWidget: "io.github.someone.tabs" }),
+    { ...own, shown: false, widget: { id: "io.github.someone.tabs", settings: {} } }, "tabsWidget wins over tabs: false")
+  assert.deepEqual(tabsSlot({ tabs: { numerals: ["一"], labels: false } }), { ...own, settings: { numerals: ["一"], labels: false } })
+  assert.deepEqual(tabsSlot({ tabsWidget: "io.github.someone.tabs" }), { ...own, widget: { id: "io.github.someone.tabs", settings: {} } })
+  assert.deepEqual(tabsSlot({ tabsWidget: { source: "~/Tabs.qml", compact: true } }),
+    { ...own, widget: { id: "", settings: { source: "~/Tabs.qml", compact: true } } })
+  assert.deepEqual(tabsSlot({ tabs: { numerals: false }, tabsWidget: "x" }),
+    { ...own, settings: { numerals: false }, widget: { id: "x", settings: {} } }, "each key keeps to its own")
+
+  assert.equal(tabsSlot({ tabs: "io.github.someone.tabs" }).misplaced, true, "a widget id in tabs")
+  assert.equal(tabsSlot({ tabs: { id: "io.github.someone.tabs" } }).misplaced, true)
+  assert.equal(tabsSlot({ tabs: { source: "~/Tabs.qml" } }).misplaced, true)
+  assert.deepEqual(tabsSlot({ tabs: { id: "x", labels: false } }).widget, null, "never read as a widget")
+})
+
+test("finds a custom QML module as the bar does", () => {
+  assert.equal(expandPath("~/bar/Tabs.qml", "/home/u"), "/home/u/bar/Tabs.qml")
+  assert.equal(expandPath("$HOME/bar/Tabs.qml", "/home/u/"), "/home/u/bar/Tabs.qml")
+  assert.equal(expandPath("/abs/Tabs.qml", "/home/u"), "/abs/Tabs.qml")
+  const url = (entry) => customModuleUrl(parseBarEntry(entry), "/home/u")
+  assert.equal(url({ id: "kanji", source: "~/bar/Kanji.qml" }), "file:///home/u/bar/Kanji.qml")
+  assert.equal(url({ source: "~/bar/Kanji.qml" }), "file:///home/u/bar/Kanji.qml")
+  assert.equal(url({ id: "kanji", type: "qml" }), "file:///home/u/.config/omarchy/bar/modules/kanji.qml")
+  assert.equal(url({ type: "qml" }), "", "qml without id or source")
+  assert.equal(url({ id: "../evil", type: "qml" }), "")
+  assert.equal(url({ id: "kanji", source: "relative.qml" }), "", "a path from nowhere")
+  assert.equal(url({ id: "kanji", type: "command", source: "~/x.qml" }), "")
+  assert.equal(url("io.github.someone.tabs"), "", "a registered widget")
+})
+
+test("numbers tabs with custom numerals", () => {
+  const kanji = ["一", "二", "三", "四", "五"]
+  assert.equal(numeralFor(2), "2")
+  assert.equal(numeralFor(2, kanji), "二")
+  assert.equal(numeralFor(6, kanji), "6", "past the list")
+  assert.equal(numeralFor(1, false), "", "no numerals")
+  assert.equal(numeralFor(0, kanji), "")
+})
+
+test("hands widgets in a slot a space and tabs of their own", () => {
+  const state = parseState(line([
+    { id: "s1", label: "Tax 2026", named: true, icon: "🚀", status: "waiting", windows: 3, active: true, left_at: 1000 },
+    { id: "s2", status: "bogus" },
+  ]))
+  assert.deepEqual(publicSpace(state, "s1"), { id: "s1", label: "Tax 2026", named: true, icon: "🚀", status: "waiting" })
+  assert.deepEqual(publicSpace(state, "s2"), { id: "s2", label: "s2", named: false, icon: "", status: "" })
+  assert.deepEqual(publicSpace(EMPTY, "s9"), { id: "s9", label: "s9", named: false, icon: "", status: "" }, "before it's in spaces")
+  assert.deepEqual(publicSpace(EMPTY, ""), { id: "", label: "", named: false, icon: "", status: "" }, "before space watch")
+
+  const tab = publicTab({ id: "s1:2", slot: 2, label: "claude", named: false, status: "working", windows: 1, active: true, pid: 99 })
+  assert.deepEqual(tab, { id: "s1:2", slot: 2, label: "claude", named: false, status: "working", active: true })
+  assert.deepEqual(publicTab({ id: "s1:1", status: "bogus" }), { id: "s1:1", slot: 0, label: "", named: false, status: "", active: false })
 })
 
 test("offers rename, an icon and close, saying why close doesn't apply", () => {

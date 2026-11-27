@@ -542,6 +542,16 @@ export function recessAlpha(r, g, b) {
   return luminance > 0.5 ? 0.07 : 0.3
 }
 
+// ---------------------------------------------------------------- slots
+//
+// The `com.t4t5.spaces` entry on the bar has a `tabs` slot (past the sidebar's
+// edge), set by two keys kept apart, so neither is guessed from the other's
+// shape: `tabs`, the settings of Spaces' own tabs (or `false` for none), and
+// `tabsWidget`, a bar widget entry to show in their place, as the bar's own
+// layout takes one: a registered bar widget by its id, or a custom QML module
+// (`{ id, type: "qml" }` or `{ source }`), with the rest of the entry as its
+// settings.
+
 // Whether the sidebar's header, its toggle and title, sits on the bar: when
 // the widget `id` comes first in the bar's left section, on a bar along the
 // top or bottom, so the corner over the sidebar is its own. With something
@@ -549,7 +559,103 @@ export function recessAlpha(r, g, b) {
 export function headerOnBar(config, id) {
   if (!config || config.position === "left" || config.position === "right") return false
   const left = config.layout && config.layout.left
-  return Array.isArray(left) && !!left[0] && left[0].id === id
+  return Array.isArray(left) && !!left[0] && (left[0] === id || left[0].id === id)
+}
+
+// A bar widget entry, a string id or an object, as `{ id, settings }`, the
+// settings being the rest of it; or null when it names nothing.
+export function parseBarEntry(entry) {
+  if (typeof entry === "string") {
+    const id = entry.trim()
+    return id ? { id, settings: {} } : null
+  }
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null
+  const id = typeof entry.id === "string" ? entry.id.trim() : ""
+  const source = typeof entry.source === "string" ? entry.source.trim() : ""
+  const type = typeof entry.type === "string" ? entry.type.trim() : ""
+  if (!id && !source && !type) return null
+  const settings = {}
+  for (const key of Object.keys(entry)) if (key !== "id") settings[key] = entry[key]
+  return { id, settings }
+}
+
+// The `tabs` slot as Spaces' `settings` set it: `{ shown, settings, widget,
+// misplaced }`. `shown` is whether Spaces' own tabs may show (`tabs !== false`),
+// `settings` are Spaces' own tabs' (`tabs`, when it's an object), and `widget`
+// is the entry in `tabsWidget`, or null. `tabsWidget` wins over `tabs: false`.
+// `misplaced` says `tabs` looks like a widget entry, which goes in `tabsWidget`.
+export function tabsSlot(settings) {
+  const tabs = settings ? settings.tabs : undefined
+  const plain = !!tabs && typeof tabs === "object" && !Array.isArray(tabs)
+  return {
+    shown: tabs !== false,
+    settings: plain ? tabs : {},
+    widget: settings ? parseBarEntry(settings.tabsWidget) : null,
+    misplaced: typeof tabs === "string" || (plain && ("id" in tabs || "source" in tabs || "type" in tabs)),
+  }
+}
+
+// Expands a leading `~/` or `$HOME/` against `home`.
+export function expandPath(path, home) {
+  const value = String(path || "").trim()
+  if (!value) return ""
+  const base = String(home || "").replace(/\/$/, "")
+  if (value.startsWith("~/")) return base + value.slice(1)
+  if (value.startsWith("$HOME/")) return base + value.slice(5)
+  return value
+}
+
+// The file:// URL of a custom QML module entry, found as the bar finds one:
+// its `source`, or with `type: "qml"`, `~/.config/omarchy/bar/modules/<id>.qml`.
+// "" for any other entry.
+export function customModuleUrl(entry, home) {
+  if (!entry) return ""
+  const settings = entry.settings || {}
+  if (settings.type && settings.type !== "qml") return ""
+  if (typeof settings.source === "string" && settings.source.trim()) return fileUrl(expandPath(settings.source, home))
+  if (settings.type !== "qml" || !entry.id || entry.id.includes("..") || entry.id.startsWith("/")) return ""
+  return fileUrl(String(home || "").replace(/\/$/, "") + "/.config/omarchy/bar/modules/" + entry.id + ".qml")
+}
+
+// The numeral shown for a tab slot `1..10`: its own (`"1"`–`"10"`), the one at
+// its place in a custom `numerals` list (as kanji), or "" with `numerals`
+// false or without a slot.
+export function numeralFor(slot, numerals) {
+  if (!(slot > 0) || numerals === false) return ""
+  if (Array.isArray(numerals)) {
+    const custom = numerals[slot - 1]
+    if (custom !== undefined && custom !== null && String(custom) !== "") return String(custom)
+  }
+  return String(slot)
+}
+
+// The space shown on a monitor as a widget in a slot sees it, apart from
+// `space watch`'s own form of it.
+export function publicSpace(state, id) {
+  const spaceId = String(id || "")
+  const row = spaceId && state && Array.isArray(state.spaces)
+    ? state.spaces.find((s) => s && s.id === spaceId)
+    : null
+  return {
+    id: spaceId,
+    label: row && row.label ? String(row.label) : spaceId,
+    named: !!row && row.named === true,
+    icon: row && typeof row.icon === "string" ? row.icon : "",
+    status: row ? status(row.status) : "",
+  }
+}
+
+// A tab as a widget in the `tabs` slot sees it, apart from `space watch`'s
+// own form of it.
+export function publicTab(tab) {
+  return {
+    id: String(tab.id || ""),
+    slot: number(tab.slot),
+    label: String(tab.label || ""),
+    named: tab.named === true,
+    status: status(tab.status),
+    active: tab.active === true,
+  }
 }
 
 // The bar's background, as Omarchy's shell config holds it: opaque, glassy
