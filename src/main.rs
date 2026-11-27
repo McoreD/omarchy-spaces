@@ -34,6 +34,9 @@ enum Cmd {
         /// Print the created space as JSON.
         #[arg(long)]
         json: bool,
+        /// Run a command in the new terminal (returns to your shell when it exits).
+        #[arg(last = true, value_name = "CMD")]
+        command: Vec<String>,
     },
     /// Show the space this command was called from (via its live Hyprland
     /// window, else `SPACE_ID`, else the focused space).
@@ -113,6 +116,9 @@ enum Cmd {
         /// Open in this space's folder (defaults to caller's or active space).
         #[arg(short, long)]
         space: Option<String>,
+        /// Run a command in the new terminal (returns to your shell when it exits).
+        #[arg(last = true, value_name = "CMD")]
+        command: Vec<String>,
     },
     /// Stream space, tab, focus, and agent-status changes as NDJSON lines.
     /// Strictly read-only, safe for scripts, hooks, and agents.
@@ -202,6 +208,9 @@ enum TabCmd {
         /// Print the created tab as JSON.
         #[arg(long)]
         json: bool,
+        /// Run a command in the new terminal (returns to your shell when it exits).
+        #[arg(last = true, value_name = "CMD")]
+        command: Vec<String>,
     },
     /// Go to tab N of the active space on this monitor, or a tab by its id.
     Go {
@@ -290,12 +299,14 @@ fn run_tab(command: TabCmd) -> anyhow::Result<()> {
             name,
             silent,
             json,
+            command,
         } => commands::new_tab_cmd(commands::NewTabOptions {
             space,
             dir,
             name,
             silent,
             json,
+            command,
         }),
         TabCmd::Go { tab } => match name::parse_slot(&tab) {
             Some(n) => commands::go_to_tab(commands::Target::Slot(n)),
@@ -342,12 +353,14 @@ fn main() -> ExitCode {
             note,
             silent,
             json,
+            command,
         } => commands::new(commands::NewOptions {
             dir,
             name,
             note,
             silent,
             json,
+            command,
         }),
         Cmd::Current { json } => commands::current(json),
         Cmd::Go { space } => commands::go(space),
@@ -377,7 +390,7 @@ fn main() -> ExitCode {
         Cmd::Reorder { space, position } => commands::reorder(space, position),
         Cmd::Close { space } => commands::close(space),
         Cmd::Restore { file, auto } => commands::restore(file, auto),
-        Cmd::Terminal { space } => commands::open_terminal(space),
+        Cmd::Terminal { space, command } => commands::open_terminal(space, command),
         Cmd::Events { types, no_snapshot } => events::events(types, no_snapshot),
         Cmd::Watch { sounds } => watch::watch(sounds),
         Cmd::Shell => shell::shell(),

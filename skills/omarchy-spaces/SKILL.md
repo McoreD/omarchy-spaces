@@ -91,8 +91,9 @@ A command given no space or tab acts on the one it's run from (the window it run
 ```bash
 space ls --json                 # spaces, tabs, notes, data and agent status
 space current [--json]          # the space and tab a command run here acts on
-space new [dir] --silent --json # open a space without going there; prints its id
-space tab new --silent --json   # the same for a tab; -s <space> for another space
+space new [dir] --silent --json [-- <cmd...>] # open a space without going there; prints its id; optionally runs a command
+space tab new --silent --json [-- <cmd...>]   # the same for a tab; -s <space> for another space
+space terminal [-s <space>] [-- <cmd...>]     # open a terminal in a space's folder, optionally running a command
 space go <space>                # go to a space
 space rename [space] <name>     # "" for its folder's name
 space icon [space] <icon>       # a glyph, emoji or image path; "" for its letters

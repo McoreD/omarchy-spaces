@@ -47,6 +47,7 @@ pub struct NewTabOptions {
     pub name: Option<String>,
     pub silent: bool,
     pub json: bool,
+    pub command: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,6 +71,9 @@ pub fn new_tab_cmd(opts: NewTabOptions) -> Result<()> {
         Some(dir) => Some(resolve_dir(dir)?),
         None => None,
     };
+    if !opts.command.is_empty() {
+        crate::shell::encode_run(&opts.command)?;
+    }
 
     let hypr = Hypr::from_env()?;
     let (rows, seen) = live::load_rows(Some(&hypr))?;
@@ -78,7 +82,12 @@ pub fn new_tab_cmd(opts: NewTabOptions) -> Result<()> {
     let here = name::locate(active.id, &active.name);
 
     if space == HOME {
-        if !opts.silent && explicit_dir.is_none() && custom_name.is_none() && !opts.json {
+        if !opts.silent
+            && explicit_dir.is_none()
+            && custom_name.is_none()
+            && opts.command.is_empty()
+            && !opts.json
+        {
             let workspaces = hypr.workspaces()?;
             let strip = Strip::new(&workspaces, HOME, &active, &Blocks::load());
             let key = new_tab_in(&strip, [])?;
@@ -91,19 +100,20 @@ pub fn new_tab_cmd(opts: NewTabOptions) -> Result<()> {
         let workspaces = hypr.workspaces()?;
         let strip = Strip::new(&workspaces, HOME, &active, &Blocks::load());
         let key = new_tab_in(&strip, [])?;
-        let (dir, window) = if opts.silent || explicit_dir.is_some() {
+        let (dir, window) = if opts.silent || explicit_dir.is_some() || !opts.command.is_empty() {
             let dir = match explicit_dir {
                 Some(dir) => dir,
                 None => live::here_folder(&hypr)?,
             };
             let env = [(context::SPACE_ID_ENV, HOME)];
-            let window = open_terminal_then(&hypr, &dir, &key.to_string(), &env, || {
-                if opts.silent {
-                    Ok(())
-                } else {
-                    focus(&hypr, HOME, key)
-                }
-            })?;
+            let window =
+                open_terminal_then(&hypr, &dir, &key.to_string(), &env, &opts.command, || {
+                    if opts.silent {
+                        Ok(())
+                    } else {
+                        focus(&hypr, HOME, key)
+                    }
+                })?;
             (Some(dir), window)
         } else {
             if here.key() != Some(key) {
@@ -174,7 +184,7 @@ pub fn new_tab_cmd(opts: NewTabOptions) -> Result<()> {
     })?;
     let workspace = name::workspace_name(&space, key);
     let env = [(context::SPACE_ID_ENV, space.as_str())];
-    let window = open_terminal_then(&hypr, &dir, &workspace, &env, || {
+    let window = open_terminal_then(&hypr, &dir, &workspace, &env, &opts.command, || {
         if opts.silent {
             return Ok(());
         }

@@ -30,6 +30,7 @@ pub struct NewOptions {
     pub note: Option<String>,
     pub silent: bool,
     pub json: bool,
+    pub command: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,6 +54,9 @@ pub fn new(opts: NewOptions) -> Result<()> {
         Some(raw) => spaces::clean_note(&raw)?,
         None => None,
     };
+    if !opts.command.is_empty() {
+        crate::shell::encode_run(&opts.command)?;
+    }
     let hypr = Hypr::from_env()?;
     let dir = match opts.dir {
         Some(dir) => resolve_dir(dir)?,
@@ -64,7 +68,7 @@ pub fn new(opts: NewOptions) -> Result<()> {
     let id = fresh_space(&hypr, first, None)?;
     let workspace = name::workspace_name(&id, first);
     let env = [(context::SPACE_ID_ENV, id.as_str())];
-    let window = open_terminal_then(&hypr, &dir, &workspace, &env, || {
+    let window = open_terminal_then(&hypr, &dir, &workspace, &env, &opts.command, || {
         if opts.silent {
             Ok(())
         } else {

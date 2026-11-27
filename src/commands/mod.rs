@@ -28,6 +28,7 @@ use crate::live;
 use crate::name::{self, HOME};
 use crate::paths;
 use crate::reserve;
+use crate::shell;
 use crate::spaces::Store;
 use crate::state::{self, Last};
 use crate::terminal;
@@ -55,9 +56,15 @@ impl SpaceTarget {
     }
 }
 
-/// `space terminal [--space <space>]`: a terminal in the folder you are in,
-/// or the target space's, so an empty tab opens on its folder rather than home.
-pub fn open_terminal(space: Option<String>) -> Result<()> {
+/// `space terminal [-s <space>] [-- <cmd...>]`: a terminal in the folder you
+/// are in, or the target space's, so an empty tab opens on its folder rather
+/// than home.
+pub fn open_terminal(space: Option<String>, run: Vec<String>) -> Result<()> {
+    let encoded_run = if run.is_empty() {
+        None
+    } else {
+        Some(shell::encode_run(&run)?)
+    };
     let (dir, space_id) = match Hypr::from_env() {
         Ok(hypr) => match space {
             Some(target) => {
@@ -71,11 +78,18 @@ pub fn open_terminal(space: Option<String>) -> Result<()> {
         Err(e) if space.is_some() => return Err(e),
         Err(_) => (paths::home(), None),
     };
-    let env: Vec<(&str, &str)> = space_id
-        .as_deref()
-        .map(|id| vec![(context::SPACE_ID_ENV, id)])
-        .unwrap_or_default();
-    terminal::launch_env(&launch::terminal(), &dir, &env)
+    let mut env: Vec<(&str, &str)> = Vec::new();
+    if let Some(id) = space_id.as_deref() {
+        env.push((context::SPACE_ID_ENV, id));
+    }
+    let command = match encoded_run.as_deref() {
+        Some(encoded) => {
+            env.push((shell::RUN, encoded));
+            launch::resuming_terminal()
+        }
+        None => launch::terminal(),
+    };
+    terminal::launch_env(&command, &dir, &env)
 }
 
 /// Resolves an optional space argument: explicit target, else the caller's
@@ -141,10 +155,24 @@ pub(super) fn open_terminal_then(
     dir: &Path,
     workspace: &str,
     env: &[(&str, &str)],
+    run: &[String],
     arrive: impl FnOnce() -> Result<()>,
 ) -> Result<Option<String>> {
+    let encoded_run = if run.is_empty() {
+        None
+    } else {
+        Some(shell::encode_run(run)?)
+    };
+    let mut full_env = env.to_vec();
+    let launcher = match encoded_run.as_deref() {
+        Some(encoded) => {
+            full_env.push((shell::RUN, encoded));
+            launch::resuming_terminal()
+        }
+        None => launch::terminal(),
+    };
     let events = hypr.events().ok();
-    let command = terminal::command_in(&launch::terminal(), dir, env);
+    let command = terminal::command_in(&launcher, dir, &full_env);
     let on = hypr::selector_for(&hypr.workspaces().unwrap_or_default(), workspace);
     let placed = hypr
         .dispatch(&hypr::exec_on(&command, &format!("{on} silent")))
@@ -153,7 +181,7 @@ pub(super) fn open_terminal_then(
         (true, Some(events)) => wait_for_window(&events, workspace, OPEN_TIMEOUT, |_| true),
         (true, None) => None,
         (false, _) => {
-            terminal::launch_env(&launch::terminal(), dir, env)?;
+            terminal::launch_env(&launcher, dir, &full_env)?;
             None
         }
     };

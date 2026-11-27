@@ -19,7 +19,7 @@ space current                # the space a command run here acts on
 
 A space left out is the one the command is run from (see [Where a command acts](#where-a-command-acts)).
 
-`space new` takes `--name <name>` and `--note <text>` to give the space them right away, `--silent` to open it without going there, and `--json` to print its id.
+`space new` takes `--name <name>` and `--note <text>` to give the space them right away, `--silent` to open it without going there, `--json` to print its id, and `-- <cmd...>` to run a command in its terminal (returning to your shell when it exits).
 
 ## Tabs
 
@@ -36,7 +36,7 @@ space tab send [tab] <space|next|prev>  # a tab to another space
 
 A tab left out is the one the command is run from.
 
-`space tab new` takes `-s <space>` to open it in another space, `--dir <dir>` to open its terminal there, and `--name`, `--silent` and `--json` as `space new` does.
+`space tab new` takes `-s <space>` to open it in another space, `--dir <dir>` to open its terminal there, and `--name`, `--silent`, `--json` and `-- <cmd...>` as `space new` does.
 
 ## Windows
 
@@ -64,7 +64,7 @@ space ls [--json]            # list spaces with window counts; --json, for scrip
 space events                 # a line of JSON each time something changes, for scripts
 space restore                # open the spaces from before the last restart again
 space restore <file>         # or those of an earlier session
-space terminal [-s <space>]  # a terminal in the folder you are in, or a space's
+space terminal [-s <space>] [-- <cmd...>]  # a terminal in the folder you are in, or a space's; optionally runs a command
 space watch [--sounds]       # what the plugin runs, and for it alone; --sounds also rings for agents
 ```
 

@@ -77,6 +77,7 @@ const STUBS: &[(&str, &str)] = &[
         "pwd >> \"$HOME/launched\"\n\
          shift; echo \"$*\" >> \"$HOME/ran\"\n\
          echo \"$SPACES_RESUME\" >> \"$HOME/resumed\"\n\
+         echo \"$SPACES_RUN\" >> \"$HOME/runs\"\n\
          echo \"$SPACE_ID\" >> \"$HOME/space_ids\"",
     ),
     ("ghostty", "pwd >> \"$HOME/launched-for-real\""),
@@ -4161,4 +4162,114 @@ fn overlapping_watch_takes_over_events_when_first_ends() {
     }
     assert!(saw_snapshot, "second watch should take over events.sock");
     drop(second);
+}
+
+#[test]
+fn shell_runs_command_verbatim_then_returns_to_shell() {
+    let env = Env::new();
+    let shell = env.root.path().join("myshell");
+    // A fake shell that prints every arg on its own line (verifying no
+    // splitting or expansion) and confirms SPACES_RUN was removed.
+    fs::write(
+        &shell,
+        "#!/bin/sh\nfor a in \"$@\"; do printf '<%s>\\n' \"$a\"; done\nenv | grep SPACES_R || true\n",
+    )
+    .unwrap();
+    fs::set_permissions(&shell, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    let encoded =
+        serde_json::to_string(&["claude", "fix $HOME; 'quotes'", "--model", "opus"]).unwrap();
+    let out = env
+        .command(&["shell"])
+        .env("SHELL", &shell)
+        .env("SPACES_RUN", &encoded)
+        .env("SPACES_RESTORE", "1")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let lines: Vec<&str> = std::str::from_utf8(&out.stdout).unwrap().lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "<-i>",
+            "<-c>",
+            "<\"$@\"; exec \"$0\">",
+            &format!("<{}>", shell.display()),
+            "<claude>",
+            "<fix $HOME; 'quotes'>",
+            "<--model>",
+            "<opus>",
+        ]
+    );
+}
+
+#[test]
+fn new_tab_new_and_terminal_run_commands() {
+    let env = Env::new();
+    let (one, two) = (env.dir("one"), env.dir("two"));
+    env.add_terminal("s1:1", &one);
+    env.set_active("s1:1");
+
+    // 1. `space new [dir] -- <cmd...>`
+    let created: Value = serde_json::from_str(&env.ok(&[
+        "new",
+        two.to_str().unwrap(),
+        "--name",
+        "Worker",
+        "--silent",
+        "--json",
+        "--",
+        "claude",
+        "--model",
+        "opus",
+    ]))
+    .unwrap();
+    assert_eq!(created["id"], "s2");
+    assert_eq!(env.active(), "s1:1");
+
+    // 2. `space tab new -s <space> -- <cmd...>`
+    let tab: Value = serde_json::from_str(&env.ok(&[
+        "tab", "new", "-s", "Worker", "--silent", "--json", "--", "npm", "run", "dev",
+    ]))
+    .unwrap();
+    assert_eq!(tab["space"], "s2");
+    assert_eq!(tab["id"], "s2:2");
+
+    // 3. `space tab new -s home -- <cmd...>` opens a terminal on home's new tab.
+    let home_tab: Value = serde_json::from_str(&env.ok(&[
+        "tab", "new", "-s", "home", "--silent", "--json", "--", "lazygit",
+    ]))
+    .unwrap();
+    assert_eq!(home_tab["space"], "home");
+
+    // 4. `space terminal -s <space> -- <cmd...>`
+    env.ok(&["terminal", "-s", "Worker", "--", "htop", "-t"]);
+
+    assert_eq!(env.launched(4).len(), 4);
+    let ran = fs::read_to_string(env.home().join("ran")).unwrap();
+    let ran_lines: Vec<&str> = ran.lines().collect();
+    assert_eq!(ran_lines.len(), 4);
+    for line in &ran_lines {
+        assert!(line.ends_with(" shell"), "expected space shell: {line}");
+    }
+    let runs = fs::read_to_string(env.home().join("runs")).unwrap();
+    let decoded: Vec<Value> = runs
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(
+        decoded,
+        vec![
+            json!(["claude", "--model", "opus"]),
+            json!(["npm", "run", "dev"]),
+            json!(["lazygit"]),
+            json!(["htop", "-t"]),
+        ]
+    );
+
+    // Empty command after `--` is rejected before creating a space.
+    assert!(env.fails(&["new", "--", ""]).contains("empty"));
+    assert!(env.fails(&["tab", "new", "--", ""]).contains("empty"));
+    assert!(env.fails(&["terminal", "--", ""]).contains("empty"));
 }
