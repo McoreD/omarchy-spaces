@@ -6,9 +6,12 @@
 //! It's between `space` and its plugin, and changes as what they show does.
 //! What scripts read is `space ls --json` (`list.rs`).
 
+use std::collections::BTreeMap;
+use std::path::Path;
+
 use serde::Serialize;
 
-use crate::live::{Live, Row, Screen, Snapshot};
+use crate::live::{Live, Row, Screen, Snapshot, TerminalRow};
 use crate::name;
 use crate::status::Status;
 use crate::tabs;
@@ -59,6 +62,20 @@ struct Tab {
     active: bool,
 }
 
+/// A terminal window in a space, as widgets in the sidebar or bar see it.
+#[derive(Debug, Serialize)]
+struct Terminal<'a> {
+    address: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tab: Option<String>,
+    folder: &'a Path,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    program: Option<&'a str>,
+    label: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<Status>,
+}
+
 /// A space, as the sidebar shows it.
 #[derive(Debug, Serialize)]
 struct Space<'a> {
@@ -66,10 +83,16 @@ struct Space<'a> {
     label: &'a str,
     named: bool,
     icon: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    folder: Option<&'a Path>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    meta: &'a BTreeMap<String, serde_json::Value>,
     active: bool,
     windows: Option<u32>,
     left_at: u64,
     status: Option<Status>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    terminals: Vec<Terminal<'a>>,
 }
 
 pub(crate) fn state<'a>(snapshot: &'a Snapshot, live: &Live, rows: &'a [Row]) -> State<'a> {
@@ -115,16 +138,30 @@ fn monitor<'a>(screen: &'a Screen, snapshot: &Snapshot, live: &Live, rows: &[Row
     }
 }
 
+fn terminal<'a>(space: &str, t: &'a TerminalRow) -> Terminal<'a> {
+    Terminal {
+        address: &t.address,
+        tab: t.tab.map(|key| name::tab_id(space, key)),
+        folder: t.folder.path(),
+        program: t.program.as_deref(),
+        label: &t.label,
+        status: t.status,
+    }
+}
+
 fn space(row: &Row) -> Space<'_> {
     Space {
         id: &row.id,
         label: &row.label,
         named: row.named,
         icon: row.icon.as_deref(),
+        folder: row.folder.as_ref().map(|f| f.path()),
+        meta: &row.meta,
         active: row.active,
         windows: row.windows,
         left_at: row.left_at,
         status: row.status,
+        terminals: row.terminals.iter().map(|t| terminal(&row.id, t)).collect(),
     }
 }
 

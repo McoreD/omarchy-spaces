@@ -61,12 +61,33 @@ export function parseState(text) {
         label: typeof row.label === "string" && row.label ? row.label : row.id,
         named: row.named === true,
         icon: typeof row.icon === "string" ? row.icon : "",
+        folder: typeof row.folder === "string" ? row.folder : "",
+        meta: plainObject(row.meta),
         active: row.active === true,
         windows: typeof row.windows === "number" ? row.windows : -1,
         leftAt: number(row.left_at),
         status: status(row.status),
+        terminals: parseTerminals(row.terminals),
       })),
   }
+}
+
+function plainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {}
+}
+
+function parseTerminals(list) {
+  if (!Array.isArray(list)) return []
+  return list
+    .filter((t) => t && typeof t.address === "string" && t.address !== "")
+    .map((t) => ({
+      address: t.address,
+      tab: typeof t.tab === "string" ? t.tab : "",
+      folder: typeof t.folder === "string" ? t.folder : "",
+      program: typeof t.program === "string" ? t.program : "",
+      label: typeof t.label === "string" ? t.label : "",
+      status: status(t.status),
+    }))
 }
 
 function versionError(message) {
@@ -542,6 +563,17 @@ export function recessAlpha(r, g, b) {
   return luminance > 0.5 ? 0.07 : 0.3
 }
 
+// ---------------------------------------------------------------- slots
+//
+// The `com.t4t5.spaces` entry on the bar has a `tabs` slot (past the sidebar's
+// edge), set by two keys kept apart, so neither is guessed from the other's
+// shape: `tabs`, the settings of Spaces' own tabs (or `false` for none), and
+// `tabsWidget`, a bar widget entry to show in their place, as the bar's own
+// layout takes one: a registered bar widget by its id, or a custom QML module
+// (`{ id, type: "qml" }` or `{ source }`), with the rest of the entry as its
+// settings. The sidebar's settings are in `sidebar`, its widgets among them,
+// in entries of the same form.
+
 // Whether the sidebar's header, its toggle and title, sits on the bar: when
 // the widget `id` comes first in the bar's left section, on a bar along the
 // top or bottom, so the corner over the sidebar is its own. With something
@@ -549,7 +581,193 @@ export function recessAlpha(r, g, b) {
 export function headerOnBar(config, id) {
   if (!config || config.position === "left" || config.position === "right") return false
   const left = config.layout && config.layout.left
-  return Array.isArray(left) && !!left[0] && left[0].id === id
+  return Array.isArray(left) && !!left[0] && (left[0] === id || left[0].id === id)
+}
+
+// A bar widget entry, a string id or an object, as `{ id, settings }`, the
+// settings being the rest of it; or null when it names nothing.
+export function parseBarEntry(entry) {
+  if (typeof entry === "string") {
+    const id = entry.trim()
+    return id ? { id, settings: {} } : null
+  }
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null
+  const id = typeof entry.id === "string" ? entry.id.trim() : ""
+  const source = typeof entry.source === "string" ? entry.source.trim() : ""
+  const type = typeof entry.type === "string" ? entry.type.trim() : ""
+  if (!id && !source && !type) return null
+  const settings = {}
+  for (const key of Object.keys(entry)) if (key !== "id") settings[key] = entry[key]
+  return { id, settings }
+}
+
+// The settings on the bar's `id` entry from `barConfig.layout`, or `{}`.
+export function pluginSettings(config, id) {
+  const layout = config && config.layout
+  if (!layout || typeof layout !== "object") return {}
+  for (const section of ["left", "centerBegin", "center", "centerEnd", "right"]) {
+    const items = layout[section]
+    if (!Array.isArray(items)) continue
+    for (const item of items) {
+      if (item && typeof item === "object" && item.id === id) {
+        const out = {}
+        for (const key of Object.keys(item)) if (key !== "id") out[key] = item[key]
+        return out
+      }
+    }
+  }
+  return {}
+}
+
+// The sidebar's settings, from `sidebar` on Spaces' entry: `{ width, widgets,
+// misplaced }`. `width` is the expanded width (0 for the default), and
+// `widgets` the bar widget entries in `sidebar.space.widgets`, shown under
+// each space's name, in order. Spaces' own id is left out, as it can't hold
+// itself. `misplaced` says `sidebar` looks like a widget entry, which goes in
+// `sidebar.space.widgets`.
+export function sidebarSlot(settings, ownId) {
+  const sidebar = settings ? settings.sidebar : undefined
+  const plain = isPlainObject(sidebar)
+  const width = plain && typeof sidebar.width === "number" && Number.isFinite(sidebar.width) && sidebar.width > 0
+    ? Math.round(sidebar.width)
+    : 0
+  const space = plain && isPlainObject(sidebar.space) ? sidebar.space : {}
+  const widgets = (Array.isArray(space.widgets) ? space.widgets : [])
+    .map(parseBarEntry)
+    .filter((entry) => entry && entry.id !== ownId)
+  return {
+    width,
+    widgets,
+    misplaced: typeof sidebar === "string" || (plain && ("id" in sidebar || "source" in sidebar || "type" in sidebar)),
+  }
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value)
+}
+
+// How wide each of a space's widgets may be, from how wide each would be and
+// the room on the line, `gap` apart: each as wide as it would be, or, when
+// they don't all fit, no wider than a fair share (`fairCap`).
+export function widgetWidths(widths, room, gap) {
+  const shown = widths.filter((w) => w > 0).length
+  const cap = fairCap(widths, Math.max(0, room - gap * Math.max(0, shown - 1)))
+  return widths.map((w) => Math.min(w, cap))
+}
+
+// The `tabs` slot as Spaces' `settings` set it: `{ shown, settings, widget,
+// misplaced }`. `shown` is whether Spaces' own tabs may show (`tabs !== false`),
+// `settings` are Spaces' own tabs' (`tabs`, when it's an object), and `widget`
+// is the entry in `tabsWidget`, or null. `tabsWidget` wins over `tabs: false`.
+// `misplaced` says `tabs` looks like a widget entry, which goes in `tabsWidget`.
+export function tabsSlot(settings) {
+  const tabs = settings ? settings.tabs : undefined
+  const plain = !!tabs && typeof tabs === "object" && !Array.isArray(tabs)
+  return {
+    shown: tabs !== false,
+    settings: plain ? tabs : {},
+    widget: settings ? parseBarEntry(settings.tabsWidget) : null,
+    misplaced: typeof tabs === "string" || (plain && ("id" in tabs || "source" in tabs || "type" in tabs)),
+  }
+}
+
+// Expands a leading `~/` or `$HOME/` against `home`.
+export function expandPath(path, home) {
+  const value = String(path || "").trim()
+  if (!value) return ""
+  const base = String(home || "").replace(/\/$/, "")
+  if (value.startsWith("~/")) return base + value.slice(1)
+  if (value.startsWith("$HOME/")) return base + value.slice(5)
+  return value
+}
+
+// The file:// URL of a custom QML module entry, found as the bar finds one:
+// its `source`, or with `type: "qml"`, `~/.config/omarchy/bar/modules/<id>.qml`.
+// "" for any other entry.
+export function customModuleUrl(entry, home) {
+  if (!entry) return ""
+  const settings = entry.settings || {}
+  if (settings.type && settings.type !== "qml") return ""
+  if (typeof settings.source === "string" && settings.source.trim()) return fileUrl(expandPath(settings.source, home))
+  if (settings.type !== "qml" || !entry.id || entry.id.includes("..") || entry.id.startsWith("/")) return ""
+  return fileUrl(String(home || "").replace(/\/$/, "") + "/.config/omarchy/bar/modules/" + entry.id + ".qml")
+}
+
+// The numeral shown for a tab slot `1..10`: its own (`"1"`–`"10"`), the one at
+// its place in a custom `numerals` list (as kanji), or "" with `numerals`
+// false or without a slot.
+export function numeralFor(slot, numerals) {
+  if (!(slot > 0) || numerals === false) return ""
+  if (Array.isArray(numerals)) {
+    const custom = numerals[slot - 1]
+    if (custom !== undefined && custom !== null && String(custom) !== "") return String(custom)
+  }
+  return String(slot)
+}
+
+// A terminal window as a widget in a slot sees it.
+export function publicTerminal(t) {
+  return {
+    address: String(t && t.address || ""),
+    tab: String(t && t.tab || ""),
+    folder: String(t && t.folder || ""),
+    program: String(t && t.program || ""),
+    label: String(t && t.label || ""),
+    status: status(t && t.status),
+  }
+}
+
+// The space shown on a monitor as a widget in a slot sees it, apart from
+// `space watch`'s own form of it.
+export function publicSpace(state, id) {
+  const spaceId = String(id || "")
+  const row = spaceId && state && Array.isArray(state.spaces)
+    ? state.spaces.find((s) => s && s.id === spaceId)
+    : null
+  return {
+    id: spaceId,
+    label: row && row.label ? String(row.label) : spaceId,
+    named: !!row && row.named === true,
+    icon: row && typeof row.icon === "string" ? row.icon : "",
+    folder: row && typeof row.folder === "string" ? row.folder : "",
+    meta: plainObject(row && row.meta),
+    status: row ? status(row.status) : "",
+    terminals: row && Array.isArray(row.terminals) ? row.terminals.map(publicTerminal) : [],
+  }
+}
+
+// A space as a widget sees it: in `spaces` for a tabs widget, and as `space`
+// for a widget under its name in the sidebar.
+export function publicSpaceRow(row) {
+  if (!row) {
+    return { id: "", label: "", named: false, icon: "", folder: "", meta: {}, status: "", active: false, windows: -1, leftAt: 0, terminals: [] }
+  }
+  return {
+    id: String(row.id || ""),
+    label: row.label ? String(row.label) : String(row.id || ""),
+    named: row.named === true,
+    icon: typeof row.icon === "string" ? row.icon : "",
+    folder: typeof row.folder === "string" ? row.folder : "",
+    meta: plainObject(row.meta),
+    status: status(row.status),
+    active: row.active === true,
+    windows: typeof row.windows === "number" ? row.windows : -1,
+    leftAt: number(row.leftAt),
+    terminals: Array.isArray(row.terminals) ? row.terminals.map(publicTerminal) : [],
+  }
+}
+
+// A tab as a widget in the `tabs` slot sees it, apart from `space watch`'s
+// own form of it.
+export function publicTab(tab) {
+  return {
+    id: String(tab.id || ""),
+    slot: number(tab.slot),
+    label: String(tab.label || ""),
+    named: tab.named === true,
+    status: status(tab.status),
+    active: tab.active === true,
+  }
 }
 
 // The bar's background, as Omarchy's shell config holds it: opaque, glassy

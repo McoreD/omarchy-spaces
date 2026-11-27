@@ -48,6 +48,8 @@ struct Hyprland {
     browser_on: Option<(String, String)>,
     /// Windows run by another window's process, by that one's address.
     shared: std::collections::HashMap<u32, u32>,
+    /// Explicit PID overrides for windows, by address (used to test real `/proc` ancestry).
+    pids: std::collections::HashMap<u32, u32>,
     /// The classes of windows that aren't terminals.
     classes: std::collections::HashMap<u32, String>,
     /// Whether it says how windows are laid out, as 0.56 does.
@@ -74,7 +76,9 @@ const STUBS: &[(&str, &str)] = &[
         "xdg-terminal-exec",
         "pwd >> \"$HOME/launched\"\n\
          shift; echo \"$*\" >> \"$HOME/ran\"\n\
-         echo \"$SPACES_RESUME\" >> \"$HOME/resumed\"",
+         echo \"$SPACES_RESUME\" >> \"$HOME/resumed\"\n\
+         echo \"$SPACES_RUN\" >> \"$HOME/runs\"\n\
+         echo \"$SPACE_ID\" >> \"$HOME/space_ids\"",
     ),
     ("ghostty", "pwd >> \"$HOME/launched-for-real\""),
     ("kitty", "pwd >> \"$HOME/launched-for-real\""),
@@ -237,7 +241,12 @@ impl Hyprland {
                         .map(|(ws, address)| {
                             let id = self.ensure(ws);
                             let class = self.classes.get(&address).cloned().unwrap_or_default();
-                            json!({ "address": format!("0x{address:x}"), "class": class, "stableId": format!("{address:x}"), "pid": 1000 + self.shared.get(&address).unwrap_or(&address), "workspace": { "id": id, "name": ws } })
+                            let pid = self
+                                .pids
+                                .get(&address)
+                                .copied()
+                                .unwrap_or_else(|| 1000 + self.shared.get(&address).unwrap_or(&address));
+                            json!({ "address": format!("0x{address:x}"), "class": class, "stableId": format!("{address:x}"), "pid": pid, "workspace": { "id": id, "name": ws } })
                         })
                         .collect(),
                 )
@@ -634,6 +643,21 @@ impl Env {
         let i = hypr.addresses.iter().position(|a| *a == address).unwrap();
         hypr.windows.remove(i);
         hypr.addresses.remove(i);
+        hypr.pids.remove(&address);
+        hypr.tidy();
+    }
+
+    fn set_pid(&self, address: &str, pid: u32) {
+        let address = u32::from_str_radix(address.trim_start_matches("0x"), 16).unwrap();
+        self.hypr.lock().unwrap().pids.insert(address, pid);
+    }
+
+    fn move_window(&self, address: &str, workspace: &str) {
+        let mut hypr = self.hypr.lock().unwrap();
+        let address = u32::from_str_radix(address.trim_start_matches("0x"), 16).unwrap();
+        let i = hypr.addresses.iter().position(|a| *a == address).unwrap();
+        hypr.ensure(workspace);
+        hypr.windows[i] = workspace.to_string();
         hypr.tidy();
     }
 
@@ -3400,14 +3424,19 @@ fn install_setup_replaces_omarchys_menu_and_workspaces_once() {
     let home = tmp.path().join("home");
     let installed = home.join(".local/bin/space");
     let link = home.join(".config/hypr/omarchy-spaces.lua");
+    let claude_skill = home.join(".claude/skills/omarchy-spaces");
+    let gemini_skill = home.join(".gemini/config/skills/omarchy-spaces");
+    let agents_skill = home.join(".agents/skills/omarchy-spaces");
     let replaced = home.join(".local/state/omarchy-spaces/bar");
     let plugin = tmp.path().join("plugin");
     fs::create_dir_all(plugin.join("hypr")).unwrap();
+    fs::create_dir_all(plugin.join("skills/omarchy-spaces")).unwrap();
     for file in [
         "install.sh",
         "uninstall.sh",
         "manifest.json",
         "hypr/omarchy-spaces.lua",
+        "skills/omarchy-spaces/SKILL.md",
     ] {
         fs::copy(root.join(file), plugin.join(file)).unwrap();
     }
@@ -3466,7 +3495,9 @@ fn install_setup_replaces_omarchys_menu_and_workspaces_once() {
     assert_eq!(did, "");
     assert!(!home.exists());
 
-    // Offline: the keys have what they load, but the bar isn't brought up.
+    // Offline: the keys and skills for present agents have what they load, but the bar isn't brought up.
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    fs::create_dir_all(home.join(".gemini/config")).unwrap();
     let (out, did) = run(&plugin, &["--setup"]);
     assert!(!out.status.success());
     assert!(did.contains("Couldn't install"), "{did}");
@@ -3476,6 +3507,15 @@ fn install_setup_replaces_omarchys_menu_and_workspaces_once() {
         fs::read_link(&link).unwrap(),
         plugin.join("hypr/omarchy-spaces.lua")
     );
+    assert_eq!(
+        fs::read_link(&claude_skill).unwrap(),
+        plugin.join("skills/omarchy-spaces")
+    );
+    assert_eq!(
+        fs::read_link(&gemini_skill).unwrap(),
+        plugin.join("skills/omarchy-spaces")
+    );
+    assert!(!agents_skill.exists(), "doesn't create absent agent dirs");
 
     let package = Command::new(root.join("scripts/package.sh"))
         .arg(env!("CARGO_BIN_EXE_space"))
@@ -3516,11 +3556,19 @@ fn install_setup_replaces_omarchys_menu_and_workspaces_once() {
     assert!(!out.status.success());
     assert_eq!(did, "");
 
-    // A Hyprland file that's the user's own stays.
+    // A Hyprland file or skill that's the user's own stays.
     fs::remove_file(&link).unwrap();
     fs::write(&link, "-- mine\n").unwrap();
+    fs::remove_file(&claude_skill).unwrap();
+    fs::create_dir_all(&claude_skill).unwrap();
+    fs::write(claude_skill.join("SKILL.md"), "mine\n").unwrap();
     assert!(run(&plugin, &["--setup"]).0.status.success());
     assert_eq!(fs::read_to_string(&link).unwrap(), "-- mine\n");
+    assert!(!claude_skill.is_symlink());
+    assert_eq!(
+        fs::read_to_string(claude_skill.join("SKILL.md")).unwrap(),
+        "mine\n"
+    );
 }
 
 #[test]
@@ -3530,11 +3578,12 @@ fn uninstall_undoes_the_setup_once_the_plugin_is_gone() {
     let home = tmp.path().join("home");
     let plugin = home.join(".config/omarchy/plugins/com.t4t5.spaces");
     let link = home.join(".config/hypr/omarchy-spaces.lua");
+    let skill_link = home.join(".claude/skills/omarchy-spaces");
     let config = home.join(".config/omarchy/shell.json");
     let state = home.join(".local/state/omarchy-spaces");
     let space = home.join(".local/bin/space");
     let mine = home.join(".config/omarchy-spaces/config.toml");
-    for dir in [&link, &config, &space, &mine] {
+    for dir in [&link, &skill_link, &config, &space, &mine] {
         fs::create_dir_all(dir.parent().unwrap()).unwrap();
     }
     fs::create_dir_all(&state).unwrap();
@@ -3566,10 +3615,13 @@ fn uninstall_undoes_the_setup_once_the_plugin_is_gone() {
     let built = "#!/bin/sh\n# omarchy-spaces\n";
     let set_up = || {
         fs::create_dir_all(plugin.join("hypr")).unwrap();
+        fs::create_dir_all(plugin.join("skills/omarchy-spaces")).unwrap();
         fs::create_dir_all(&state).unwrap();
         fs::copy(root.join("uninstall.sh"), state.join("uninstall.sh")).unwrap();
         let _ = fs::remove_file(&link);
         std::os::unix::fs::symlink(plugin.join("hypr/omarchy-spaces.lua"), &link).unwrap();
+        let _ = fs::remove_file(&skill_link);
+        std::os::unix::fs::symlink(plugin.join("skills/omarchy-spaces"), &skill_link).unwrap();
         fs::write(&space, built).unwrap();
         let sum = Command::new("sha256sum").arg(&space).output().unwrap();
         let sum = String::from_utf8(sum.stdout).unwrap();
@@ -3626,7 +3678,7 @@ fn uninstall_undoes_the_setup_once_the_plugin_is_gone() {
     assert_eq!(did.matches("window.move").count(), 2, "{did}");
     assert!(did.contains("hl.dsp.focus({ workspace = \"2\" })"), "{did}");
     assert!(did.ends_with(put_back), "{did}");
-    assert!(!link.is_symlink() && !space.exists() && !state.exists());
+    assert!(!link.is_symlink() && !skill_link.is_symlink() && !space.exists() && !state.exists());
     assert!(mine.exists());
 
     // But not what it didn't make, nor a bar that kept Omarchy's.
@@ -3658,4 +3710,578 @@ fn the_keys_run_commands_there_are() {
         env.ok(&args);
     }
     env.ok(&["window", "send", "--silent", "--help"]);
+}
+
+#[test]
+fn caller_context_resolves_live_window_and_falls_back_to_env() {
+    let env = Env::new();
+    let (alpha, beta) = (env.dir("alpha"), env.dir("beta"));
+    let w1 = env.add_terminal("s1:1", &alpha);
+    let _w2 = env.add_terminal("s2:1", &beta);
+    env.set_active("s2:1");
+
+    // Without caller ancestry or SPACE_ID, `current` falls back to the focused space.
+    assert_eq!(env.ok(&["current"]).trim(), "s2");
+    let focused: Value = serde_json::from_str(&env.ok(&["current", "--json"])).unwrap();
+    assert_eq!(focused["version"], 1);
+    assert_eq!(focused["space"], "s2");
+    assert_eq!(focused["tab"], "s2:1");
+    assert_eq!(focused["source"], "focused");
+    assert_eq!(focused["focused"]["space"], "s2");
+
+    // SPACE_ID fallback works for live spaces and ignores closed/bogus IDs.
+    let out = env
+        .command(&["current", "--json"])
+        .env("SPACE_ID", "s1")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let from_env: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(from_env["space"], "s1");
+    assert_eq!(from_env["tab"], Value::Null);
+    assert_eq!(from_env["source"], "env");
+    assert_eq!(from_env["focused"]["space"], "s2");
+
+    // From inside s1 with no window to tell its tab by, a tab command needs
+    // the tab's id, rather than acting on the tab you're looking at in s2.
+    for args in [
+        &["tab", "close"][..],
+        &["tab", "rename", "oops"],
+        &["tab", "send", "home"],
+    ] {
+        let out = env.command(args).env("SPACE_ID", "s1").output().unwrap();
+        assert!(!out.status.success(), "space {args:?} should have failed");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("can't tell which tab of s1"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let list: Value = serde_json::from_str(&env.ok(&["ls", "--json"])).unwrap();
+    let s2 = &list["spaces"].as_array().unwrap()[2];
+    assert_eq!((&s2["id"], &s2["windows"]), (&json!("s2"), &json!(1)));
+    assert_eq!(s2["tabs"][0]["named"], false);
+    assert_eq!(env.active(), "s2:1");
+
+    let stale = env
+        .command(&["current", "--json"])
+        .env("SPACE_ID", "s99")
+        .output()
+        .unwrap();
+    let from_stale: Value = serde_json::from_slice(&stale.stdout).unwrap();
+    assert_eq!(from_stale["space"], "s2");
+    assert_eq!(from_stale["source"], "focused");
+
+    // Live `/proc` window match: register our own test runner PID on `w1` (s1:1)
+    // while focus stays on s2:1. Every child `space` command inherits us as parent.
+    env.set_pid(&w1, std::process::id());
+    assert_eq!(env.ok(&["current"]).trim(), "s1");
+    let live: Value = serde_json::from_str(&env.ok(&["current", "--json"])).unwrap();
+    assert_eq!(live["space"], "s1");
+    assert_eq!(live["tab"], "s1:1");
+    assert_eq!(live["window"], w1);
+    assert_eq!(live["source"], "window");
+    assert_eq!(live["focused"]["space"], "s2");
+    assert_eq!(live["focused"]["tab"], "s2:1");
+
+    // Bare mutations act on caller's space/tab (s1), not focused (s2)!
+    env.ok(&["rename", "AlphaBg"]);
+    env.ok(&["meta", "set", "branch", "feat/bg"]);
+    env.ok(&["tab", "rename", "agent"]);
+    let created_tab: Value =
+        serde_json::from_str(&env.ok(&["tab", "new", "--silent", "--json"])).unwrap();
+    assert_eq!(created_tab["space"], "s1");
+    assert_eq!(created_tab["id"], "s1:2");
+    assert_eq!(env.active(), "s2:1", "focus never left s2");
+
+    let list: Value = serde_json::from_str(&env.ok(&["ls", "--json"])).unwrap();
+    let spaces = list["spaces"].as_array().unwrap();
+    let s1 = spaces.iter().find(|s| s["id"] == "s1").unwrap();
+    let s2 = spaces.iter().find(|s| s["id"] == "s2").unwrap();
+    assert_eq!(s1["label"], "AlphaBg");
+    assert_eq!(s1["meta"]["branch"], "feat/bg");
+    assert_eq!(s1["tabs"][0]["label"], "agent");
+    assert_eq!(s2["label"], "beta");
+
+    // Moving the window to s2 updates caller context immediately (never stale).
+    env.move_window(&w1, "s2:2");
+    let moved: Value = serde_json::from_str(&env.ok(&["current", "--json"])).unwrap();
+    assert_eq!(moved["space"], "s2");
+    assert_eq!(moved["tab"], "s2:2");
+    assert_eq!(moved["source"], "window");
+}
+
+#[test]
+fn new_and_tab_new_support_silent_json_and_space_targeting() {
+    let env = Env::new();
+    let (one, two, extra) = (env.dir("one"), env.dir("two"), env.dir("extra"));
+    env.add_terminal("s1:1", &one);
+    env.set_active("s1:1");
+
+    // Create s2 in the background with a name and JSON output.
+    let created: Value = serde_json::from_str(&env.ok(&[
+        "new",
+        two.to_str().unwrap(),
+        "--name",
+        "Worker",
+        "--silent",
+        "--json",
+    ]))
+    .unwrap();
+    assert_eq!(created["version"], 1);
+    assert_eq!(created["id"], "s2");
+    assert_eq!(created["tab"], "s2:1");
+    assert_eq!(created["dir"], two.to_str().unwrap());
+    assert!(created["window"].as_str().unwrap().starts_with("0x"));
+    assert_eq!(env.active(), "s1:1", "silent new keeps focus on s1");
+
+    // Open a named background tab in s2 from s1, with a custom folder.
+    let tab: Value = serde_json::from_str(&env.ok(&[
+        "tab",
+        "new",
+        "--space",
+        "Worker",
+        "--dir",
+        extra.to_str().unwrap(),
+        "--name",
+        "logs",
+        "--silent",
+        "--json",
+    ]))
+    .unwrap();
+    assert_eq!(tab["version"], 1);
+    assert_eq!(tab["space"], "s2");
+    assert_eq!(tab["id"], "s2:2");
+    assert_eq!(tab["slot"], 2);
+    assert_eq!(tab["dir"], extra.to_str().unwrap());
+    assert_eq!(env.active(), "s1:1", "silent tab new keeps focus on s1");
+
+    // Verify launched terminals received SPACE_ID=s2.
+    assert_eq!(
+        env.launched(2),
+        [two.display().to_string(), extra.display().to_string()]
+    );
+    let space_ids = fs::read_to_string(env.home().join("space_ids")).unwrap();
+    assert_eq!(space_ids.lines().collect::<Vec<_>>(), ["s2", "s2"]);
+
+    // Verify s2's name and named tab show up in `space ls --json`.
+    let list: Value = serde_json::from_str(&env.ok(&["ls", "--json"])).unwrap();
+    let s2 = list["spaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "s2")
+        .unwrap();
+    assert_eq!(s2["label"], "Worker");
+    let tabs = s2["tabs"].as_array().unwrap();
+    assert_eq!(tabs.len(), 2);
+    assert_eq!(tabs[1]["label"], "logs");
+    assert_eq!(tabs[1]["named"], true);
+}
+
+#[test]
+fn meta_round_trips_through_ls_and_restore() {
+    let env = Env::new();
+    let app = env.dir("app");
+    env.add_terminal("s1:1", &app);
+    env.set_active("s1:1");
+
+    // Meta set (string and --json), get (whole object and single key), rm.
+    env.ok(&["meta", "set", "-s", "s1", "branch", "feat/events"]);
+    env.ok(&[
+        "meta",
+        "set",
+        "-s",
+        "s1",
+        "pr",
+        r#"{"number":412,"draft":false}"#,
+        "--json",
+    ]);
+    let all: Value = serde_json::from_str(&env.ok(&["meta", "get", "-s", "s1"])).unwrap();
+    assert_eq!(all["branch"], "feat/events");
+    assert_eq!(all["pr"]["number"], 412);
+    let pr: Value = serde_json::from_str(&env.ok(&["meta", "get", "-s", "s1", "pr"])).unwrap();
+    assert_eq!(pr["draft"], false);
+    assert!(
+        env.fails(&["meta", "get", "-s", "s1", "missing"])
+            .contains("no metadata key")
+    );
+
+    // Write a session containing meta via a simulated previous session,
+    // clear live state, and verify `space restore` brings it back.
+    let saved_session = json!({
+        "version": 1,
+        "instance": "old-instance",
+        "spaces": [{
+            "id": "s1",
+            "name": "App",
+            "meta": {
+                "branch": "feat/events",
+                "pr": { "number": 412, "draft": false }
+            },
+            "active": true,
+            "last": 1,
+            "folder": app.to_str().unwrap(),
+            "windows": [{
+                "tab": 1,
+                "terminal": { "folder": app.to_str().unwrap() },
+                "address": "0xold"
+            }]
+        }]
+    });
+    let restored_env = Env::new();
+    fs::create_dir_all(restored_env.state()).unwrap();
+    fs::write(
+        restored_env.state().join("session-previous.json"),
+        serde_json::to_string(&saved_session).unwrap(),
+    )
+    .unwrap();
+    restored_env.ok(&["restore"]);
+
+    let list: Value = serde_json::from_str(&restored_env.ok(&["ls", "--json"])).unwrap();
+    let s1 = list["spaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "s1")
+        .unwrap();
+    assert_eq!(s1["label"], "App");
+    assert_eq!(s1["meta"]["branch"], "feat/events");
+    assert_eq!(s1["meta"]["pr"]["number"], 412);
+
+    // Removing a metadata key updates ls.
+    restored_env.ok(&["meta", "rm", "-s", "s1", "branch"]);
+    restored_env.ok(&["meta", "rm", "-s", "s1", "nonexistent"]);
+    let after: Value = serde_json::from_str(&restored_env.ok(&["ls", "--json"])).unwrap();
+    let s1 = after["spaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "s1")
+        .unwrap();
+    assert!(s1["meta"].get("branch").is_none());
+    assert_eq!(s1["meta"]["pr"]["number"], 412);
+}
+
+#[test]
+fn events_come_from_the_watch_and_agree_with_it() {
+    use std::time::Duration;
+
+    let env = Env::new();
+    let app = env.dir("app");
+
+    // Before there's a watch, `space events` waits for one.
+    let stream = Watch::run(env.command(&["events"]));
+    assert!(
+        stream
+            .lines
+            .recv_timeout(Duration::from_millis(300))
+            .is_err()
+    );
+    let watch = Watch::start(&env);
+    let first = stream.next_state(Duration::from_secs(3));
+    assert_eq!(first["version"], 1);
+    assert_eq!(first["type"], "snapshot");
+    assert_eq!(first["focused"]["space"], "home");
+    assert_eq!(first["spaces"].as_array().unwrap().len(), 1);
+    watch.joined(&env);
+
+    let collect_until = |stream: &Watch, want: &str| -> Vec<Value> {
+        let mut seen = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            let ev = stream.next_state(left);
+            let done = ev["type"] == want;
+            seen.push(ev);
+            if done {
+                return seen;
+            }
+        }
+        panic!("never saw event '{want}'; saw: {seen:?}");
+    };
+
+    // Open a terminal on s1:1 and switch focus there -> space.created + space.focused.
+    let w1 = env.add_terminal("s1:1", &app);
+    env.set_active("s1:1");
+    env.event("openwindow>>1,s1:1,kitty,zsh");
+    env.event("workspacev2>>-1,s1:1");
+    let evs = collect_until(&stream, "space.focused");
+    assert!(
+        evs.iter()
+            .any(|e| e["type"] == "space.created" && e["space"]["id"] == "s1")
+    );
+    let focused = evs.iter().find(|e| e["type"] == "space.focused").unwrap();
+    assert_eq!(focused["space"], "s1");
+    assert_eq!(focused["previous"], "home");
+    assert_eq!(focused["tab"], "s1:1");
+    // Each change counts up by one from the snapshot.
+    let seqs: Vec<u64> = evs.iter().map(|e| e["seq"].as_u64().unwrap()).collect();
+    assert_eq!(seqs, (1..=seqs.len() as u64).collect::<Vec<_>>());
+
+    // Mutate meta -> space.changed with changed fields.
+    env.ok(&["meta", "set", "-s", "s1", "pr", "42", "--json"]);
+    let evs = collect_until(&stream, "space.changed");
+    let changed = evs.last().unwrap();
+    assert_eq!(changed["space"]["meta"]["pr"], 42);
+    assert!(
+        changed["changed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("meta"))
+    );
+
+    // Agent status transitions -> status.changed (working -> done).
+    env.set_active("1");
+    env.event("workspacev2>>1,1");
+    env.event("activewindowv2>>");
+    let _ = collect_until(&stream, "space.focused");
+
+    env.agent_is(&w1, "working");
+    let evs = collect_until(&stream, "status.changed");
+    let st = evs.last().unwrap();
+    assert_eq!(st["space"], "s1");
+    assert_eq!(st["address"], w1);
+    assert_eq!(st["status"], "working");
+    assert_eq!(st["previous"], Value::Null);
+
+    env.agent_is(&w1, "idle");
+    let evs = collect_until(&stream, "status.changed");
+    let st = evs.last().unwrap();
+    assert_eq!(st["status"], "done");
+    assert_eq!(st["previous"], "working");
+
+    // A subscriber that joins after the agent finished still sees it done,
+    // as the sidebar does: the watch is what knows.
+    let late = Watch::run(env.command(&["events"]));
+    let snapshot = late.next_state(Duration::from_secs(3));
+    assert_eq!(snapshot["type"], "snapshot");
+    let s1 = snapshot["spaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "s1")
+        .unwrap();
+    assert_eq!(s1["status"], "done");
+    assert_eq!(s1["terminals"][0]["status"], "done");
+
+    // Focusing it clears `done` for both.
+    env.event(&format!("activewindowv2>>{}", w1.trim_start_matches("0x")));
+    for stream in [&stream, &late] {
+        let st = collect_until(stream, "status.changed").pop().unwrap();
+        assert_eq!(
+            (&st["status"], &st["previous"]),
+            (&Value::Null, &json!("done"))
+        );
+    }
+
+    // Filtered stream with --no-snapshot and --type.
+    let filtered = Watch::run(env.command(&["events", "--no-snapshot", "--type", "space.changed"]));
+    // It's connected once the watch has a third subscriber; nothing shows it,
+    // so give it a moment.
+    thread::sleep(Duration::from_millis(300));
+    env.ok(&["meta", "set", "-s", "s1", "pass", "filtered"]);
+    let ev = filtered.next_state(Duration::from_secs(3));
+    assert_eq!(ev["type"], "space.changed");
+    assert_eq!(ev["space"]["meta"]["pass"], "filtered");
+    assert!(ev["seq"].as_u64().unwrap() > 1, "the watch's count: {ev}");
+
+    // The watch restarts, as the plugin restarts it: a new snapshot comes.
+    drop(watch);
+    let watch = Watch::start(&env);
+    let again = collect_until(&stream, "snapshot").pop().unwrap();
+    assert_eq!(again["seq"], 0, "a new watch counts from 0");
+    assert!(
+        again["spaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["meta"]["pass"] == "filtered")
+    );
+    drop(watch);
+
+    // Invalid --type fails immediately with a clear error.
+    assert!(
+        env.fails(&["events", "--type", "bogus"])
+            .contains("unknown event type")
+    );
+}
+
+#[test]
+fn overlapping_watch_takes_over_events_when_first_ends() {
+    use std::time::Duration;
+
+    let env = Env::new();
+    let first = Watch::start(&env);
+    let stream = Watch::run(env.command(&["events"]));
+    assert_eq!(
+        stream.next_state(Duration::from_secs(3))["type"],
+        "snapshot"
+    );
+
+    // A second watch starts while the first is still alive (as during a shell
+    // restart), so it starts without serving events.
+    let second = Watch::start(&env);
+    assert_eq!(second.next(Duration::from_secs(2)), ["home"]);
+
+    // Once the first watch exits, the second takes over on its slow tick and
+    // `space events` reconnects with a fresh snapshot.
+    drop(first);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut saw_snapshot = false;
+    while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+        let ev = stream.next_state(left);
+        if ev["type"] == "snapshot" {
+            saw_snapshot = true;
+            break;
+        }
+    }
+    assert!(saw_snapshot, "second watch should take over events.sock");
+    drop(second);
+}
+
+#[test]
+fn shell_runs_command_verbatim_then_returns_to_shell() {
+    let env = Env::new();
+    let shell = env.root.path().join("myshell");
+    // A fake shell that prints every arg on its own line (verifying no
+    // splitting or expansion) and confirms SPACES_RUN was removed.
+    fs::write(
+        &shell,
+        "#!/bin/sh\nfor a in \"$@\"; do printf '<%s>\\n' \"$a\"; done\nenv | grep SPACES_R || true\n",
+    )
+    .unwrap();
+    fs::set_permissions(&shell, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    let encoded =
+        serde_json::to_string(&["claude", "fix $HOME; 'quotes'", "--model", "opus"]).unwrap();
+    let out = env
+        .command(&["shell"])
+        .env("SHELL", &shell)
+        .env("SPACES_RUN", &encoded)
+        .env("SPACES_RESTORE", "1")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let lines: Vec<&str> = std::str::from_utf8(&out.stdout).unwrap().lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "<-i>",
+            "<-c>",
+            "<\"$@\"; exec \"$0\">",
+            &format!("<{}>", shell.display()),
+            "<claude>",
+            "<fix $HOME; 'quotes'>",
+            "<--model>",
+            "<opus>",
+        ]
+    );
+}
+
+#[test]
+fn new_tab_new_and_terminal_run_commands() {
+    let env = Env::new();
+    let (one, two) = (env.dir("one"), env.dir("two"));
+    env.add_terminal("s1:1", &one);
+    env.set_active("s1:1");
+
+    // 1. `space new [dir] -- <cmd...>`
+    let created: Value = serde_json::from_str(&env.ok(&[
+        "new",
+        two.to_str().unwrap(),
+        "--name",
+        "Worker",
+        "--silent",
+        "--json",
+        "--",
+        "claude",
+        "--model",
+        "opus",
+    ]))
+    .unwrap();
+    assert_eq!(created["id"], "s2");
+    assert_eq!(env.active(), "s1:1");
+
+    // 2. `space tab new -s <space> -- <cmd...>`
+    let tab: Value = serde_json::from_str(&env.ok(&[
+        "tab", "new", "-s", "Worker", "--silent", "--json", "--", "npm", "run", "dev",
+    ]))
+    .unwrap();
+    assert_eq!(tab["space"], "s2");
+    assert_eq!(tab["id"], "s2:2");
+
+    // 3. `space tab new -s home -- <cmd...>` opens a terminal on home's new tab.
+    let home_tab: Value = serde_json::from_str(&env.ok(&[
+        "tab", "new", "-s", "home", "--silent", "--json", "--", "lazygit",
+    ]))
+    .unwrap();
+    assert_eq!(home_tab["space"], "home");
+
+    // 4. `space terminal -s <space> -- <cmd...>`
+    env.ok(&["terminal", "-s", "Worker", "--", "htop", "-t"]);
+
+    assert_eq!(env.launched(4).len(), 4);
+    let ran = fs::read_to_string(env.home().join("ran")).unwrap();
+    let ran_lines: Vec<&str> = ran.lines().collect();
+    assert_eq!(ran_lines.len(), 4);
+    for line in &ran_lines {
+        assert!(line.ends_with(" shell"), "expected space shell: {line}");
+    }
+    let runs = fs::read_to_string(env.home().join("runs")).unwrap();
+    let decoded: Vec<Value> = runs
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(
+        decoded,
+        vec![
+            json!(["claude", "--model", "opus"]),
+            json!(["npm", "run", "dev"]),
+            json!(["lazygit"]),
+            json!(["htop", "-t"]),
+        ]
+    );
+
+    // Empty command after `--` is rejected before creating a space.
+    assert!(env.fails(&["new", "--", ""]).contains("empty"));
+    assert!(env.fails(&["tab", "new", "--", ""]).contains("empty"));
+    assert!(env.fails(&["terminal", "--", ""]).contains("empty"));
+}
+
+#[test]
+fn watch_exposes_folder_meta_and_terminals_for_widgets() {
+    use std::time::Duration;
+
+    let env = Env::new();
+    let app = env.dir("app");
+    let w1 = env.add_terminal("s1:1", &app);
+    env.set_active("s1:1");
+    env.ok(&[
+        "meta",
+        "set",
+        "-s",
+        "s1",
+        "git",
+        r#"{"branch":"main","dirty":true}"#,
+        "--json",
+    ]);
+    env.agent_is(&w1, "working");
+
+    let watch = Watch::start(&env);
+    let state = watch.next_state(Duration::from_secs(3));
+    let s1 = state["spaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "s1")
+        .unwrap();
+    assert_eq!(s1["folder"], app.to_str().unwrap());
+    assert_eq!(s1["meta"]["git"]["branch"], "main");
+    assert_eq!(s1["meta"]["git"]["dirty"], true);
+    assert_eq!(s1["terminals"][0]["address"], w1);
+    assert_eq!(s1["terminals"][0]["tab"], "s1:1");
+    assert_eq!(s1["terminals"][0]["folder"], app.to_str().unwrap());
+    assert_eq!(s1["terminals"][0]["status"], "working");
+    drop(watch);
 }

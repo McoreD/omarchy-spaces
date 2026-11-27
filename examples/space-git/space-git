@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Keeps each space's git branch in its metadata, as `git`: `{ branch, dirty }`,
+# for the space-git widget to show. It looks again as soon as something changes
+# in a space's git directory (a commit, checkout, staging or fetch), and every
+# few seconds besides, for edits to files. It writes only what changed.
+set -u
+
+while true; do
+  rows=$(space ls --json | jq -c '.spaces[] | select(.folder) | [.id, .folder, (.meta.git // null)]')
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    id=$(jq -r '.[0]' <<<"$row")
+    dir=$(jq -r '.[1]' <<<"$row")
+    old=$(jq -c '.[2]' <<<"$row")
+    new=null
+    if branch=$(git -C "$dir" symbolic-ref --short -q HEAD 2>/dev/null || git -C "$dir" rev-parse --short HEAD 2>/dev/null); then
+      dirty=false
+      # --no-optional-locks: without it, `git status` can rewrite the index
+      # and wake the wait below.
+      [ -n "$(git --no-optional-locks -C "$dir" status --porcelain 2>/dev/null | head -c1)" ] && dirty=true
+      new=$(jq -cn --arg branch "$branch" --argjson dirty "$dirty" '{branch: $branch, dirty: $dirty}')
+    fi
+    [ "$new" = "$old" ] && continue
+    if [ "$new" = null ]; then
+      space meta rm -s "$id" git >/dev/null
+    else
+      space meta set -s "$id" git "$new" --json >/dev/null
+    fi
+  done <<<"$rows"
+
+  # Wait for a change in any space's git directory, or 5 seconds. Should
+  # inotifywait fail (it exits 2 for the timeout), sleep instead, rather than
+  # spin.
+  mapfile -t dirs < <(jq -r '.[1]' <<<"$rows" | while IFS= read -r dir; do
+    [ -n "$dir" ] && git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null
+  done | sort -u)
+  if ((${#dirs[@]})); then
+    inotifywait -qq -t 5 -e close_write,moved_to,create,delete "${dirs[@]}" ||
+      { [ $? -eq 2 ] || sleep 5; }
+  else
+    sleep 5
+  fi
+done
