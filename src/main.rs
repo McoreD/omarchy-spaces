@@ -160,33 +160,42 @@ enum Cmd {
 enum ConfigCmd {
     /// Print a setting's value: what the config has, else the default.
     Get {
-        /// The setting; only `new_space.open` can be read and set.
+        /// The setting, as `section.name` in the config; `space config schema`
+        /// lists them.
         #[arg(value_parser = config_key)]
         key: String,
         /// Print it as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Set a setting, for `new_space.open` the words `--open` takes.
+    /// Set a setting: true or false (or on, off) for a switch, one of its
+    /// choices, or for a list a comma-separated list of them, or `none`.
     Set {
         #[arg(value_parser = config_key)]
         key: String,
         #[arg(value_name = "VALUE", allow_hyphen_values = true)]
         value: String,
     },
+    /// Take a setting out of the config, so it is the default again.
+    Unset {
+        #[arg(value_parser = config_key)]
+        key: String,
+    },
+    /// Print every setting, with its options, default and current value, as
+    /// JSON: what the settings panel is drawn from.
+    Schema {
+        /// Print JSON (it always is).
+        #[arg(long)]
+        json: bool,
+    },
     /// Print Omarchy's agents as JSON, with whether each is installed.
     Agents,
 }
 
 fn config_key(raw: &str) -> Result<String, String> {
-    if raw == omarchy_spaces::newspace::KEY {
-        Ok(raw.to_string())
-    } else {
-        Err(format!(
-            "there's no setting '{raw}' to change: use {}",
-            omarchy_spaces::newspace::KEY
-        ))
-    }
+    omarchy_spaces::settings::find(raw)
+        .map(|setting| setting.key.to_string())
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Subcommand)]
@@ -344,10 +353,12 @@ fn space_target(raw: &str) -> Result<commands::SpaceTarget, String> {
 }
 
 fn run_config(command: ConfigCmd) -> anyhow::Result<()> {
-    use omarchy_spaces::newspace;
+    use omarchy_spaces::{newspace, settings};
     match command {
-        ConfigCmd::Get { json, .. } => println!("{}", newspace::get(json)?),
-        ConfigCmd::Set { value, .. } => newspace::set(&value)?,
+        ConfigCmd::Get { key, json } => println!("{}", settings::get(&key, json)?),
+        ConfigCmd::Set { key, value } => settings::set(&key, &value)?,
+        ConfigCmd::Unset { key } => settings::unset(&key)?,
+        ConfigCmd::Schema { .. } => println!("{}", settings::schema_json()?),
         ConfigCmd::Agents => println!("{}", newspace::agents_json()?),
     }
     Ok(())

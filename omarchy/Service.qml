@@ -105,7 +105,7 @@ Item {
     controller: controllerItem
   }
 
-  NewSpacePanel {
+  SettingsPanel {
     controller: controllerItem
     sidebar: sidebarItem
   }

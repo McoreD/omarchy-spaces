@@ -81,26 +81,30 @@ Item {
   property string pickingFileFor: ""
   readonly property string pickIconScript: String(Qt.resolvedUrl("pick-icon.py")).replace(/^file:\/\//, "")
 
-  // The settings panel (NewSpacePanel.qml): whether it is open, where, what a
-  // new space opens now, as `space config` has it (ids, none being []), and
-  // the rows to tick (Spaces.newSpaceRows). The file is the setting's: it is
-  // read as the panel opens, and what you tick is written with `space config
-  // set`, shown at once meanwhile.
+  // The Settings screen (SettingsPanel.qml): whether it is open, where, the
+  // settings `space config schema` lists (Spaces.parseSchema), the rows they
+  // make (Spaces.settingsItems), and their values now by key. The file is the
+  // settings': it is read as the panel opens, and what you change is written
+  // with `space config set`, shown at once meanwhile.
   property bool settingsOpen: false
   property var settingsScreen: null
-  property var newSpaceOpen: []
-  property var newSpaceRows: Spaces.newSpaceRows("")
-  property string newSpaceArg: ""
-  property bool writingOpen: false
-  property bool writeAgain: false
-  // How many ticks there have been, and how many there were when the read
-  // that is running started: one begun before a tick is stale
+  property var settingsList: []
+  property var settingsItems: []
+  property var settingsValues: ({})
+  // The writes still to do, the argument of each by key, and the key being
+  // written.
+  property var pendingWrites: ({})
+  property string writingKey: ""
+  // How many changes there have been, and how many there were when the read
+  // that is running started: one begun before a change is stale
   // (Spaces.readCounts). Another read once it ends, if one was wanted meanwhile.
   property int ticks: 0
   property int readAt: 0
   property bool readAgain: false
-  // Why the last write failed, for the panel.
-  property string settingsError: ""
+  // Why the last write of each setting failed, by key, and why the settings
+  // couldn't be read, for the panel.
+  property var settingsErrors: ({})
+  property string settingsReadError: ""
 
   readonly property string home: Quickshell.env("HOME") || ""
   // The colours spaces' badges take, from the theme's colors.toml.
@@ -152,14 +156,14 @@ Item {
     root.menuScreen = screen || (root.sidebar ? root.sidebar.screen : null) || root.focusedScreen()
   }
 
-  // Opens the settings panel on `screen`, beside the sidebar.
+  // Opens the Settings screen on `screen`, beside the sidebar.
   function openSettings(screen) {
     root.closeMenu()
     root.endNaming(false)
     root.closeIconPicker()
     if (root.sidebar) root.sidebar.cancelSearch()
     root.settingsScreen = screen || (root.sidebar ? root.sidebar.screen : null) || root.focusedScreen()
-    root.settingsError = ""
+    root.settingsErrors = ({})
     root.settingsOpen = true
     root.readSettings()
   }
@@ -169,57 +173,88 @@ Item {
   }
 
   function readSettings() {
-    if (openProc.running) {
+    if (schemaProc.running) {
       root.readAgain = true
     } else {
       root.readAt = root.ticks
-      openProc.running = true
+      schemaProc.running = true
     }
-    if (!agentsProc.running) agentsProc.running = true
   }
 
-  // Ticks or unticks a row, writing the setting.
-  function toggleNewSpace(id) {
-    root.newSpaceOpen = Spaces.toggleOpen(root.newSpaceOpen, id, root.newSpaceRows)
+  function settingNamed(key) {
+    for (var i = 0; i < root.settingsList.length; i++) {
+      if (root.settingsList[i].key === key) return root.settingsList[i]
+    }
+    return null
+  }
+
+  // Changes one setting: `optionValue` is the option that was ticked or
+  // picked (a switch has none). Written at once, shown meanwhile.
+  function changeSetting(key, optionValue) {
+    var setting = root.settingNamed(key)
+    if (!setting) return
+    var value = Spaces.toggled(setting, root.settingsValues[key], optionValue)
+    var values = {}
+    Object.keys(root.settingsValues).forEach(function(other) { values[other] = root.settingsValues[other] })
+    values[key] = value
+    root.settingsValues = values
     root.ticks++
-    root.settingsError = ""
-    root.newSpaceArg = Spaces.openArg(root.newSpaceOpen)
-    if (root.writingOpen) {
-      root.writeAgain = true
-      return
-    }
-    root.writeOpen()
+    var errors = {}
+    Object.keys(root.settingsErrors).forEach(function(other) { if (other !== key) errors[other] = root.settingsErrors[other] })
+    root.settingsErrors = errors
+    var pending = {}
+    Object.keys(root.pendingWrites).forEach(function(other) { pending[other] = root.pendingWrites[other] })
+    pending[key] = Spaces.settingArg(setting, value)
+    root.pendingWrites = pending
+    if (root.writingKey === "") root.writeNext()
   }
 
-  function writeOpen() {
-    root.writingOpen = true
-    root.writeAgain = false
-    writeProc.command = ["space", "config", "set", "new_space.open", root.newSpaceArg]
+  // Writes the next waiting setting, if any. One at a time, each with the
+  // newest of what was asked for it.
+  function writeNext() {
+    var keys = Object.keys(root.pendingWrites)
+    if (keys.length === 0) return false
+    var key = keys[0]
+    var arg = root.pendingWrites[key]
+    var pending = {}
+    keys.forEach(function(other) { if (other !== key) pending[other] = root.pendingWrites[other] })
+    root.pendingWrites = pending
+    root.writingKey = key
+    writeProc.command = ["space", "config", "set", key, arg]
     writeProc.running = true
+    return true
+  }
+
+  function fail(key, why) {
+    var errors = {}
+    Object.keys(root.settingsErrors).forEach(function(other) { errors[other] = root.settingsErrors[other] })
+    errors[key] = why
+    root.settingsErrors = errors
   }
 
   Process {
-    id: openProc
-    command: ["space", "config", "get", "new_space.open", "--json"]
+    id: schemaProc
+    command: ["space", "config", "schema", "--json"]
     stdout: StdioCollector {
-      // Not over what you ticked since it was asked.
+      // Not over what you changed since it was asked.
       onStreamFinished: {
-        if (Spaces.readCounts(root.readAt, root.ticks, root.writingOpen || root.writeAgain))
-          root.newSpaceOpen = Spaces.parseOpen(text)
+        if (!Spaces.readCounts(root.readAt, root.ticks, root.writingKey !== "" || Object.keys(root.pendingWrites).length > 0)) return
+        var list = Spaces.parseSchema(text)
+        var items = Spaces.settingsItems(list)
+        root.settingsList = list
+        root.settingsValues = Spaces.schemaValues(list)
+        // The same rows stay as they are, so the view doesn't move.
+        if (!Spaces.sameItems(items, root.settingsItems)) root.settingsItems = items
       }
     }
-    onExited: {
+    stderr: StdioCollector {
+      id: schemaErrors
+    }
+    onExited: function(code) {
+      root.settingsReadError = code === 0 ? "" : (String(schemaErrors.text || "").trim() || "Couldn't read the settings")
       if (!root.readAgain) return
       root.readAgain = false
       root.readSettings()
-    }
-  }
-
-  Process {
-    id: agentsProc
-    command: ["space", "config", "agents"]
-    stdout: StdioCollector {
-      onStreamFinished: root.newSpaceRows = Spaces.newSpaceRows(text)
     }
   }
 
@@ -229,14 +264,14 @@ Item {
       id: writeErrors
     }
     onExited: function(code) {
-      root.writingOpen = false
+      var key = root.writingKey
+      root.writingKey = ""
       if (code !== 0) {
         var why = String(writeErrors.text || "").trim()
-        console.warn("omarchy-spaces: space config set failed: " + why)
-        root.settingsError = why || "Couldn't save the setting"
+        console.warn("omarchy-spaces: space config set " + key + " failed: " + why)
+        root.fail(key, why || "Couldn't save the setting")
       }
-      if (root.writeAgain) root.writeOpen()
-      else root.readSettings()
+      if (!root.writeNext()) root.readSettings()
     }
   }
 

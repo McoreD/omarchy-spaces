@@ -48,7 +48,29 @@ A tab is found by its name, as the bar shows it, never by a `name:` selector mad
 
 A space is the workspaces and windows Hyprland has with its name (`src/live.rs`), so one with no window exists only while Hyprland keeps a workspace of it: that of a monitor that shows it. `space new` with nothing to open (`src/newspace.rs`) just goes to the new space's first tab, which Hyprland makes as you arrive, and drops the workspace when you leave it empty. Nothing else keeps it or ends it: its folder is in `spaces.json` from the start, which names it, and `space watch` prunes the entry once the workspace is gone, as for any space that ends. `space emptied` only runs as a window closes, and `space renumber` only closes gaps between a space's tabs, so neither touches it while you are on it. `switch` forgets where you left a space that ended so.
 
-What a new space opens is read from the config as it opens (`[new_space]`), and Omarchy's agents from `omarchy-default-agent`'s own list (`src/newspace.rs`); `space config` edits the one key with `toml_edit`, so the rest of the file stays as it was.
+What a new space opens is read from the config as it opens (`[new_space]`), and Omarchy's agents from `omarchy-default-agent`'s own list (`src/newspace.rs`). `space config` and the Settings screen work from one list of settings, `SETTINGS` in `src/settings.rs`; `space config set` and `unset` edit the one key with `toml_edit`, so the rest of the file stays as it was.
+
+## Adding a setting
+
+A setting is one entry in `SETTINGS` (`src/settings.rs`) and the field in `Config` (`src/config.rs`) that it controls. The entry is its `key` (`section.name`, as in `config.toml`), `label`, one line of `help`, its `kind`, its `default`, and `get`, how to read it from `Config`:
+
+- `Kind::Bool`: a switch.
+- `Kind::Choice(&[Choice { value, label }, ...])`: one of a fixed list.
+- `Kind::Multi { options, none, unknown }`: any of a list that a function gives (`newspace::options`), `none` having the empty list its own exclusive word.
+
+A setting of the kind `Multi` can group its options: an `Opt` names its `group`, and the setting's `groups` (`Group { name, grid }`) say how the panel draws it. A group with `grid: true` is a grid of icons with short names under a subheading, the cursor moving through its cells; without, it is rows under the subheading. `new_space.open` groups its agents as a grid. Ungrouped options are rows.
+
+A new section also needs:
+
+- a line in `SECTIONS`, with its title;
+- a field in `Config` (`src/config.rs`) of its own struct, with the settings' defaults, `#[serde(default)]`, and `#[serde(flatten)] unknown` like the others;
+- a line in `Config::unknown()`, so a typo in that section warns.
+
+A test checks that every entry's `default` is `Config`'s own, that its section and key are well formed, and that writing a value of each setting to an empty file reads back as that value (so a key that doesn't match its field fails).
+
+That is all: `space config get`, `set`, `unset` and `schema` know it, with its value checked and written by the same `toml_edit` path as the others, and the Settings screen (`omarchy/SettingsPanel.qml`) draws it from `space config schema --json`, with no QML to write: the section title, then a tick box for a switch, radio rows for a choice, or tick rows (or a grid) for a list, one keyboard cursor through all of them, each change run as `space config set`. Only a setting of a new kind needs the panel taught (`Spaces.settingsItems`, `Spaces.toggled`, `Spaces.settingArg` and `Spaces.moveCursor` in `omarchy/Spaces.mjs`, and its row in `SettingsPanel.qml`). A setting whose value in the file is invalid still shows, with its default and a `problem` in the schema; `set` replaces the bad value. The plugin's QML must stay to syntax the shell's QML engine reads: no object rest or spread (`{ a, ...rest }`), which made the whole plugin go dark.
+
+Paths and free strings aren't kinds yet, so `sounds.done` and `sounds.waiting` stay in the file.
 
 ## State
 

@@ -103,7 +103,8 @@ space ls --json                 # spaces, tabs, data and agent status
 space current [--json]          # the space and tab a command run here acts on
 space new [dir] --silent --json [-- <cmd...>] # open a space without going there; prints its id; optionally runs a command. Opens a terminal, whatever the user's [new_space] setting, unless you pass --open
 space new [dir] --open <what>   # terminal, files, an Omarchy agent's id, comma-separated, or none (an empty space, only with you on it)
-space config get|set new_space.open [files,claude|none] # what the user's own new spaces open; leave it to them unless asked
+space config get|set|unset <key> [value]   # restore.*, sounds.enabled, new_space.open (e.g. files,claude|none); leave them to the user unless asked
+space config schema --json                 # every setting with its options and value (the Settings screen's source)
 space tab new --silent --json [-- <cmd...>]   # the same for a tab; -s <space> for another space
 space terminal [-s <space>] [-- <cmd...>]     # open a terminal in a space's folder, optionally running a command
 space go <space>                # go to a space

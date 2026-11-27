@@ -6,14 +6,14 @@
 //! (`omarchy-install-ai-cli --check`).
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
-use toml_edit::{Array, DocumentMut, Item as Node, Table, Value};
+use anyhow::{Result, bail};
 
 use crate::config::Config;
 use crate::launch;
 use crate::paths;
+use crate::settings::Opt;
 
 pub const TERMINAL: &str = "terminal";
 pub const FILES: &str = "files";
@@ -226,87 +226,41 @@ pub fn parse_arg(raw: &str) -> Result<Vec<String>> {
     Ok(words)
 }
 
-/// The words as `space config` shows them.
-pub fn show(values: &[String]) -> String {
-    if values.is_empty() {
-        NONE.to_string()
-    } else {
-        values.join(",")
-    }
+/// What `new_space.open` offers, for the settings panel and `set`: Terminal,
+/// Files, then Omarchy's agents by name, A to Z whatever order Omarchy lists
+/// them in. An agent that isn't installed is a value `set` takes but the panel
+/// doesn't offer.
+pub fn options() -> Vec<Opt> {
+    options_with(agents())
 }
 
-/// `space config get new_space.open`: what the config has now, or the default.
-pub fn get(json: bool) -> Result<String> {
-    let open = Config::load()?.new_space.open;
-    Ok(if json {
-        serde_json::to_string(&open)?
-    } else {
-        show(&open)
-    })
-}
-
-/// `space config set new_space.open <words>`: writes the setting, touching
-/// nothing else in the file, comments included. Words that aren't a terminal,
-/// Files or one of Omarchy's agents are refused, so a mistake never gets in.
-pub fn set(raw: &str) -> Result<()> {
-    let values = parse_arg(raw)?;
-    let known = agents();
-    for value in &values {
-        let word = value.to_lowercase();
-        if word != TERMINAL && word != FILES && !known.iter().any(|agent| agent.id == word) {
-            bail!("there's no '{value}' to open: use terminal, files or an Omarchy agent's id");
-        }
-    }
-    let values: Vec<String> = values.iter().map(|value| value.to_lowercase()).collect();
-    let path = paths::config_file();
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e).with_context(|| format!("can't read {}", paths::tilde(&path))),
-    };
-    let edited =
-        with_open(&text, &values).with_context(|| format!("can't read {}", paths::tilde(&path)))?;
-    if edited == text {
-        return Ok(());
-    }
-    write(&path, &edited)
-}
-
-/// The file's text with `[new_space] open` set, the rest as it was.
-fn with_open(text: &str, values: &[String]) -> Result<String> {
-    let mut doc: DocumentMut = text.parse()?;
-    let table = match doc
-        .entry("new_space")
-        .or_insert_with(|| Node::Table(Table::new()))
-        .as_table_like_mut()
-    {
-        Some(table) => table,
-        None => bail!("new_space isn't a table"),
-    };
-    let mut array = Array::new();
-    for value in values {
-        array.push(value.as_str());
-    }
-    let mut new = Value::Array(array);
-    // Keeps what is around the old value, such as a comment after it.
-    if let Some(old) = table.get("open").and_then(Node::as_value) {
-        *new.decor_mut() = old.decor().clone();
-    }
-    match table.get_mut("open") {
-        // In place, so the key keeps the comment above it.
-        Some(old) => *old = Node::Value(new),
-        None => {
-            table.insert("open", Node::Value(new));
-        }
-    }
-    Ok(doc.to_string())
-}
-
-fn write(path: &Path, text: &str) -> Result<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).with_context(|| format!("can't make {}", paths::tilde(dir)))?;
-    }
-    crate::state::write_atomic(path, text)
+fn options_with(mut agents: Vec<Agent>) -> Vec<Opt> {
+    agents.sort_by_key(|agent| agent.name.to_lowercase());
+    let mut options = vec![
+        Opt {
+            value: TERMINAL.into(),
+            label: "Terminal".into(),
+            icon: "utilities-terminal".into(),
+            available: true,
+            group: String::new(),
+        },
+        Opt {
+            value: FILES.into(),
+            label: "Files".into(),
+            icon: "folio".into(),
+            available: true,
+            group: String::new(),
+        },
+    ];
+    options.extend(agents.into_iter().map(|agent| Opt {
+        value: agent.id,
+        label: agent.name,
+        icon: agent.icon,
+        available: agent.installed,
+        // Drawn together, as a grid (`settings.rs`).
+        group: "Agents".into(),
+    }));
+    options
 }
 
 /// `space config agents`: Omarchy's agents as JSON, for the settings panel.
@@ -382,38 +336,29 @@ mod tests {
         assert!(parse_arg("none").unwrap().is_empty());
         assert!(parse_arg("NONE").unwrap().is_empty());
         assert!(parse_arg("none,files").is_err());
-        assert_eq!(show(&[]), "none");
-        assert_eq!(show(&words(&["files", "claude"])), "files,claude");
     }
 
     #[test]
-    fn edits_only_the_open_setting() {
-        let open = |text: &str, values: &[&str]| with_open(text, &words(values)).unwrap();
-        assert_eq!(open("", &["files"]), "[new_space]\nopen = [\"files\"]\n");
-        let text = "# mine\n[restore]\nauto = false # keep\n\n\
-                    [new_space]\n# what opens\nopen = [\"terminal\"] # default\nother = 1\n\n\
-                    [sounds]\nenabled = true\n";
-        let edited = open(text, &["files", "claude"]);
-        assert_eq!(
-            edited,
-            text.replace(
-                "open = [\"terminal\"] # default",
-                "open = [\"files\", \"claude\"] # default"
-            )
-        );
-        assert!(open(text, &[]).contains("open = [] # default\n"));
-        // A table that isn't there yet comes after the rest.
-        let edited = open("[sounds]\nenabled = true # on\n", &["terminal"]);
-        assert_eq!(
-            edited,
-            "[sounds]\nenabled = true # on\n\n[new_space]\nopen = [\"terminal\"]\n"
-        );
-        // Dotted and inline forms are edited in place.
-        assert_eq!(
-            open("new_space = { open = [\"files\"] }\n", &["terminal"]),
-            "new_space = { open = [\"terminal\"] }\n"
-        );
-        assert!(with_open("new_space = 3\n", &[]).is_err());
-        assert!(with_open("[new_space\n", &[]).is_err());
+    fn offers_terminal_files_then_agents_by_name() {
+        let agent = |id: &str, name: &str, installed| Agent {
+            id: id.into(),
+            name: name.into(),
+            icon: format!("omarchy-agent-{id}"),
+            installed,
+        };
+        let options = options_with(vec![
+            agent("pi", "Pi", true),
+            agent("crush", "crush", true),
+            agent("claude", "Claude Code", true),
+            agent("agy", "Antigravity", false),
+        ]);
+        let ids: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
+        assert_eq!(ids, ["terminal", "files", "agy", "claude", "crush", "pi"]);
+        let offered: Vec<bool> = options.iter().map(|o| o.available).collect();
+        assert_eq!(offered, [true, true, false, true, true, true]);
+        assert_eq!(options[3].label, "Claude Code");
+        assert_eq!(options[3].icon, "omarchy-agent-claude");
+        let groups: Vec<&str> = options.iter().map(|o| o.group.as_str()).collect();
+        assert_eq!(groups, ["", "", "Agents", "Agents", "Agents", "Agents"]);
     }
 }

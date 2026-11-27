@@ -1018,74 +1018,267 @@ export function moveRow(rows, from, to) {
   return out
 }
 
-// What a new space opens (`[new_space] open`, set by `space config set
-// new_space.open`): the settings panel's rows, and how ticking them changes
-// the setting. `open` is the list of ids in the setting: "terminal", "files",
-// and agents'. Nothing in it is None.
-export const NEW_SPACE_NONE = "none"
+// The Settings screen. It is drawn from `space config schema --json`, which
+// lists every setting with its type, options and current value, so a setting
+// the command knows needs nothing here. A setting is { key, section,
+// sectionTitle, label, help, type, none, options, default, value }: `type` is
+// "bool" (value true or false), "choice" (the value of one of `options`) or
+// "multi" (a list of the values of those that are on; with `none`, the empty
+// list is a None row of its own). An option is { value, label, icon, group }
+// (an icon theme name, or none; the name of the group it is drawn in, or "").
+// `groups` says, by name, whether a group is drawn as a grid of icons with
+// short names (true) or as rows; `problem` is why its value in the file
+// couldn't be read, if so.
+export const NONE = "none"
 
-// `space config get new_space.open --json`, or [] if it printed something else.
-export function parseOpen(text) {
+// The settings in `space config schema --json`, or [] if it printed something
+// else. One that isn't well formed is left out.
+export function parseSchema(text) {
+  let parsed = null
   try {
-    const open = JSON.parse(String(text || ""))
-    return Array.isArray(open) ? open.filter((id) => typeof id === "string") : []
+    parsed = JSON.parse(String(text || ""))
   } catch (e) {
     return []
   }
-}
-
-// The panel's rows: None, Terminal, Files, then each agent that is installed,
-// from `space config agents`, sorted by name. Each is { id, name, icon } (an icon theme name).
-export function newSpaceRows(agentsText) {
-  let agents = []
-  try {
-    const parsed = JSON.parse(String(agentsText || ""))
-    if (Array.isArray(parsed)) agents = parsed
-  } catch (e) {}
-  const rows = [
-    { id: NEW_SPACE_NONE, name: "None", icon: "" },
-    { id: "terminal", name: "Terminal", icon: "utilities-terminal" },
-    { id: "files", name: "Files", icon: "folio" },
-  ]
-  const installed = []
-  agents.forEach(function(agent) {
-    if (agent && agent.installed === true && typeof agent.id === "string") {
-      installed.push({ id: agent.id, name: String(agent.name || agent.id), icon: String(agent.icon || "") })
+  const list = parsed && Array.isArray(parsed.settings) ? parsed.settings : []
+  const settings = []
+  list.forEach(function(entry) {
+    if (!entry || typeof entry.key !== "string" || !entry.key) return
+    const type = entry.type
+    if (type !== "bool" && type !== "choice" && type !== "multi") return
+    const options = []
+    if (Array.isArray(entry.options)) {
+      entry.options.forEach(function(option) {
+        if (option && typeof option.value === "string") {
+          options.push({ value: option.value, label: String(option.label || option.value), icon: String(option.icon || ""), group: String(option.group || "") })
+        }
+      })
     }
+    const section = String(entry.section || "")
+    const groups = {}
+    if (Array.isArray(entry.groups)) {
+      entry.groups.forEach(function(group) {
+        if (group && typeof group.name === "string") groups[group.name] = group.grid === true
+      })
+    }
+    settings.push({
+      key: entry.key,
+      section: section,
+      sectionTitle: String(entry.section_title || section),
+      label: String(entry.label || entry.key),
+      help: String(entry.help || ""),
+      type: type,
+      none: type === "multi" && entry.none === true,
+      options: options,
+      groups: groups,
+      problem: String(entry.problem || ""),
+      initial: entry.default,
+      value: sanitize(type, entry.value),
+    })
   })
-  // Alphabetical by name, whatever order Omarchy lists them in.
-  installed.sort(function(a, b) {
-    const x = a.name.toLowerCase()
-    const y = b.name.toLowerCase()
-    return x < y ? -1 : x > y ? 1 : 0
+  return settings
+}
+
+// A value of the type, or the empty one of it if it isn't.
+function sanitize(type, value) {
+  if (type === "bool") return value === true
+  if (type === "choice") return typeof value === "string" ? value : ""
+  return Array.isArray(value) ? value.filter(function(id) { return typeof id === "string" }) : []
+}
+
+// The current values, by key.
+export function schemaValues(settings) {
+  const values = {}
+  settings.forEach(function(setting) { values[setting.key] = setting.value })
+  return values
+}
+
+// What the panel lists, top to bottom: a "section" title where a section
+// starts, then for each setting either one "option" row (a switch, which
+// shows its label and help itself) or, for a choice or several, a "heading"
+// with the label and help and an "option" row for each option, None first for
+// a setting that has it. The options of a group come under a "subheading" of
+// its name; for a group drawn as a grid they are the `cells` of one "grid"
+// item, which is one stop of the cursor with a cell of its own (`moveCursor`).
+// Only options and grids can have the cursor.
+export function settingsItems(settings) {
+  const items = []
+  let section = null
+  settings.forEach(function(setting) {
+    if (setting.section !== section) {
+      section = setting.section
+      items.push({ kind: "section", title: setting.sectionTitle })
+    }
+    if (setting.type === "bool") {
+      items.push({ kind: "option", key: setting.key, type: "bool", value: "", name: setting.label, icon: "", help: setting.help, problem: setting.problem })
+      return
+    }
+    items.push({ kind: "heading", key: setting.key, name: setting.label, help: setting.help, problem: setting.problem })
+    if (setting.none) items.push({ kind: "option", key: setting.key, type: setting.type, value: NONE, name: "None", icon: "", help: "", problem: "" })
+    let group = ""
+    let grid = null
+    setting.options.forEach(function(option) {
+      if (option.group !== group) {
+        group = option.group
+        grid = null
+        if (group) {
+          items.push({ kind: "subheading", name: group })
+          if (setting.groups[group] === true) {
+            grid = { kind: "grid", key: setting.key, type: setting.type, cells: [] }
+            items.push(grid)
+          }
+        }
+      }
+      if (grid) {
+        grid.cells.push({ key: setting.key, type: setting.type, value: option.value, name: option.label, label: cellLabel(option.label), icon: option.icon })
+      } else {
+        items.push({ kind: "option", key: setting.key, type: setting.type, value: option.value, name: option.label, icon: option.icon, help: "", problem: "" })
+      }
+    })
   })
-  return rows.concat(installed)
+  return items
 }
 
-// Whether a row shows ticked: None when nothing opens, else when it does.
-export function isTicked(open, id) {
-  return id === NEW_SPACE_NONE ? open.length === 0 : open.indexOf(id) >= 0
+// A short name for a cell of a grid: without a trailing "Code", "CLI",
+// "Harness" or "Agent" (so "Claude Code" is "Claude") nor a leading "GitHub",
+// unless that leaves nothing; and a few long names have their own short one
+// (Antigravity is "Agy").
+const SHORT_NAMES = { antigravity: "Agy" }
+
+export function cellLabel(name) {
+  if (SHORT_NAMES[String(name).toLowerCase()]) return SHORT_NAMES[String(name).toLowerCase()]
+  let words = String(name).split(/\s+/).filter(function(word) { return word !== "" })
+  const generic = ["code", "cli", "harness", "agent"]
+  if (words.length > 1 && generic.indexOf(words[words.length - 1].toLowerCase()) >= 0) words = words.slice(0, -1)
+  if (words.length > 1 && words[0].toLowerCase() === "github") words = words.slice(1)
+  return words.join(" ")
 }
 
-// The setting after ticking or unticking a row. None clears the others and
-// ticking anything clears None (the setting is then just that); the rest stay
-// in the rows' order. Only what has a row survives: `space config set` refuses
-// the rest (an agent no longer installed), so it would never be saved.
-export function toggleOpen(open, id, rows) {
-  if (id === NEW_SPACE_NONE) return []
-  const ids = rows.map((row) => row.id)
-  const on = open.indexOf(id) >= 0 ? open.filter((other) => other !== id) : open.concat([id])
-  return ids.filter((other) => other !== NEW_SPACE_NONE && on.indexOf(other) >= 0)
+// How many cells of at least `minCell` fit side by side in `width`.
+export function gridColumns(width, minCell) {
+  return Math.max(1, Math.floor(width / Math.max(1, minCell)))
 }
 
-// Whether a read of the setting still counts when it ends: nothing was ticked
-// since it started (`wroteAt` is how many ticks there have been, `startedAt`
-// how many there were then), and no write is under way.
+// Whether two lists of items are the same, so a list that is read again
+// isn't replaced (which would move the view).
+export function sameItems(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+// Whether an option row shows on: a switch when it is on, a choice's option
+// when it is the choice, an option of several when it is in the list, and
+// None when the list is empty. `values` is the current values by key.
+export function isOn(item, values) {
+  const value = values[item.key]
+  if (item.type === "bool") return value === true
+  if (item.type === "choice") return value === item.value
+  const list = Array.isArray(value) ? value : []
+  return item.value === NONE ? list.length === 0 : list.indexOf(item.value) >= 0
+}
+
+// Whether the cursor can be on an item.
+export function canFocus(item) {
+  return item.kind === "option" || item.kind === "grid"
+}
+
+// The index of the option row `by` rows (1 or -1) past `from` in `items`,
+// going round, skipping what the cursor can't be on; -1 when there is none.
+export function nextFocus(items, from, by) {
+  const count = items.length
+  for (let step = 1; step <= count; step++) {
+    const index = (((from + by * step) % count) + count) % count
+    if (canFocus(items[index])) return index
+  }
+  return -1
+}
+
+// The first row the cursor can be on, or -1.
+export function firstFocus(items) {
+  for (let i = 0; i < items.length; i++) if (canFocus(items[i])) return i
+  return -1
+}
+
+// The setting after choosing `optionValue` in `setting`: a switch flips; a
+// choice becomes that option; for several, None clears the others and
+// ticking anything clears None (the setting is then just that), the rest
+// staying in the options' order. Only what has an option survives: `space
+// config set` refuses the rest (an agent no longer installed), so it would
+// never be saved.
+export function toggled(setting, current, optionValue) {
+  if (setting.type === "bool") return current !== true
+  if (setting.type === "choice") return optionValue
+  if (optionValue === NONE) return []
+  const list = Array.isArray(current) ? current : []
+  const ids = setting.options.map(function(option) { return option.value })
+  const on = list.indexOf(optionValue) >= 0 ? list.filter(function(other) { return other !== optionValue }) : list.concat([optionValue])
+  const result = ids.filter(function(other) { return on.indexOf(other) >= 0 })
+  // A setting without None can't have nothing: unticking the last is no change.
+  if (result.length === 0 && !setting.none) return list.slice()
+  return result
+}
+
+// What `space config set` takes for a value of the setting.
+export function settingArg(setting, value) {
+  if (setting.type === "bool") return value === true ? "true" : "false"
+  if (setting.type === "choice") return String(value)
+  return value.length === 0 ? NONE : value.join(",")
+}
+
+// Whether a read of the settings still counts when it ends: nothing was
+// changed since it started (`wroteAt` is how many changes there have been,
+// `startedAt` how many there were then), and no write is under way.
 export function readCounts(startedAt, wroteAt, writing) {
   return startedAt === wroteAt && !writing
 }
 
-// What `space config set new_space.open` takes for a setting.
-export function openArg(open) {
-  return open.length === 0 ? NEW_SPACE_NONE : open.join(",")
+// Where to scroll to so the section title and heading above an option show
+// with it: the first row of the run of rows that can't have the cursor, just
+// before `index`; `index` itself when there are none.
+export function leadIn(items, index) {
+  let start = index
+  while (start > 0 && !canFocus(items[start - 1])) start--
+  return start
+}
+
+// The cursor is { index, cell }: the item it is on, and for a grid the cell,
+// counted along its rows of `cols`. Moves it one step: `dir` is "up", "down",
+// "left" or "right". Left and right stay in a grid's row of cells and do
+// nothing elsewhere; up and down move by a row of cells in a grid, and past
+// its first or last row go to the item before or after it, round the ends,
+// into a grid at the same column (as near as it has one) of its first row
+// coming down, its last going up. Returns the same cursor when there is
+// nowhere to go.
+export function moveCursor(items, cursor, dir, cols) {
+  const here = items[cursor.index]
+  const inGrid = !!here && here.kind === "grid"
+  if (inGrid) {
+    const count = here.cells.length
+    const cell = cursor.cell
+    if (dir === "left") return cell > 0 ? { index: cursor.index, cell: cell - 1 } : cursor
+    if (dir === "right") return cell < count - 1 ? { index: cursor.index, cell: cell + 1 } : cursor
+    if (dir === "down" && cell + cols < count) return { index: cursor.index, cell: cell + cols }
+    if (dir === "down" && Math.floor(cell / cols) < Math.floor((count - 1) / cols)) return { index: cursor.index, cell: count - 1 }
+    if (dir === "up" && cell - cols >= 0) return { index: cursor.index, cell: cell - cols }
+  } else if (dir === "left" || dir === "right") {
+    return cursor
+  }
+  const by = dir === "up" ? -1 : 1
+  const next = nextFocus(items, cursor.index, by)
+  if (next < 0) return cursor
+  const target = items[next]
+  if (target.kind !== "grid") return { index: next, cell: 0 }
+  const count = target.cells.length
+  const column = inGrid ? cursor.cell % cols : 0
+  if (by > 0) return { index: next, cell: Math.min(column, count - 1) }
+  const lastRow = Math.floor((count - 1) / cols) * cols
+  return { index: next, cell: Math.min(lastRow + column, count - 1) }
+}
+
+// The option under the cursor: the item itself, or the cell of a grid; null
+// for neither.
+export function optionAt(items, cursor) {
+  const item = items[cursor.index]
+  if (!item) return null
+  if (item.kind === "grid") return item.cells[cursor.cell] || null
+  return item.kind === "option" ? item : null
 }

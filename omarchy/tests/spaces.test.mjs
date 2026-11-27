@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { readCounts, parseOpen, newSpaceRows, isTicked, toggleOpen, openArg, cursorIndex, EMPTY, fileUrl, filterIcons, gridMove, isGlyph, isImageIcon, isVersionError, needsUpdate, parseEmojis, parseGlyphs, parseManifestVersion, badgeColor, parseBarEntry, pluginSettings, sidebarSlot, widgetWidths, tabsSlot, expandPath, customModuleUrl, headerOnBar, numeralFor, publicSpace, publicSpaceRow, publicTab, publicTerminal, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, searchRows, sameRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs, tabCells, tabGaps, tabShifts } from "../Spaces.mjs"
+import { readCounts, parseSchema, schemaValues, settingsItems, sameItems, isOn, nextFocus, firstFocus, leadIn, moveCursor, optionAt, cellLabel, gridColumns, toggled, settingArg, NONE, cursorIndex, EMPTY, fileUrl, filterIcons, gridMove, isGlyph, isImageIcon, isVersionError, needsUpdate, parseEmojis, parseGlyphs, parseManifestVersion, badgeColor, parseBarEntry, pluginSettings, sidebarSlot, widgetWidths, tabsSlot, expandPath, customModuleUrl, headerOnBar, numeralFor, publicSpace, publicSpaceRow, publicTab, publicTerminal, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, searchRows, sameRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs, tabCells, tabGaps, tabShifts } from "../Spaces.mjs"
 
 // A line of `space watch`, with a tab on each of two monitors.
 const line = (spaces, more) => JSON.stringify({ version: 2, space: "0.1.0", focused: "eDP-1", monitors: [
@@ -664,62 +664,202 @@ test("drags spaces, never home, only past the threshold", () => {
   assert.deepEqual(moveRow(["h", "a", "b", "c"], 3, 1), ["h", "c", "a", "b"])
 })
 
-test("reads what a new space opens", () => {
-  assert.deepEqual(parseOpen('["files","claude"]'), ["files", "claude"])
-  assert.deepEqual(parseOpen("[]"), [])
-  assert.deepEqual(parseOpen('["files", 3]'), ["files"])
-  assert.deepEqual(parseOpen("not json"), [])
-  assert.deepEqual(parseOpen('{"a":1}'), [])
-  assert.deepEqual(parseOpen(""), [])
+const SCHEMA = {
+  version: 1,
+  settings: [
+    {
+      key: "new_space.open", section: "new_space", section_title: "New spaces", label: "A new space opens", help: "Side by side.",
+      type: "multi", none: true, initial: ["terminal"], value: ["files", "claude"],
+      options: [
+        { value: "terminal", label: "Terminal", icon: "utilities-terminal" },
+        { value: "files", label: "Files", icon: "folio" },
+        { value: "claude", label: "Claude Code", icon: "omarchy-agent-claude", group: "Agents" },
+        { value: "codex", label: "Codex", icon: "omarchy-agent-codex", group: "Agents" },
+        { value: "pi", label: "Pi", icon: "", group: "Agents" },
+      ],
+      groups: [{ name: "Agents", grid: true }],
+    },
+    { key: "tabs.style", section: "tabs", section_title: "Tabs", label: "Tabs", help: "", type: "choice", default: "browser", value: "omarchy",
+      options: [{ value: "browser", label: "Like a browser" }, { value: "omarchy", label: "Like Omarchy" }] },
+    { key: "restore.auto", section: "restore", section_title: "Restore", label: "Restore on start", help: "Open them again.", type: "bool", default: true, value: true },
+    { key: "restore.agents", section: "restore", section_title: "Restore", label: "Agents", help: "", type: "bool", default: true, value: false },
+  ],
+}
+const schema = () => parseSchema(JSON.stringify(SCHEMA))
+const settingNamed = (key) => schema().find((setting) => setting.key === key)
+
+test("reads the schema, leaving out what isn't well formed", () => {
+  const settings = schema()
+  assert.deepEqual(settings.map((s) => s.key), ["new_space.open", "tabs.style", "restore.auto", "restore.agents"])
+  assert.equal(settings[0].sectionTitle, "New spaces")
+  assert.equal(settings[0].none, true)
+  assert.equal(settings[1].none, false)
+  assert.deepEqual(settings[0].options[2], { value: "claude", label: "Claude Code", icon: "omarchy-agent-claude", group: "Agents" })
+  assert.deepEqual(settings[0].groups, { Agents: true })
+  assert.deepEqual(settings[1].groups, {})
+  assert.equal(settings[1].problem, "")
+  assert.equal(settings[1].options[0].icon, "")
+  assert.deepEqual(schemaValues(settings), { "new_space.open": ["files", "claude"], "tabs.style": "omarchy", "restore.auto": true, "restore.agents": false })
+  assert.deepEqual(parseSchema("oops"), [])
+  assert.deepEqual(parseSchema(""), [])
+  assert.deepEqual(parseSchema('{"settings": 3}'), [])
+  const odd = parseSchema(JSON.stringify({ settings: [null, { key: "a.b", type: "slider" }, { type: "bool" }, { key: "a.c", type: "bool", value: "yes" }] }))
+  assert.deepEqual(odd.map((s) => [s.key, s.value]), [["a.c", false]])
 })
 
-test("the settings panel lists None, Terminal, Files and the installed agents", () => {
-  const agents = JSON.stringify([
-    { id: "claude", name: "Claude Code", icon: "omarchy-agent-claude", installed: true },
-    { id: "grok", name: "Grok", icon: "omarchy-agent-grok", installed: false },
-    { id: "pi", name: "Pi", icon: "", installed: true },
+test("the panel lists each section, setting and option, and the cursor skips the rest", () => {
+  const items = settingsItems(schema())
+  assert.deepEqual(items.map((item) => item.kind), [
+    "section", "heading", "option", "option", "option", "subheading", "grid",
+    "section", "heading", "option", "option",
+    "section", "option", "option",
   ])
-  assert.deepEqual(newSpaceRows(agents).map((row) => row.id), ["none", "terminal", "files", "claude", "pi"])
-  assert.equal(newSpaceRows(agents)[3].name, "Claude Code")
-  assert.equal(newSpaceRows(agents)[3].icon, "omarchy-agent-claude")
-  assert.deepEqual(newSpaceRows("oops").map((row) => row.id), ["none", "terminal", "files"])
-  assert.deepEqual(newSpaceRows("").map((row) => row.id), ["none", "terminal", "files"])
+  assert.equal(items[0].title, "New spaces")
+  assert.deepEqual(items.filter((item) => item.kind === "option").map((item) => item.value || item.name),
+    ["none", "terminal", "files", "browser", "omarchy", "Restore on start", "Agents"])
+  assert.equal(items.filter((item) => item.kind === "section").length, 3, "restore's two share a section")
+  assert.equal(items[2].name, "None")
+  assert.equal(items[4].icon, "folio")
+  assert.equal(items[12].help, "Open them again.", "a switch carries its own help")
+  assert.equal(items[1].help, "Side by side.")
+  assert.equal(items[5].name, "Agents")
+  assert.deepEqual(items[6].cells.map((cell) => cell.value), ["claude", "codex", "pi"])
+  assert.deepEqual(items[6].cells.map((cell) => cell.label), ["Claude", "Codex", "Pi"])
+  assert.equal(items[6].cells[0].name, "Claude Code", "the full name is kept")
+  assert.equal(items[6].cells[0].key, "new_space.open")
+  assert.equal(items[6].cells[0].type, "multi")
+  assert.deepEqual(settingsItems([]), [])
+  assert.equal(sameItems(items, settingsItems(schema())), true)
+  assert.equal(sameItems(items, items.slice(1)), false)
+
+  assert.equal(firstFocus(items), 2)
+  assert.equal(nextFocus(items, 2, 1), 3)
+  assert.equal(nextFocus(items, 4, 1), 6, "the grid is one stop")
+  assert.equal(nextFocus(items, 6, 1), 9, "over the section and the heading")
+  assert.equal(nextFocus(items, 9, -1), 6)
+  assert.equal(nextFocus(items, 13, 1), 2, "round to the top")
+  assert.equal(nextFocus(items, 2, -1), 13, "round to the bottom")
+  assert.equal(nextFocus([{ kind: "section" }], 0, 1), -1)
+  assert.equal(firstFocus([]), -1)
+  assert.equal(leadIn(items, 2), 0, "the section and the heading")
+  assert.equal(leadIn(items, 3), 3)
+  assert.equal(leadIn(items, 6), 5, "the grid's subheading")
+  assert.equal(leadIn(items, 9), 7)
+  assert.equal(leadIn(items, 12), 11)
+  assert.equal(leadIn(items, 13), 13)
 })
 
-test("the agents are listed alphabetically by name, after None, Terminal and Files", () => {
-  const agent = (id, name) => ({ id, name, icon: "", installed: true })
-  const agents = JSON.stringify([agent("pi", "Pi"), agent("opencode", "OpenCode"), agent("claude", "Claude Code"), agent("agy", "Antigravity"), agent("crush", "crush"), agent("codex", "Codex")])
-  assert.deepEqual(newSpaceRows(agents).map((row) => row.name), ["None", "Terminal", "Files", "Antigravity", "Claude Code", "Codex", "crush", "OpenCode", "Pi"])
+test("a group that isn't a grid is rows under its name", () => {
+  const settings = schema()
+  settings[0].groups = { Agents: false }
+  const items = settingsItems(settings)
+  assert.deepEqual(items.slice(4, 9).map((item) => item.kind + ":" + (item.value || item.name)),
+    ["option:files", "subheading:Agents", "option:claude", "option:codex", "option:pi"])
+})
+
+test("short names for the cells of a grid", () => {
+  assert.equal(cellLabel("Claude Code"), "Claude")
+  assert.equal(cellLabel("Cursor CLI"), "Cursor")
+  assert.equal(cellLabel("DeepSeek Harness"), "DeepSeek")
+  assert.equal(cellLabel("GitHub Copilot"), "Copilot")
+  assert.equal(cellLabel("Oh My Pi"), "Oh My Pi")
+  assert.equal(cellLabel("Code"), "Code", "never nothing")
+  assert.equal(cellLabel("Grok"), "Grok")
+  assert.equal(cellLabel("Antigravity"), "Agy")
+  assert.equal(gridColumns(300, 50), 6)
+  assert.equal(gridColumns(299, 50), 5)
+  assert.equal(gridColumns(10, 50), 1)
+  assert.equal(gridColumns(100, 0), 100, "no zero divisor")
+})
+
+test("the cursor moves through a grid by cell and row, and in and out of it", () => {
+  const items = settingsItems(schema())
+  // The grid is item 6, with 3 cells; two to a row: [claude codex] [pi].
+  const at = (index, cell) => ({ index, cell })
+  const go = (cursor, dir, cols) => moveCursor(items, cursor, dir, cols === undefined ? 2 : cols)
+  assert.deepEqual(go(at(4, 0), "down"), at(6, 0), "into the grid's first row")
+  assert.deepEqual(go(at(4, 0), "right"), at(4, 0), "left and right do nothing on a row")
+  assert.deepEqual(go(at(4, 0), "left"), at(4, 0))
+  assert.deepEqual(go(at(6, 0), "right"), at(6, 1))
+  assert.deepEqual(go(at(6, 1), "right"), at(6, 2), "along the cells, over the row's end")
+  assert.deepEqual(go(at(6, 2), "right"), at(6, 2), "the last cell")
+  assert.deepEqual(go(at(6, 0), "left"), at(6, 0), "the first cell")
+  assert.deepEqual(go(at(6, 1), "left"), at(6, 0))
+  assert.deepEqual(go(at(6, 0), "down"), at(6, 2), "a row down")
+  assert.deepEqual(go(at(6, 1), "down"), at(6, 2), "as near as the short row has")
+  assert.deepEqual(go(at(6, 2), "up"), at(6, 0), "a row up")
+  assert.deepEqual(go(at(6, 1), "down", 3), at(9, 0), "one row: out of the grid")
+  assert.deepEqual(go(at(6, 2), "down"), at(9, 0), "out the bottom, to the next row")
+  assert.deepEqual(go(at(6, 1), "up"), at(4, 0), "out the top, to the row above")
+  assert.deepEqual(go(at(9, 0), "up"), at(6, 2), "into the grid from below: its last row, its first column")
+  assert.deepEqual(go(at(13, 0), "down"), at(2, 0), "round to the top")
+  assert.deepEqual(go(at(2, 0), "up"), at(13, 0), "round to the bottom")
+  // The column is kept between a row of cells and the next.
+  assert.deepEqual(go(at(6, 1), "up", 3), at(4, 0))
+  assert.deepEqual(moveCursor(items, at(9, 0), "up", 3), at(6, 0), "three to a row: the grid's one row")
+  assert.deepEqual(moveCursor([{ kind: "section" }], at(0, 0), "down", 2), at(0, 0), "nowhere to go")
+
+  assert.equal(optionAt(items, at(6, 1)).value, "codex")
+  assert.equal(optionAt(items, at(3, 0)).value, "terminal")
+  assert.equal(optionAt(items, at(0, 0)), null)
+  assert.equal(optionAt(items, at(6, 9)), null)
+})
+
+test("options show on when the setting says so", () => {
+  const items = settingsItems(schema())
+  const values = schemaValues(schema())
+  const on = (item) => isOn(item, values)
+  const cells = items[6].cells
+  assert.deepEqual(items.filter((item) => item.kind === "option" && on(item)).map((item) => item.value || item.name),
+    ["files", "omarchy", "Restore on start"])
+  assert.deepEqual(cells.filter(on).map((cell) => cell.value), ["claude"], "a grid's cells too")
+  assert.equal(isOn({ key: "new_space.open", type: "multi", value: NONE }, { "new_space.open": [] }), true, "None when nothing opens")
+  assert.equal(isOn({ key: "new_space.open", type: "multi", value: NONE }, { "new_space.open": ["files"] }), false)
+  assert.equal(isOn({ key: "new_space.open", type: "multi", value: "files" }, {}), false, "no value yet")
+})
+
+test("a switch flips and a choice picks", () => {
+  const auto = settingNamed("restore.auto")
+  assert.equal(toggled(auto, true, ""), false)
+  assert.equal(toggled(auto, false, ""), true)
+  const style = settingNamed("tabs.style")
+  assert.equal(toggled(style, "omarchy", "browser"), "browser")
+  assert.equal(toggled(style, "browser", "browser"), "browser", "picking the one you have keeps it")
 })
 
 test("ticking None clears the rest, ticking anything clears None", () => {
-  const rows = newSpaceRows(JSON.stringify([{ id: "claude", name: "Claude Code", installed: true }]))
-  // The setting and its ticks agree.
-  assert.deepEqual(rows.filter((row) => isTicked(["files"], row.id)).map((row) => row.id), ["files"])
-  assert.deepEqual(rows.filter((row) => isTicked([], row.id)).map((row) => row.id), ["none"])
-  assert.equal(isTicked(["terminal"], "none"), false)
+  const open = settingNamed("new_space.open")
+  assert.deepEqual(toggled(open, ["terminal", "claude"], NONE), [])
+  assert.deepEqual(toggled(open, [], "files"), ["files"], "None is cleared")
+  assert.deepEqual(toggled(open, ["terminal"], "files"), ["terminal", "files"])
+  assert.deepEqual(toggled(open, ["claude"], "terminal"), ["terminal", "claude"], "in the options' order")
+  assert.deepEqual(toggled(open, ["terminal", "files"], "files"), ["terminal"])
+  assert.deepEqual(toggled(open, ["terminal"], "terminal"), [], "unticking the last is None")
+  assert.deepEqual(toggled(open, ["gone", "terminal"], "files"), ["terminal", "files"], "no option, so not saved")
+  assert.deepEqual(toggled(open, ["gone"], "gone"), [])
+  assert.deepEqual(toggled(open, ["terminal"], NONE), [])
+  assert.deepEqual(toggled(open, [], NONE), [], "None ticked twice is still None")
+  assert.deepEqual(toggled(open, undefined, "files"), ["files"])
+  assert.deepEqual(toggled(open, ["files"], "codex"), ["files", "codex"], "a grid's cell, in the options' order")
+  assert.deepEqual(toggled(open, ["files", "codex"], "claude"), ["files", "claude", "codex"])
 
-  assert.deepEqual(toggleOpen(["terminal", "claude"], "none", rows), [])
-  assert.deepEqual(toggleOpen([], "files", rows), ["files"], "None is cleared")
-  assert.deepEqual(toggleOpen(["terminal"], "files", rows), ["terminal", "files"])
-  assert.deepEqual(toggleOpen(["claude"], "terminal", rows), ["terminal", "claude"], "in the rows' order")
-  assert.deepEqual(toggleOpen(["terminal", "files"], "files", rows), ["terminal"])
-  assert.deepEqual(toggleOpen(["terminal"], "terminal", rows), [], "unticking the last is None")
-  assert.deepEqual(toggleOpen(["gone", "terminal"], "files", rows), ["terminal", "files"], "no row, so not saved")
-  assert.deepEqual(toggleOpen(["gone"], "gone", rows), [])
-  assert.deepEqual(toggleOpen(["terminal"], "none", rows), [])
-  // None ticked twice is still None.
-  assert.deepEqual(toggleOpen([], "none", rows), [])
+  // Without None, the last one can't be unticked.
+  const some = Object.assign({}, open, { none: false })
+  assert.deepEqual(toggled(some, ["files"], "files"), ["files"])
+  assert.deepEqual(toggled(some, ["files", "pi"], "files"), ["pi"])
 })
 
-test("a read of the setting counts only if nothing was ticked meanwhile", () => {
+test("a read of the settings counts only if nothing was changed meanwhile", () => {
   assert.equal(readCounts(2, 2, false), true)
-  assert.equal(readCounts(1, 2, false), false, "ticked since it started")
+  assert.equal(readCounts(1, 2, false), false, "changed since it started")
   assert.equal(readCounts(2, 2, true), false, "being written")
 })
 
-test("the setting as space config set takes it", () => {
-  assert.equal(openArg([]), "none")
-  assert.equal(openArg(["files", "claude"]), "files,claude")
-  assert.equal(openArg(["terminal"]), "terminal")
+test("the value as space config set takes it", () => {
+  assert.equal(settingArg(settingNamed("new_space.open"), []), "none")
+  assert.equal(settingArg(settingNamed("new_space.open"), ["files", "claude"]), "files,claude")
+  assert.equal(settingArg(settingNamed("new_space.open"), ["terminal"]), "terminal")
+  assert.equal(settingArg(settingNamed("restore.auto"), true), "true")
+  assert.equal(settingArg(settingNamed("restore.auto"), false), "false")
+  assert.equal(settingArg(settingNamed("tabs.style"), "omarchy"), "omarchy")
 })

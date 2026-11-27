@@ -51,7 +51,7 @@ Item {
     if (service) service.sendWindow(arg)
   }
 
-  // Open the settings panel (what a new space opens), or close it. Called
+  // Open the Settings screen, or close it. Called
   // through `omarchy-shell shell call com.t4t5.spaces settings`.
   function settings(arg) {
     if (service) service.settings()

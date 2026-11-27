@@ -22,6 +22,7 @@ pub mod paths;
 pub mod reserve;
 pub mod restore;
 pub mod session;
+pub mod settings;
 pub mod shell;
 pub mod sound;
 pub mod spaces;

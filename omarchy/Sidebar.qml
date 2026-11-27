@@ -343,7 +343,7 @@ Item {
     Quickshell.execDetached(["space", "new"])
   }
 
-  // The gear in the header: the settings panel, for what a new space opens.
+  // The gear in the header: the Settings screen.
   function openSettings(screen) {
     if (root.controller) root.controller.openSettings(screen || root.screen)
   }

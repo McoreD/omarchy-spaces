@@ -4825,8 +4825,8 @@ fn config_reads_and_sets_what_a_new_space_opens() {
     // Mistakes change nothing.
     let err = env.fails(&["config", "set", "new_space.open", "files,nosuch"]);
     assert!(err.contains("no 'nosuch' to open"), "{err}");
-    let err = env.fails(&["config", "set", "restore.auto", "false"]);
-    assert!(err.contains("no setting 'restore.auto'"), "{err}");
+    let err = env.fails(&["config", "set", "restore.nothing", "false"]);
+    assert!(err.contains("no setting 'restore.nothing'"), "{err}");
     assert_eq!(env.ok(&["config", "get", "new_space.open"]), "none\n");
 
     // With no config at all, it makes one.
@@ -4834,6 +4834,164 @@ fn config_reads_and_sets_what_a_new_space_opens() {
     fresh.ok(&["config", "set", "new_space.open", "files"]);
     let text = fs::read_to_string(fresh.home().join(".config/omarchy-spaces/config.toml")).unwrap();
     assert_eq!(text, "[new_space]\nopen = [\"files\"]\n");
+}
+
+#[test]
+fn config_gets_sets_and_unsets_every_kind_of_setting() {
+    let env = Env::new();
+    let file = env.home().join(".config/omarchy-spaces/config.toml");
+    let text = || fs::read_to_string(&file).unwrap();
+
+    // Defaults, with no file.
+    assert_eq!(env.ok(&["config", "get", "restore.auto"]), "true\n");
+    assert_eq!(env.ok(&["config", "get", "sounds.enabled"]), "false\n");
+    assert_eq!(
+        env.ok(&["config", "get", "sounds.enabled", "--json"]),
+        "false\n"
+    );
+
+    let before = "# mine\n[restore]\nauto = true # keep\n\n[sounds]\ndone = \"~/d.oga\"\n";
+    env.write_config(before);
+    env.ok(&["config", "set", "restore.auto", "off"]);
+    assert_eq!(text(), before.replace("auto = true", "auto = false"));
+    assert_eq!(env.ok(&["config", "get", "restore.auto"]), "false\n");
+    env.ok(&["config", "set", "sounds.enabled", "ON"]);
+    assert_eq!(
+        text(),
+        "# mine\n[restore]\nauto = false # keep\n\n[sounds]\ndone = \"~/d.oga\"\nenabled = true\n"
+    );
+    assert_eq!(env.ok(&["config", "get", "sounds.enabled"]), "true\n");
+
+    // Unset takes the key out and nothing else.
+    env.ok(&["config", "unset", "sounds.enabled"]);
+    env.ok(&["config", "unset", "restore.auto"]);
+    assert_eq!(text(), "# mine\n\n[sounds]\ndone = \"~/d.oga\"\n");
+    assert_eq!(env.ok(&["config", "get", "restore.auto"]), "true\n");
+    let same = text();
+    env.ok(&["config", "unset", "restore.browsers"]);
+    assert_eq!(text(), same, "not there, so untouched");
+
+    // Mistakes change nothing and fail.
+    let err = env.fails(&["config", "set", "restore.auto", "maybe"]);
+    assert!(err.contains("isn't a value for restore.auto"), "{err}");
+    let err = env.fails(&["config", "set", "sounds.done", "x"]);
+    assert!(err.contains("no setting 'sounds.done'"), "{err}");
+    let err = env.fails(&["config", "unset", "nosuch.key"]);
+    assert!(err.contains("no setting 'nosuch.key'"), "{err}");
+    let err = env.fails(&["config", "get", "nosuch.key"]);
+    assert!(err.contains("no setting 'nosuch.key'"), "{err}");
+    assert_eq!(text(), same);
+
+    // A file that can't be read is left as it is.
+    env.write_config("[restore\nauto = 1\n");
+    env.fails(&["config", "set", "restore.auto", "true"]);
+    env.fails(&["config", "unset", "restore.auto"]);
+    assert_eq!(text(), "[restore\nauto = 1\n");
+}
+
+#[test]
+fn a_bad_value_still_leaves_the_settings_readable_and_fixable() {
+    let env = Env::new();
+    env.write_config("[sounds]\nenabled = \"yes\"\n[restore]\nauto = false\n");
+    let schema: Value = serde_json::from_str(&env.ok(&["config", "schema", "--json"])).unwrap();
+    let settings = schema["settings"].as_array().unwrap();
+    assert_eq!(settings.len(), 5);
+    let sounds = settings
+        .iter()
+        .find(|s| s["key"] == "sounds.enabled")
+        .unwrap();
+    assert!(sounds["problem"].as_str().unwrap().contains("isn't valid"));
+    let auto = settings
+        .iter()
+        .find(|s| s["key"] == "restore.auto")
+        .unwrap();
+    assert_eq!(auto["value"], false);
+
+    env.ok(&["config", "set", "sounds.enabled", "true"]);
+    let text = fs::read_to_string(env.home().join(".config/omarchy-spaces/config.toml")).unwrap();
+    assert_eq!(text, "[sounds]\nenabled = true\n[restore]\nauto = false\n");
+    let schema: Value = serde_json::from_str(&env.ok(&["config", "schema", "--json"])).unwrap();
+    assert!(schema["settings"][4].get("problem").is_none());
+}
+
+#[test]
+fn config_writes_through_a_symlink_and_keeps_the_mode() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let env = Env::new();
+    let real = env.home().join("dotfiles/config.toml");
+    fs::create_dir_all(real.parent().unwrap()).unwrap();
+    fs::write(&real, "[restore]\nauto = true\n").unwrap();
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o600)).unwrap();
+    let dir = env.home().join(".config/omarchy-spaces");
+    fs::create_dir_all(&dir).unwrap();
+    symlink(&real, dir.join("config.toml")).unwrap();
+
+    env.ok(&["config", "set", "restore.auto", "false"]);
+    assert!(
+        fs::symlink_metadata(dir.join("config.toml"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_to_string(&real).unwrap(),
+        "[restore]\nauto = false\n"
+    );
+    assert_eq!(
+        fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}
+
+#[test]
+fn config_schema_lists_every_setting_with_its_value() {
+    let env = Env::new();
+    env.write_config("[new_space]\nopen = [\"files\"]\n[restore]\nbrowsers = false\n");
+    let schema: Value = serde_json::from_str(&env.ok(&["config", "schema", "--json"])).unwrap();
+    assert_eq!(schema["version"], 1);
+    let settings = schema["settings"].as_array().unwrap();
+    let keys: Vec<&str> = settings
+        .iter()
+        .map(|s| s["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "new_space.open",
+            "restore.auto",
+            "restore.agents",
+            "restore.browsers",
+            "sounds.enabled"
+        ]
+    );
+    let open = &settings[0];
+    assert_eq!(open["type"], "multi");
+    assert_eq!(open["none"], true);
+    assert_eq!(open["default"], json!(["terminal"]));
+    assert_eq!(open["value"], json!(["files"]));
+    let offered: Vec<&str> = open["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["value"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        offered,
+        ["terminal", "files", "spacesagent"],
+        "ghostagent isn't installed"
+    );
+    assert_eq!(open["options"][2]["label"], "Space Agent");
+    assert_eq!(open["options"][2]["group"], "Agents");
+    assert!(open["options"][1].get("group").is_none());
+    assert_eq!(open["groups"], json!([{ "name": "Agents", "grid": true }]));
+    assert_eq!(open["options"][1]["icon"], "folio");
+    let browsers = &settings[3];
+    assert_eq!(browsers["type"], "bool");
+    assert_eq!(browsers["value"], false);
+    assert_eq!(browsers["default"], true);
+    assert_eq!(browsers["section"], "restore");
+    assert_eq!(browsers["section_title"], "Restore");
+    assert!(browsers.get("options").is_none());
 }
 
 #[test]

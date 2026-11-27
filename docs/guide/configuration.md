@@ -21,6 +21,8 @@ enabled = false   # play a sound when an agent starts waiting for you, or finish
 
 Changes count at once. A setting Spaces doesn't know gets a warning, and the others still count.
 
+You don't have to edit the file: the sidebar's [Settings screen](sidebar.md#settings) and [`space config`](cli.md#settings) change the settings below and leave the rest of the file, comments included, as it is. Every setting here is on the Settings screen except `sounds.done` and `sounds.waiting`, which are paths and are for the config file only.
+
 See [Restoring your spaces](restore.md) and [Agent status](agent-status.md) for what these do.
 
 ## What a new space opens
@@ -32,7 +34,7 @@ See [Restoring your spaces](restore.md) and [Agent status](agent-status.md) for 
 - an Omarchy agent's id (`claude`, `codex`, `agy`, `opencode`, …; `omarchy default agent --help` lists them): the agent in a terminal of its own, in the folder. Spaces runs `omarchy-agent --inline --agent <id>` in that terminal, so the agent starts as Omarchy starts it, including the flag that has it skip asking before it acts (`--permission-mode auto` for Claude Code, `--approve-for-me` for Codex, `--dangerously-skip-permissions` for Antigravity). Claude Code, Codex and Antigravity show their [status](agent-status.md) and come back with [restore](restore.md) as any terminal's does. An agent started in your home folder starts in `~/Work` instead, if you have one: Omarchy does that, as agents won't remember trusting `$HOME`.
 - nothing, `open = []`: an empty space, see [Spaces and tabs](spaces-and-tabs.md#spaces).
 
-The setting is for a space you open yourself: the `+`, a key bound to `spaces.new_space()`. A script's `space new --silent`, or `space new -- <cmd>`, opens just a terminal, as it always has, unless it says `--open`. A value Spaces doesn't know gets a warning, and is skipped, as is an agent or Files that isn't installed; if that leaves nothing of a list that had something in it, a terminal opens instead. Only `open = []` opens nothing. Pick what opens from the sidebar's [settings panel](sidebar.md#what-a-new-space-opens), or with `space config set new_space.open files,claude`; either changes only that setting and leaves the rest of the file, comments included, as it is. `space new --open` [overrides it for one space](cli.md#spaces).
+The setting is for a space you open yourself: the `+`, a key bound to `spaces.new_space()`. A script's `space new --silent`, or `space new -- <cmd>`, opens just a terminal, as it always has, unless it says `--open`. A value Spaces doesn't know gets a warning, and is skipped, as is an agent or Files that isn't installed; if that leaves nothing of a list that had something in it, a terminal opens instead. Only `open = []` opens nothing. Pick what opens from the sidebar's [Settings screen](sidebar.md#settings), or with `space config set new_space.open files,claude`; either changes only that setting and leaves the rest of the file, comments included, as it is. `space new --open` [overrides it for one space](cli.md#spaces).
 
 ## Terminal
 

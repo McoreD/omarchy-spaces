@@ -65,13 +65,24 @@ Each takes `-s <space>` for a space other than the one it's run from.
 ## Settings
 
 ```sh
-space config get new_space.open          # what a new space opens: terminal,files; none for nothing
-space config get new_space.open --json   # as a list
-space config set new_space.open files,claude   # or none; the rest of config.toml stays as it is
-space config agents                      # Omarchy's agents, as JSON, with whether each is installed
+space config get restore.auto                  # what the config has, else the default: true
+space config get new_space.open --json        # as JSON: ["files","claude"]
+space config set restore.auto off              # true, false, on or off
+space config set new_space.open files,claude   # a list: comma-separated; or none
+space config unset restore.auto                # back to the default: takes the key out of the file
+space config schema --json                     # every setting, with its options and current value
+space config agents                            # Omarchy's agents, as JSON, with whether each is installed
 ```
 
-`new_space.open` is the only setting `config` changes. `set` refuses a word that isn't `terminal`, `files` or one of Omarchy's agents, and makes `config.toml` if there isn't one. It is what the [sidebar's settings panel](sidebar.md#what-a-new-space-opens) runs.
+A setting is its key in `config.toml`, `section.name`: `new_space.open`, `restore.auto`, `restore.agents`, `restore.browsers` and `sounds.enabled`. `sounds.done` and `sounds.waiting` are paths, so they are for the config file only. There are three kinds:
+
+- a switch (`restore.auto`): `true`, `false`, `on` or `off`.
+- a choice: one of its options, which `schema` lists.
+- a list (`new_space.open`): any of its options, comma-separated, in the order you give, or `none` for the empty list. For `new_space.open` they are `terminal`, `files` and an Omarchy agent's id.
+
+`set` and `unset` change only that key: the rest of `config.toml`, comments included, stays as it is, a symlinked file is written through, and its mode is kept. A key that isn't a setting, or a value it can't have, is an error and leaves the file as it was. `set` makes `config.toml` if there isn't one; `unset` of a key that isn't in the file does nothing, and a table that it leaves empty goes too (a comment above it stays), unless it has a comment on its own line.
+
+`schema --json` prints `{ "version": 1, "sections": [...], "settings": [...] }`, each setting being `key`, `section`, `section_title`, `label`, `help`, `type` (`bool`, `choice` or `multi`), `default` and `value` (the current one), and for a choice or a list `options` (each `value`, `label` and an `icon` where it has one: a name in the icon theme) an option's `group` where it has one, and for a list `none` (whether the empty list is one of its values) and `groups` (each group's `name` and whether the panel draws it as a `grid`). A setting whose value in the file isn't valid has the default as its `value` and a `problem` saying so; `set` replaces it. Only the options that can be used are listed: an agent that isn't installed isn't. It is what the [Settings screen](sidebar.md#settings) is drawn from, and it runs `set` for each change.
 
 ## The rest
 

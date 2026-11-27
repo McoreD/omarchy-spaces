@@ -18,11 +18,19 @@ Up and Down (or `Ctrl+N` and `Ctrl+P`) move through the spaces and their windows
 
 The windows of `home` are searched too. Those on a special workspace, a scratchpad, aren't, as they belong to no space. With nothing typed the list is as ever, without windows.
 
-## What a new space opens
+## Settings
 
-With the sidebar expanded, the gear beside its toggle opens a small panel of ticks for what a new space opens: None, Terminal, Files, and each of Omarchy's agents that is installed, with its name and icon. Tick as many as you like and they open side by side, in that order, on the new space's first tab. Ticking None clears the others, and ticking anything clears None. Each change is saved to `~/.config/omarchy-spaces/config.toml` as you make it (`space config set`), leaving the rest of the file as it is, and the panel shows what the file says each time it opens. Up and Down move, Space or Enter ticks, Escape or a click outside closes it. `omarchy-shell shell call com.t4t5.spaces settings ''` opens it, or closes it if it's open.
+With the sidebar expanded, the gear beside its toggle opens the Settings screen, beside the sidebar. It lists Spaces' settings by section, each with its name and a line of help:
 
-See [What a new space opens](configuration.md#what-a-new-space-opens).
+- **New spaces**: what a new space opens. None, Terminal and Files are ticks. Omarchy's agents that are installed come under "Agents" as a grid of icons with short names (Claude Code is "Claude"), the ones that are on lit in the accent colour, with the full name of the one under the cursor below. Pick as many as you like and they open side by side, in that order, on the new space's first tab. Choosing None clears the others, and choosing anything clears None.
+- **Restore**: whether your spaces, the agents' conversations and the browser's windows come back after a restart (see [Restoring your spaces](restore.md)).
+- **Sounds**: whether to play a sound when an agent needs you or finishes unseen.
+
+A switch is a tick box and a choice, where a setting has one, is a list of radio rows. Each change is saved to `~/.config/omarchy-spaces/config.toml` as you make it (`space config set`), leaving the rest of the file as it is, and the screen shows what the file says each time it opens. If a change can't be saved, the reason shows under that setting. If the file has a value that isn't valid for a setting, that setting shows its default with a note, and changing it replaces the bad value; the other settings are read as usual. Up and Down move through the rows (the section titles are skipped) and, in the grid, by a row of icons, with Left and Right moving along it; Space or Enter changes the one under the cursor, a click does too, and Escape or a click outside closes the screen. The list scrolls when it is longer than the screen. `omarchy-shell shell call com.t4t5.spaces settings ''` opens it, or closes it if it's open.
+
+The screen is drawn from `space config schema --json`, so a setting that command lists is on it with nothing else to add. `sounds.done` and `sounds.waiting`, which are paths, are for the config file only.
+
+See [Configuration](configuration.md) for what each setting does, and [`space config`](cli.md#settings) to change them from a script.
 
 ## Icons
 
