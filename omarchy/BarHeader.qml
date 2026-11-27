@@ -18,6 +18,7 @@ Item {
   property string screenName: ""
   signal toggleRequested()
   signal menuRequested()
+  signal settingsRequested()
 
   readonly property int inset: root.sidebar ? root.sidebar.inset : 0
   readonly property int cell: root.sidebar ? root.sidebar.cell : 0
@@ -36,6 +37,8 @@ Item {
   Behavior on textShown { NumberAnimation { duration: Style.duration(120) } }
   // Where the toggle is, and where the title starts, past the logo.
   readonly property real toggleX: root.inset + root.highlightWidth - root.cell
+  // The gear beside it, for what a new space opens.
+  readonly property real gearX: root.toggleX - root.cell
   readonly property real afterLogo: root.inset + root.cell
   readonly property real titleX: root.afterLogo + (root.sidebar ? root.sidebar.textGap : 0)
 
@@ -58,7 +61,7 @@ Item {
 
   Item {
     x: root.titleX
-    width: Math.max(0, root.toggleX - root.titleX)
+    width: Math.max(0, root.gearX - root.titleX)
     height: parent.height
     clip: true
 
@@ -85,6 +88,15 @@ Item {
     width: Math.max(0, root.toggleX + root.cell - root.afterLogo)
     height: parent.height
     clip: true
+
+    HeaderButton {
+      x: root.gearX - root.afterLogo
+      width: root.cell
+      enabled: x >= 0 && root.textShown > 0
+      // The gear (nf-cod-gear).
+      text: "\u{eaf8}"
+      onClicked: root.settingsRequested()
+    }
 
     HeaderButton {
       x: root.toggleX - root.afterLogo

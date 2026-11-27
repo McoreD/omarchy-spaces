@@ -343,6 +343,11 @@ Item {
     Quickshell.execDetached(["space", "new"])
   }
 
+  // The gear in the header: the settings panel, for what a new space opens.
+  function openSettings(screen) {
+    if (root.controller) root.controller.openSettings(screen || root.screen)
+  }
+
   // Whether there are tiled windows on its screen, which Hyprland moves when
   // the sidebar claims or returns its width. Floating ones stay put.
   function windowsToMove() {

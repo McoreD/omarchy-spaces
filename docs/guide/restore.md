@@ -12,7 +12,8 @@ After you log out or restart, your spaces open again by themselves, `home` inclu
 ## What doesn't
 
 - Other programs in the terminals, and what they had printed.
-- Other apps' windows. The windows beside one take its room.
+- Other apps' windows, Files among them. The windows beside one take its room.
+- A space with no window, as one opened with nothing is.
 - Firefox and Zen, for now.
 - Incognito windows, and windows of a browser on another data folder.
 

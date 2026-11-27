@@ -31,7 +31,13 @@ enum Cmd {
         /// Print the created space as JSON.
         #[arg(long)]
         json: bool,
-        /// Run a command in the new terminal (returns to your shell when it exits).
+        /// What to open, in place of `[new_space] open` in the config: any of
+        /// terminal, files and an Omarchy agent's id, comma-separated, side by
+        /// side on its first tab; `none` for an empty space.
+        #[arg(long, value_name = "WHAT")]
+        open: Option<String>,
+        /// Run a command in the new terminal (returns to your shell when it
+        /// exits). A terminal is opened for it if what opens has none.
         #[arg(last = true, value_name = "CMD")]
         command: Vec<String>,
     },
@@ -125,6 +131,10 @@ enum Cmd {
         #[arg(long)]
         sounds: bool,
     },
+    /// Read or change Spaces' settings in ~/.config/omarchy-spaces/config.toml
+    /// without touching the rest of the file.
+    #[command(subcommand)]
+    Config(ConfigCmd),
     /// Run as the program of a terminal that's restored: your own shell, in
     /// the conversation that was in it.
     #[command(hide = true)]
@@ -144,6 +154,39 @@ enum Cmd {
     /// Move the focused window to another space or tab.
     #[command(subcommand)]
     Window(WindowCmd),
+}
+
+#[derive(Subcommand)]
+enum ConfigCmd {
+    /// Print a setting's value: what the config has, else the default.
+    Get {
+        /// The setting; only `new_space.open` can be read and set.
+        #[arg(value_parser = config_key)]
+        key: String,
+        /// Print it as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set a setting, for `new_space.open` the words `--open` takes.
+    Set {
+        #[arg(value_parser = config_key)]
+        key: String,
+        #[arg(value_name = "VALUE", allow_hyphen_values = true)]
+        value: String,
+    },
+    /// Print Omarchy's agents as JSON, with whether each is installed.
+    Agents,
+}
+
+fn config_key(raw: &str) -> Result<String, String> {
+    if raw == omarchy_spaces::newspace::KEY {
+        Ok(raw.to_string())
+    } else {
+        Err(format!(
+            "there's no setting '{raw}' to change: use {}",
+            omarchy_spaces::newspace::KEY
+        ))
+    }
 }
 
 #[derive(Subcommand)]
@@ -300,6 +343,16 @@ fn space_target(raw: &str) -> Result<commands::SpaceTarget, String> {
     Ok(commands::SpaceTarget::of(raw))
 }
 
+fn run_config(command: ConfigCmd) -> anyhow::Result<()> {
+    use omarchy_spaces::newspace;
+    match command {
+        ConfigCmd::Get { json, .. } => println!("{}", newspace::get(json)?),
+        ConfigCmd::Set { value, .. } => newspace::set(&value)?,
+        ConfigCmd::Agents => println!("{}", newspace::agents_json()?),
+    }
+    Ok(())
+}
+
 fn run_tab(command: TabCmd) -> anyhow::Result<()> {
     match command {
         TabCmd::New {
@@ -350,6 +403,7 @@ fn main() -> ExitCode {
             | Cmd::Current { .. }
             | Cmd::Events { .. }
             | Cmd::Meta(MetaCmd::Get { .. })
+            | Cmd::Config(ConfigCmd::Get { .. } | ConfigCmd::Agents)
             | Cmd::Watch { .. }
             | Cmd::Shell
             | Cmd::Renumber
@@ -361,6 +415,7 @@ fn main() -> ExitCode {
             name,
             silent,
             json,
+            open,
             command,
         } => commands::new(commands::NewOptions {
             dir,
@@ -368,7 +423,9 @@ fn main() -> ExitCode {
             silent,
             json,
             command,
+            open,
         }),
+        Cmd::Config(command) => run_config(command),
         Cmd::Current { json } => commands::current(json),
         Cmd::Go { space } => commands::go(space),
         Cmd::Next => commands::step(true),

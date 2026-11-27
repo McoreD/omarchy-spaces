@@ -8,7 +8,7 @@ use anyhow::{Result, bail};
 use serde::Serialize;
 
 use super::{
-    focus, forget, fresh_space, moved, open_terminal_then, remember, resolve_dir, take_turn,
+    focus, forget, fresh_space, moved, open_items_then, remember, resolve_dir, take_turn,
     target_space,
 };
 use crate::context;
@@ -19,6 +19,7 @@ use crate::live::{self, Row};
 use crate::monitors::{Blocks, Strip};
 use crate::name::{self, HOME, Location};
 use crate::paths;
+use crate::reserve;
 use crate::spaces::{self, Store};
 use crate::state::{self, Last};
 
@@ -30,6 +31,8 @@ pub struct NewOptions {
     pub silent: bool,
     pub json: bool,
     pub command: Vec<String>,
+    /// What to open, in place of the `[new_space]` setting: `--open`'s words.
+    pub open: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,8 +45,12 @@ struct CreatedSpace {
 }
 
 /// `space new [dir]`: a new space in `dir`, by default the folder you are
-/// in, with a terminal open there. It is called after the folder that
-/// terminal is in, and follows it.
+/// in, with what `[new_space]` says to open there (a terminal, by default),
+/// side by side on its first tab. It is called after the folder its terminal
+/// is in, and follows it, or after `dir` if it has none. With nothing to open
+/// the space is empty, and lasts while you are on it: Hyprland keeps the
+/// workspace of a monitor that shows it, and lets it go once you leave it
+/// with nothing open, which ends the space, as a space ends with its windows.
 pub fn new(opts: NewOptions) -> Result<()> {
     let custom_name = match opts.name {
         Some(raw) => spaces::clean_name(&raw)?,
@@ -51,6 +58,16 @@ pub fn new(opts: NewOptions) -> Result<()> {
     };
     if !opts.command.is_empty() {
         crate::shell::encode_run(&opts.command)?;
+    }
+    let items = crate::newspace::for_new_space(
+        opts.open.as_deref(),
+        !opts.command.is_empty(),
+        opts.silent,
+    )?;
+    if items.is_empty() && opts.silent {
+        bail!(
+            "an empty space is only there while you are on it: leave out --silent, or open something"
+        );
     }
     let hypr = Hypr::from_env()?;
     let dir = match opts.dir {
@@ -63,13 +80,22 @@ pub fn new(opts: NewOptions) -> Result<()> {
     let id = fresh_space(&hypr, first, None)?;
     let workspace = name::workspace_name(&id, first);
     let env = [(context::SPACE_ID_ENV, id.as_str())];
-    let window = open_terminal_then(&hypr, &dir, &workspace, &env, &opts.command, || {
+    let arrive = || {
         if opts.silent {
             Ok(())
         } else {
             switch(&hypr, &id)
         }
-    })?;
+    };
+    let window = if items.is_empty() {
+        // Hyprland makes the workspace as you arrive, and keeps it as long as
+        // you are on it.
+        arrive()?;
+        reserve::release(&paths::reserved_dir(), &workspace);
+        None
+    } else {
+        open_items_then(&hypr, &dir, &workspace, &env, &items, &opts.command, arrive)?
+    };
 
     // The watcher may have seen the space by now, and made its entry.
     let mut store = Store::lock(&paths::state_dir())?;
@@ -215,7 +241,19 @@ pub(super) fn switch(hypr: &Hypr, target: &str) -> Result<()> {
     if let Some(left_at) = here.key() {
         remember(here.space(), left_at);
     }
-    focus(hypr, target, key)
+    focus(hypr, target, key)?;
+    // A space left with nothing open is gone (see `new`), and with it where
+    // you left it.
+    if active.windows == 0
+        && here.space() != HOME
+        && !hypr
+            .workspaces()?
+            .iter()
+            .any(|ws| name::locate(ws.id, &ws.name).space() == here.space())
+    {
+        forget(here.space());
+    }
+    Ok(())
 }
 
 /// A space's workspaces on a monitor.

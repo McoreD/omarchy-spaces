@@ -1017,3 +1017,68 @@ export function moveRow(rows, from, to) {
   out.splice(to, 0, row)
   return out
 }
+
+// What a new space opens (`[new_space] open`, set by `space config set
+// new_space.open`): the settings panel's rows, and how ticking them changes
+// the setting. `open` is the list of ids in the setting: "terminal", "files",
+// and agents'. Nothing in it is None.
+export const NEW_SPACE_NONE = "none"
+
+// `space config get new_space.open --json`, or [] if it printed something else.
+export function parseOpen(text) {
+  try {
+    const open = JSON.parse(String(text || ""))
+    return Array.isArray(open) ? open.filter((id) => typeof id === "string") : []
+  } catch (e) {
+    return []
+  }
+}
+
+// The panel's rows: None, Terminal, Files, then each agent that is installed,
+// from `space config agents`. Each is { id, name, icon } (an icon theme name).
+export function newSpaceRows(agentsText) {
+  let agents = []
+  try {
+    const parsed = JSON.parse(String(agentsText || ""))
+    if (Array.isArray(parsed)) agents = parsed
+  } catch (e) {}
+  const rows = [
+    { id: NEW_SPACE_NONE, name: "None", icon: "" },
+    { id: "terminal", name: "Terminal", icon: "utilities-terminal" },
+    { id: "files", name: "Files", icon: "folio" },
+  ]
+  agents.forEach(function(agent) {
+    if (agent && agent.installed === true && typeof agent.id === "string") {
+      rows.push({ id: agent.id, name: String(agent.name || agent.id), icon: String(agent.icon || "") })
+    }
+  })
+  return rows
+}
+
+// Whether a row shows ticked: None when nothing opens, else when it does.
+export function isTicked(open, id) {
+  return id === NEW_SPACE_NONE ? open.length === 0 : open.indexOf(id) >= 0
+}
+
+// The setting after ticking or unticking a row. None clears the others and
+// ticking anything clears None (the setting is then just that); the rest stay
+// in the rows' order. Only what has a row survives: `space config set` refuses
+// the rest (an agent no longer installed), so it would never be saved.
+export function toggleOpen(open, id, rows) {
+  if (id === NEW_SPACE_NONE) return []
+  const ids = rows.map((row) => row.id)
+  const on = open.indexOf(id) >= 0 ? open.filter((other) => other !== id) : open.concat([id])
+  return ids.filter((other) => other !== NEW_SPACE_NONE && on.indexOf(other) >= 0)
+}
+
+// Whether a read of the setting still counts when it ends: nothing was ticked
+// since it started (`wroteAt` is how many ticks there have been, `startedAt`
+// how many there were then), and no write is under way.
+export function readCounts(startedAt, wroteAt, writing) {
+  return startedAt === wroteAt && !writing
+}
+
+// What `space config set new_space.open` takes for a setting.
+export function openArg(open) {
+  return open.length === 0 ? NEW_SPACE_NONE : open.join(",")
+}

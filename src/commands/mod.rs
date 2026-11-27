@@ -197,6 +197,75 @@ pub(super) fn open_terminal_then(
     Ok(window)
 }
 
+/// Opens what a new space opens, in order, on `workspace` (a space's tab)
+/// while you stay where you are: the first one up, you go there with
+/// `arrive`, so you never see the tab empty, and the rest open there as you
+/// look on. Each is placed as `open_terminal_then` places a terminal, by an
+/// exec rule that follows its process, and its own window shows up before the
+/// next is started, so they tile in the order given. Returns the first window.
+pub(super) fn open_items_then(
+    hypr: &Hypr,
+    dir: &Path,
+    workspace: &str,
+    env: &[(&str, &str)],
+    items: &[crate::newspace::Item],
+    run: &[String],
+    arrive: impl FnOnce() -> Result<()>,
+) -> Result<Option<String>> {
+    use crate::newspace::Item;
+    let encoded_run = if run.is_empty() {
+        None
+    } else {
+        Some(shell::encode_run(run)?)
+    };
+    let events = hypr.events().ok();
+    let mut arrive = Some(arrive);
+    let mut first = None;
+    for item in items {
+        let mut full_env = env.to_vec();
+        let launcher = match item {
+            Item::Terminal => match encoded_run.as_deref() {
+                Some(encoded) => {
+                    full_env.push((shell::RUN, encoded));
+                    launch::resuming_terminal()
+                }
+                None => launch::terminal(),
+            },
+            Item::Files => launch::files(),
+            Item::Agent(id) => launch::agent(id),
+        };
+        let command = terminal::command_in(&launcher, dir, &full_env);
+        let on = hypr::selector_for(&hypr.workspaces().unwrap_or_default(), workspace);
+        let placed = hypr
+            .dispatch(&hypr::exec_on(&command, &format!("{on} silent")))
+            .is_ok();
+        let window = match (placed, &events) {
+            (true, Some(events)) => wait_for_window(events, workspace, OPEN_TIMEOUT, |_| true),
+            (true, None) => None,
+            (false, _) => {
+                terminal::launch_env(&launcher, dir, &full_env)?;
+                None
+            }
+        };
+        if let Some(arrive) = arrive.take() {
+            if window.is_some() {
+                reserve::release(&paths::reserved_dir(), workspace);
+            }
+            arrive()?;
+        }
+        if let Some(address) = &window {
+            if let Err(e) = hypr.dispatch(&hypr::animate_again(address)) {
+                eprintln!("space: warning: {e:#}");
+            }
+            first.get_or_insert_with(|| address.clone());
+        }
+    }
+    if let Some(arrive) = arrive {
+        arrive()?;
+    }
+    Ok(first)
+}
+
 /// Waits until a window that `ours` accepts by its address opens on
 /// `workspace` (Hyprland's `openwindow` event: address, workspace, class,
 /// title) and returns its address, or `None` once `timeout` passes.

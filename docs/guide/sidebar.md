@@ -18,6 +18,12 @@ Up and Down (or `Ctrl+N` and `Ctrl+P`) move through the spaces and their windows
 
 The windows of `home` are searched too. Those on a special workspace, a scratchpad, aren't, as they belong to no space. With nothing typed the list is as ever, without windows.
 
+## What a new space opens
+
+With the sidebar expanded, the gear beside its toggle opens a small panel of ticks for what a new space opens: None, Terminal, Files, and each of Omarchy's agents that is installed, with its name and icon. Tick as many as you like and they open side by side, in that order, on the new space's first tab. Ticking None clears the others, and ticking anything clears None. Each change is saved to `~/.config/omarchy-spaces/config.toml` as you make it (`space config set`), leaving the rest of the file as it is, and the panel shows what the file says each time it opens. Up and Down move, Space or Enter ticks, Escape or a click outside closes it. `omarchy-shell shell call com.t4t5.spaces settings ''` opens it, or closes it if it's open.
+
+See [What a new space opens](configuration.md#what-a-new-space-opens).
+
 ## Icons
 
 Right-click a space to give its badge an icon in place of its letters: a Nerd Font glyph, an emoji, or a custom image file (`png`, `svg`, `jpg`, `webp`, `ico`). Tab switches between glyphs and emoji, type to search both at once, or click **Choose image from Files…** (or press `Ctrl+O`) to pick a logo from Files. The badge shows the icon under the cursor until you pick one.
@@ -27,10 +33,10 @@ Right-click a space to give its badge an icon in place of its letters: a Nerd Fo
 With the tabs first in the left section of a bar along the top or bottom of the screen, the sidebar's header is on the bar, over the rail:
 
 - The Omarchy logo expands or collapses the sidebar.
-- When the sidebar is expanded, its title shows beside the logo, with a toggle at its right edge.
+- When the sidebar is expanded, its title shows beside the logo, with the settings gear and a toggle at its right edge.
 - A right-click on the logo opens the Omarchy menu.
 
-Anywhere else, the sidebar has its header, with the toggle, at its own top.
+Anywhere else, the sidebar has its header, with the gear and the toggle, at its own top.
 
 ## Keeping Omarchy's menu on the bar
 

@@ -288,7 +288,7 @@ Item {
       Item {
         readonly property real start: (root.slot - root.badgeSize) / 2
         x: start
-        width: Math.max(0, toggle.x - start)
+        width: Math.max(0, gear.x - start)
         height: parent.height
         clip: true
 
@@ -305,6 +305,34 @@ Item {
           font.family: root.fontFamily
           font.pixelSize: Style.font.subtitle
           elide: Text.ElideRight
+        }
+      }
+
+      // The gear, for what a new space opens.
+      Item {
+        id: gear
+        x: toggle.x - root.slot
+        width: root.slot
+        height: parent.height
+        opacity: root.textShown
+        visible: x >= 0 && root.textShown > 0
+
+        ControlBox {
+          lit: gearMouse.containsMouse
+        }
+
+        SlotIcon {
+          // The gear (nf-cod-gear).
+          text: "\u{eaf8}"
+          lit: gearMouse.containsMouse
+        }
+
+        MouseArea {
+          id: gearMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.sidebar.openSettings(root.screen)
         }
       }
 

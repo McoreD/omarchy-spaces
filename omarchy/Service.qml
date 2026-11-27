@@ -73,6 +73,10 @@ Item {
   function renameSpace() { controllerItem.renameSpace() }
   function renameTab() { controllerItem.renameTab("") }
   function sendTab() { controllerItem.sendTab() }
+  function settings() {
+    if (controllerItem.settingsOpen) controllerItem.closeSettings()
+    else controllerItem.openSettings(null)
+  }
   function sendWindow(mode) { controllerItem.sendWindow(mode === "silent") }
 
   // What the sidebar and the bars show, for `just stress` to check.
@@ -99,6 +103,11 @@ Item {
 
   MovePicker {
     controller: controllerItem
+  }
+
+  NewSpacePanel {
+    controller: controllerItem
+    sidebar: sidebarItem
   }
 
   IconPicker {

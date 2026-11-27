@@ -254,6 +254,10 @@ BarWidget {
         hover: root.hover
         screenName: root.screenName
         onToggleRequested: root.toggleSidebar()
+        onSettingsRequested: {
+          var window = root.QsWindow.window
+          if (root.sidebar) root.sidebar.openSettings(window ? window.screen : null)
+        }
         onMenuRequested: root.run(["omarchy-shell", "shell", "toggle", "omarchy.menu", "{\"menu\":\"root\"}"])
       }
     }

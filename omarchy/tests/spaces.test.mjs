@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { cursorIndex, EMPTY, fileUrl, filterIcons, gridMove, isGlyph, isImageIcon, isVersionError, needsUpdate, parseEmojis, parseGlyphs, parseManifestVersion, badgeColor, parseBarEntry, pluginSettings, sidebarSlot, widgetWidths, tabsSlot, expandPath, customModuleUrl, headerOnBar, numeralFor, publicSpace, publicSpaceRow, publicTab, publicTerminal, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, searchRows, sameRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs, tabCells, tabGaps, tabShifts } from "../Spaces.mjs"
+import { readCounts, parseOpen, newSpaceRows, isTicked, toggleOpen, openArg, cursorIndex, EMPTY, fileUrl, filterIcons, gridMove, isGlyph, isImageIcon, isVersionError, needsUpdate, parseEmojis, parseGlyphs, parseManifestVersion, badgeColor, parseBarEntry, pluginSettings, sidebarSlot, widgetWidths, tabsSlot, expandPath, customModuleUrl, headerOnBar, numeralFor, publicSpace, publicSpaceRow, publicTab, publicTerminal, closeTabWarning, fairCap, barLook, DEFAULT_PALETTE, monogram, themePalette, ease, filterRows, searchRows, sameRows, gapLeft, findTab, focusedMonitor, initialIndex, monitorNamed, nameInput, ordered, orderSettled, parseState, recessAlpha, renameCommand, rowActions, score, stepAction, statusColors, tabActions, windowMotion, startsDrag, dropIndex, dragShift, moveRow, tabDragOffset, tabDropIndex, reorderTabs, sameTabs, tabCells, tabGaps, tabShifts } from "../Spaces.mjs"
 
 // A line of `space watch`, with a tab on each of two monitors.
 const line = (spaces, more) => JSON.stringify({ version: 2, space: "0.1.0", focused: "eDP-1", monitors: [
@@ -662,4 +662,58 @@ test("drags spaces, never home, only past the threshold", () => {
   assert.deepEqual([0, 1, 2].map((i) => dragShift(i, -1, 1, 30)), [0, 0, 0], "no drag")
   assert.deepEqual(moveRow(["h", "a", "b", "c"], 1, 3), ["h", "b", "c", "a"])
   assert.deepEqual(moveRow(["h", "a", "b", "c"], 3, 1), ["h", "c", "a", "b"])
+})
+
+test("reads what a new space opens", () => {
+  assert.deepEqual(parseOpen('["files","claude"]'), ["files", "claude"])
+  assert.deepEqual(parseOpen("[]"), [])
+  assert.deepEqual(parseOpen('["files", 3]'), ["files"])
+  assert.deepEqual(parseOpen("not json"), [])
+  assert.deepEqual(parseOpen('{"a":1}'), [])
+  assert.deepEqual(parseOpen(""), [])
+})
+
+test("the settings panel lists None, Terminal, Files and the installed agents", () => {
+  const agents = JSON.stringify([
+    { id: "claude", name: "Claude Code", icon: "omarchy-agent-claude", installed: true },
+    { id: "grok", name: "Grok", icon: "omarchy-agent-grok", installed: false },
+    { id: "pi", name: "Pi", icon: "", installed: true },
+  ])
+  assert.deepEqual(newSpaceRows(agents).map((row) => row.id), ["none", "terminal", "files", "claude", "pi"])
+  assert.equal(newSpaceRows(agents)[3].name, "Claude Code")
+  assert.equal(newSpaceRows(agents)[3].icon, "omarchy-agent-claude")
+  assert.deepEqual(newSpaceRows("oops").map((row) => row.id), ["none", "terminal", "files"])
+  assert.deepEqual(newSpaceRows("").map((row) => row.id), ["none", "terminal", "files"])
+})
+
+test("ticking None clears the rest, ticking anything clears None", () => {
+  const rows = newSpaceRows(JSON.stringify([{ id: "claude", name: "Claude Code", installed: true }]))
+  // The setting and its ticks agree.
+  assert.deepEqual(rows.filter((row) => isTicked(["files"], row.id)).map((row) => row.id), ["files"])
+  assert.deepEqual(rows.filter((row) => isTicked([], row.id)).map((row) => row.id), ["none"])
+  assert.equal(isTicked(["terminal"], "none"), false)
+
+  assert.deepEqual(toggleOpen(["terminal", "claude"], "none", rows), [])
+  assert.deepEqual(toggleOpen([], "files", rows), ["files"], "None is cleared")
+  assert.deepEqual(toggleOpen(["terminal"], "files", rows), ["terminal", "files"])
+  assert.deepEqual(toggleOpen(["claude"], "terminal", rows), ["terminal", "claude"], "in the rows' order")
+  assert.deepEqual(toggleOpen(["terminal", "files"], "files", rows), ["terminal"])
+  assert.deepEqual(toggleOpen(["terminal"], "terminal", rows), [], "unticking the last is None")
+  assert.deepEqual(toggleOpen(["gone", "terminal"], "files", rows), ["terminal", "files"], "no row, so not saved")
+  assert.deepEqual(toggleOpen(["gone"], "gone", rows), [])
+  assert.deepEqual(toggleOpen(["terminal"], "none", rows), [])
+  // None ticked twice is still None.
+  assert.deepEqual(toggleOpen([], "none", rows), [])
+})
+
+test("a read of the setting counts only if nothing was ticked meanwhile", () => {
+  assert.equal(readCounts(2, 2, false), true)
+  assert.equal(readCounts(1, 2, false), false, "ticked since it started")
+  assert.equal(readCounts(2, 2, true), false, "being written")
+})
+
+test("the setting as space config set takes it", () => {
+  assert.equal(openArg([]), "none")
+  assert.equal(openArg(["files", "claude"]), "files,claude")
+  assert.equal(openArg(["terminal"]), "terminal")
 })

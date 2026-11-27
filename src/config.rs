@@ -23,8 +23,31 @@ pub struct Config {
     pub restore: Restore,
     /// The sounds when an agent needs you (`sound.rs`).
     pub sounds: Sounds,
+    /// What a new space opens (`newspace.rs`).
+    pub new_space: NewSpace,
     #[serde(flatten)]
     unknown: Unknown,
+}
+
+/// `[new_space]`: what `space new` opens, all on the new space's first tab.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct NewSpace {
+    /// `terminal`, `files`, or an Omarchy agent's id, side by side in this
+    /// order; none for an empty space. Whether each is one Spaces knows is
+    /// for `newspace.rs` to say, when the space opens.
+    pub open: Vec<String>,
+    #[serde(flatten)]
+    unknown: Unknown,
+}
+
+impl Default for NewSpace {
+    fn default() -> Self {
+        Self {
+            open: vec!["terminal".into()],
+            unknown: Unknown::new(),
+        }
+    }
 }
 
 /// `[restore]`: whether the plugin restores on start, and what comes back.
@@ -106,6 +129,7 @@ impl Config {
             ("", &self.unknown),
             ("restore.", &self.restore.unknown),
             ("sounds.", &self.sounds.unknown),
+            ("new_space.", &self.new_space.unknown),
         ]
         .into_iter()
         .flat_map(|(table, unknown)| unknown.keys().map(move |key| format!("{table}{key}")))
@@ -152,6 +176,20 @@ mod tests {
         assert!(sounds.enabled);
         assert_eq!(sounds.done.as_deref(), Some("~/ding.oga"));
         assert_eq!(sounds.waiting, None);
+    }
+
+    #[test]
+    fn reads_what_a_new_space_opens() {
+        assert_eq!(read("").unwrap().new_space.open, ["terminal"]);
+        let open = |text: &str| read(text).unwrap().new_space.open;
+        assert_eq!(
+            open("[new_space]\nopen = [\"files\", \"claude\"]\n"),
+            ["files", "claude"]
+        );
+        assert!(open("[new_space]\nopen = []\n").is_empty(), "none");
+        assert!(read("[new_space]\nopen = \"files\"\n").is_err());
+        let config = read("[new_space]\nopen = [\"files\"]\nshape = 1\n").unwrap();
+        assert_eq!(config.unknown(), ["new_space.shape"]);
     }
 
     #[test]

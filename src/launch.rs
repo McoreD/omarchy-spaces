@@ -31,6 +31,22 @@ pub fn resuming_terminal() -> String {
     terminal_running(Some(&space_shell()))
 }
 
+/// The command that opens Omarchy's file manager (`omarchy-launch-files`) in
+/// `$SPACES_DIR`, run as Omarchy runs it. Unlike `omarchy-launch-files-cwd`,
+/// which asks the focused terminal, it goes where we say.
+pub fn files() -> String {
+    format!("{} folio \"$SPACES_DIR\"", app_launcher())
+}
+
+/// The command that opens one of Omarchy's agents in a terminal of ours, in
+/// `$SPACES_DIR`. `omarchy-agent --inline` runs the agent where it is, in
+/// this terminal, as Omarchy's own launch does in a terminal of its own, so
+/// the agent is the terminal's program and Spaces sees it as it does any
+/// agent's. Omarchy adds the agent's "don't stop to ask" flag itself.
+pub fn agent(id: &str) -> String {
+    terminal_running(Some(&format!("omarchy-agent --inline --agent {id}")))
+}
+
 fn terminal_running(program: Option<&str>) -> String {
     let ghostty = prefers_ghostty(&paths::config_dir()) && on_path("ghostty");
     omarchy_terminal(ghostty, program)
@@ -94,6 +110,17 @@ pub fn on_path(program: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opens_files_and_agents_in_the_folder() {
+        assert!(files().ends_with(r#"folio "$SPACES_DIR""#), "{}", files());
+        let agent = agent("claude");
+        assert!(
+            agent.ends_with(r#" --dir="$SPACES_DIR" omarchy-agent --inline --agent claude"#)
+                || agent.ends_with(" -e omarchy-agent --inline --agent claude"),
+            "{agent}"
+        );
+    }
 
     #[test]
     fn opens_ghostty_a_process_a_window() {

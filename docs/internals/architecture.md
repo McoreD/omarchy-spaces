@@ -44,6 +44,12 @@ It holds:
 
 A tab is found by its name, as the bar shows it, never by a `name:` selector made from it. Hyprland (0.57) gives a workspace the name it was made with as its address, which `name:` matches, and a rename (`space renumber`) changes the name only, so after one `name:s1:1` can mean another tab, or none. `src/hypr.rs`'s `selector_for` and the Lua part's `target` look the name up and aim at the workspace that has it. A new tab never takes a number that is a renamed tab's address, for the same reason: `space renumber` numbers it as the next tab.
 
+## An empty space
+
+A space is the workspaces and windows Hyprland has with its name (`src/live.rs`), so one with no window exists only while Hyprland keeps a workspace of it: that of a monitor that shows it. `space new` with nothing to open (`src/newspace.rs`) just goes to the new space's first tab, which Hyprland makes as you arrive, and drops the workspace when you leave it empty. Nothing else keeps it or ends it: its folder is in `spaces.json` from the start, which names it, and `space watch` prunes the entry once the workspace is gone, as for any space that ends. `space emptied` only runs as a window closes, and `space renumber` only closes gaps between a space's tabs, so neither touches it while you are on it. `switch` forgets where you left a space that ended so.
+
+What a new space opens is read from the config as it opens (`[new_space]`), and Omarchy's agents from `omarchy-default-agent`'s own list (`src/newspace.rs`); `space config` edits the one key with `toml_edit`, so the rest of the file stays as it was.
+
 ## State
 
 `~/.local/state/omarchy-spaces/spaces.json` holds what Hyprland can't about each live space: the name, icon and metadata you gave it, the terminal it follows and that terminal's last folder. The saved sessions are beside it (see [Restoring your spaces](../guide/restore.md#whats-saved)); `space watch` saves them as they change, and after a restart the plugin runs `space restore`.

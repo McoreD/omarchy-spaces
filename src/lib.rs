@@ -17,6 +17,7 @@ pub mod list;
 pub mod live;
 pub mod monitors;
 pub mod name;
+pub mod newspace;
 pub mod paths;
 pub mod reserve;
 pub mod restore;

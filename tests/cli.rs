@@ -82,6 +82,22 @@ const STUBS: &[(&str, &str)] = &[
          echo \"$SPACES_RUN\" >> \"$HOME/runs\"\n\
          echo \"$SPACE_ID\" >> \"$HOME/space_ids\"",
     ),
+    // Omarchy's file manager, as `omarchy-launch-files` runs it.
+    (
+        "folio",
+        "pwd >> \"$HOME/files-launched\"\necho \"$1\" >> \"$HOME/files-dirs\"",
+    ),
+    // Omarchy's list of agents, which Spaces reads. `spacesagent` is installed,
+    // `ghostagent` isn't: no real agent's presence on this desktop counts.
+    (
+        "omarchy-default-agent",
+        "# omarchy:args=[local|spacesagent|ghostagent]\n\
+         case \"$1\" in\n\
+         spacesagent) agent=\"spacesagent\"; name=\"Space Agent\" ;;\n\
+         ghostagent) agent=\"ghostagent\"; name=\"Ghost Agent\" ;;\n\
+         esac",
+    ),
+    ("spacesagent", "true"),
     ("ghostty", "pwd >> \"$HOME/launched-for-real\""),
     ("kitty", "pwd >> \"$HOME/launched-for-real\""),
     ("chromium", "pwd >> \"$HOME/launched-for-real\""),
@@ -4607,4 +4623,302 @@ fn a_windows_tab_number_is_the_one_the_bar_shows() {
     // In `home`, a number a tab shares with an earlier one shows as none.
     assert_eq!(slot("home", &three), 3);
     assert_eq!(slot("home", &thirteen), Value::Null);
+}
+
+/// What the terminal stub was told to run, one line per terminal.
+fn ran(env: &Env) -> Vec<String> {
+    let text = fs::read_to_string(env.home().join("ran")).unwrap_or_default();
+    text.lines().map(str::to_string).collect()
+}
+
+#[test]
+fn new_opens_files_and_a_terminal_side_by_side_on_tab_one() {
+    let env = Env::new();
+    let dir = env.dir("Projects/ren");
+    let out = env.ok(&["new", dir.to_str().unwrap(), "--open", "files,terminal"]);
+    assert_eq!(out, "Opened a space in ~/Projects/ren\n");
+    assert_eq!(env.active(), "s1:1");
+    assert_eq!(env.windows(), ["s1:1", "s1:1"]);
+
+    // Files first, in the folder, then the terminal: each placed on tab 1 by
+    // its exec rule, and you went there once the first was up.
+    let dispatched = env.dispatched();
+    assert!(dispatched[0].contains("folio"), "{dispatched:?}");
+    assert!(
+        dispatched[0].ends_with(r#"{ workspace = "name:s1:1 silent", no_anim = true })"#),
+        "{dispatched:?}"
+    );
+    assert_eq!(
+        dispatched[1],
+        r#"hl.dsp.focus({ workspace = "name:s1:1" })"#
+    );
+    let second = dispatched
+        .iter()
+        .position(|d| d.starts_with("hl.dsp.exec_cmd(") && d.contains("xdg-terminal-exec"))
+        .unwrap();
+    assert!(second > 1, "{dispatched:?}");
+    assert!(
+        dispatched[second].ends_with(r#"{ workspace = "name:s1:1 silent", no_anim = true })"#),
+        "{dispatched:?}"
+    );
+    let dirs = fs::read_to_string(env.home().join("files-dirs")).unwrap();
+    assert_eq!(dirs.trim(), dir.display().to_string());
+    assert_eq!(env.launched(1), [dir.display().to_string()]);
+
+    // Named after its folder, as ever.
+    assert_eq!(env.ls_json()[1]["label"], "ren");
+}
+
+#[test]
+fn new_with_only_files_is_still_named_after_its_folder() {
+    let env = Env::new();
+    let dir = env.dir("Projects/notes");
+    env.ok(&["new", dir.to_str().unwrap(), "--open", "files"]);
+    assert_eq!(env.windows(), ["s1:1"]);
+    assert!(!env.home().join("launched").exists(), "no terminal");
+    let rows = env.ls_json();
+    assert_eq!(rows[1]["label"], "notes");
+    assert_eq!(rows[1]["folder"], dir.display().to_string());
+}
+
+#[test]
+fn new_opens_an_agent_inline_in_a_terminal_of_ours() {
+    let env = Env::new();
+    let dir = env.dir("Projects/ren");
+    env.ok(&["new", dir.to_str().unwrap(), "--open", "spacesagent"]);
+    assert_eq!(env.windows(), ["s1:1"]);
+    assert_eq!(env.launched(1), [dir.display().to_string()]);
+    assert_eq!(ran(&env), ["omarchy-agent --inline --agent spacesagent"]);
+    let space_ids = fs::read_to_string(env.home().join("space_ids")).unwrap();
+    assert_eq!(space_ids.trim(), "s1");
+}
+
+#[test]
+fn the_config_says_what_opens_and_open_overrides_it() {
+    let env = Env::new();
+    let dir = env.dir("Projects/ren");
+    let arg = dir.to_str().unwrap();
+    env.write_config("[new_space]\nopen = [\"files\", \"nosuch\", \"ghostagent\"]\n");
+    let out = env.run(&["new", arg]);
+    assert!(out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("no 'nosuch' to open in new_space.open"),
+        "{err}"
+    );
+    assert!(
+        err.contains("'ghostagent' in new_space.open isn't installed"),
+        "{err}"
+    );
+    assert_eq!(env.windows(), ["s1:1"], "only Files");
+    assert!(!env.home().join("launched").exists());
+
+    // For one space, `--open` takes the config's place; a mistake in it opens
+    // nothing at all.
+    env.ok(&["new", arg, "--open", "terminal,spacesagent"]);
+    assert_eq!(env.windows(), ["s1:1", "s2:1", "s2:1"]);
+    let err = env.fails(&["new", arg, "--open", "files,nosuch"]);
+    assert!(err.contains("no 'nosuch' to open in --open"), "{err}");
+    let err = env.fails(&["new", arg, "--open", "none,files"]);
+    assert!(err.contains("'none' can't go with"), "{err}");
+    assert_eq!(env.windows().len(), 3);
+}
+
+#[test]
+fn a_command_to_run_gets_a_terminal_whatever_opens() {
+    let env = Env::new();
+    let dir = env.dir("Projects/ren");
+    let arg = dir.to_str().unwrap();
+    env.ok(&["new", arg, "--open", "files", "--", "make", "test"]);
+    assert_eq!(env.windows(), ["s1:1", "s1:1"]);
+    let runs = fs::read_to_string(env.home().join("runs")).unwrap();
+    assert_eq!(runs.trim(), r#"["make","test"]"#);
+    let dirs = fs::read_to_string(env.home().join("files-dirs")).unwrap();
+    assert_eq!(dirs.lines().count(), 1);
+}
+
+#[test]
+fn an_empty_space_lasts_while_you_are_on_it_and_ends_when_you_leave() {
+    let env = Env::new();
+    let dir = env.dir("Projects/ren");
+    let arg = dir.to_str().unwrap();
+    env.add_terminal("s19:1", &env.dir("Projects/other"));
+    env.set_active("s19:1");
+
+    env.ok(&["new", arg, "--open", "none"]);
+    assert_eq!(env.active(), "s1:1");
+    assert!(env.windows().iter().all(|w| w != "s1:1"), "nothing opened");
+    let launched = env.dispatched();
+    assert!(
+        launched.iter().all(|d| !d.starts_with("hl.dsp.exec_cmd(")),
+        "{launched:?}"
+    );
+
+    // It is a space, named after its folder, with no windows.
+    let rows = env.ls_json();
+    let ids: Vec<&Value> = rows.iter().map(|r| &r["id"]).collect();
+    assert_eq!(ids, ["home", "s1", "s19"]);
+    assert_eq!(rows[1]["label"], "ren");
+    assert_eq!(rows[1]["active"], true);
+    assert_eq!(rows[1]["windows"], 0);
+
+    // What Hyprland runs as workspaces come and go doesn't end it, nor does
+    // opening something in it, in its folder.
+    env.ok(&["renumber"]);
+    assert_eq!(env.ls_json().len(), 3);
+    assert_eq!(env.active(), "s1:1");
+    env.ok(&["terminal"]);
+    assert_eq!(env.launched(1), [dir.display().to_string()]);
+
+    // Leaving it empty ends it.
+    env.ok(&["go", "s19"]);
+    assert_eq!(env.active(), "s19:1");
+    let rows = env.ls_json();
+    let ids: Vec<&Value> = rows.iter().map(|r| &r["id"]).collect();
+    assert_eq!(ids, ["home", "s19"]);
+    let last = fs::read_to_string(env.state().join("last")).unwrap_or_default();
+    assert!(!last.contains("s1\t") && !last.contains("\"s1\""), "{last}");
+}
+
+#[test]
+fn an_empty_space_wants_you_there() {
+    let env = Env::new();
+    let err = env.fails(&["new", "--open", "", "--silent"]);
+    assert!(err.contains("leave out --silent"), "{err}");
+    assert_eq!(env.ls_json().len(), 1);
+
+    env.write_config("[new_space]\nopen = []\n");
+    env.ok(&["new"]);
+    assert_eq!(env.active(), "s1:1");
+    assert!(env.windows().is_empty());
+    assert_eq!(env.ls_json().len(), 2);
+}
+
+#[test]
+fn config_reads_and_sets_what_a_new_space_opens() {
+    let env = Env::new();
+    assert_eq!(env.ok(&["config", "get", "new_space.open"]), "terminal\n");
+    let before = "# my settings\n[sounds]\nenabled = true # loud\n\n[new_space]\n# what opens\nopen = [\"terminal\"]  # default\n";
+    env.write_config(before);
+    env.ok(&["config", "set", "new_space.open", "files,SpacesAgent"]);
+    let text = fs::read_to_string(env.home().join(".config/omarchy-spaces/config.toml")).unwrap();
+    assert_eq!(
+        text,
+        before.replace(r#"["terminal"]"#, r#"["files", "spacesagent"]"#)
+    );
+    assert_eq!(
+        env.ok(&["config", "get", "new_space.open"]),
+        "files,spacesagent\n"
+    );
+    assert_eq!(
+        env.ok(&["config", "get", "new_space.open", "--json"]),
+        "[\"files\",\"spacesagent\"]\n"
+    );
+    env.ok(&["config", "set", "new_space.open", "none"]);
+    assert_eq!(env.ok(&["config", "get", "new_space.open"]), "none\n");
+    assert!(
+        fs::read_to_string(env.home().join(".config/omarchy-spaces/config.toml"))
+            .unwrap()
+            .contains("open = []  # default")
+    );
+
+    // Mistakes change nothing.
+    let err = env.fails(&["config", "set", "new_space.open", "files,nosuch"]);
+    assert!(err.contains("no 'nosuch' to open"), "{err}");
+    let err = env.fails(&["config", "set", "restore.auto", "false"]);
+    assert!(err.contains("no setting 'restore.auto'"), "{err}");
+    assert_eq!(env.ok(&["config", "get", "new_space.open"]), "none\n");
+
+    // With no config at all, it makes one.
+    let fresh = Env::new();
+    fresh.ok(&["config", "set", "new_space.open", "files"]);
+    let text = fs::read_to_string(fresh.home().join(".config/omarchy-spaces/config.toml")).unwrap();
+    assert_eq!(text, "[new_space]\nopen = [\"files\"]\n");
+}
+
+#[test]
+fn config_lists_omarchys_agents_and_whether_each_is_installed() {
+    let env = Env::new();
+    let agents: Value = serde_json::from_str(&env.ok(&["config", "agents"])).unwrap();
+    assert_eq!(
+        agents,
+        json!([
+            { "id": "spacesagent", "name": "Space Agent", "icon": "omarchy-agent-spacesagent", "installed": true },
+            { "id": "ghostagent", "name": "Ghost Agent", "icon": "omarchy-agent-ghostagent", "installed": false },
+        ])
+    );
+}
+
+#[test]
+fn the_setting_is_for_spaces_you_open_yourself_not_scripts() {
+    let env = Env::new();
+    let dir = env.dir("Projects/ren");
+    let arg = dir.to_str().unwrap();
+    env.write_config("[new_space]\nopen = [\"files\", \"terminal\"]\n");
+
+    // A script's `--silent`, or a command to run, gets just a terminal.
+    env.ok(&["new", arg, "--silent"]);
+    env.ok(&["new", arg, "--silent", "--", "true"]);
+    env.ok(&["new", arg, "--", "true"]);
+    assert!(!env.home().join("files-dirs").exists(), "no Files");
+    assert_eq!(env.windows().len(), 3);
+
+    // `--open` is always heard, and an interactive one follows the setting.
+    env.ok(&["new", arg, "--silent", "--open", "files"]);
+    assert!(env.home().join("files-dirs").exists());
+    env.ok(&["new", arg]);
+    let dirs = fs::read_to_string(env.home().join("files-dirs")).unwrap();
+    assert_eq!(dirs.lines().count(), 2);
+
+    // With nothing set, a script still opens a terminal.
+    env.write_config("[new_space]\nopen = []\n");
+    env.ok(&["new", arg, "--silent"]);
+    assert_eq!(env.windows().last().unwrap(), "s6:1");
+}
+
+#[test]
+fn a_setting_none_of_whose_items_open_gives_a_terminal_but_empty_stays_empty() {
+    let env = Env::new();
+    let dir = env.dir("Projects/ren");
+    let arg = dir.to_str().unwrap();
+    env.write_config("[new_space]\nopen = [\"claud\", \"ghostagent\"]\n");
+    let out = env.run(&["new", arg]);
+    assert!(out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("no 'claud' to open"), "{err}");
+    assert_eq!(env.windows(), ["s1:1"], "a terminal");
+    assert_eq!(env.launched(1), [dir.display().to_string()]);
+
+    env.write_config("[new_space]\nopen = []\n");
+    env.ok(&["new", arg]);
+    assert_eq!(env.windows(), ["s1:1"], "nothing more");
+    assert_eq!(env.active(), "s2:1");
+}
+
+#[test]
+fn config_set_writes_through_a_symlink_and_keeps_its_mode() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let env = Env::new();
+    let real = env.home().join("dotfiles/config.toml");
+    fs::create_dir_all(real.parent().unwrap()).unwrap();
+    fs::write(&real, "# mine\n").unwrap();
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o600)).unwrap();
+    let dir = env.home().join(".config/omarchy-spaces");
+    fs::create_dir_all(&dir).unwrap();
+    symlink(&real, dir.join("config.toml")).unwrap();
+
+    env.ok(&["config", "set", "new_space.open", "files"]);
+    assert!(
+        fs::symlink_metadata(dir.join("config.toml"))
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_to_string(&real).unwrap(),
+        "[new_space]\nopen = [\"files\"]\n# mine\n"
+    );
+    assert_eq!(
+        fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
 }

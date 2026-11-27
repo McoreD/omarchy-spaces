@@ -4,9 +4,11 @@ A **space** holds one piece of work. Each space has its own **tabs**, and each t
 
 ## Spaces
 
-**Opening.** Click `+` at the end of the list. The space opens with a terminal in the folder you're in, or in your home folder if you aren't in one. You go there once the terminal is up, so you never see the space empty.
+**Opening.** Click `+` at the end of the list. The space opens in the folder you're in, or in your home folder if you aren't in one, with what you've chosen a new space opens: a terminal, by default, or Files, any of Omarchy's agents, or several, side by side on its first tab, in that order ([choose them](sidebar.md#what-a-new-space-opens), or in the [config](configuration.md#what-a-new-space-opens)). You go there once the first is up, so you never see the space empty. Scripts that open a space with `space new --silent` or `-- <cmd>` get a terminal, unless they pass `--open`.
 
-**Naming.** A space is called after the folder its first terminal is in: the repository's folder when it's in one, `~` for your home folder. The name follows that terminal as it changes folder. Rename the space when you want a name that stays; an empty name has it called after its folder again.
+**Opening nothing.** With nothing chosen, the space opens empty and you go there. It's like a browser's new tab: it stays while you're on it, and you can open things in it (`space terminal`, a new tab, a window sent there), in its folder. If you leave it while it's still empty, it ends and leaves the sidebar. Once it has a window, it's a space like any other.
+
+**Naming.** A space is called after the folder its first terminal is in: the repository's folder when it's in one, `~` for your home folder. The name follows that terminal as it changes folder. One opened without a terminal is called after the folder it was opened in. Rename the space when you want a name that stays; an empty name has it called after its folder again.
 
 **Moving.** Drag a space up or down the sidebar. `home` stays first.
 

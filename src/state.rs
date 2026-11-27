@@ -17,7 +17,10 @@ use crate::name;
 /// Replaces a file in one step, so a reader never sees half of it. Writing
 /// back what was read takes a lock too (`lock`), so two `space` processes
 /// racing on a keypress don't undo each other's change.
+/// A symlink is written through to its target, and the file keeps its mode.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<()> {
+    let target = fs::canonicalize(path).ok();
+    let path = target.as_deref().unwrap_or(path);
     let dir = path.parent().expect("state files live in a directory");
     fs::create_dir_all(dir).with_context(|| format!("can't create {}", dir.display()))?;
     let tmp = dir.join(format!(
@@ -26,6 +29,9 @@ pub fn write_atomic(path: &Path, contents: &str) -> Result<()> {
         std::process::id()
     ));
     fs::write(&tmp, contents).with_context(|| format!("can't write {}", tmp.display()))?;
+    if let Ok(meta) = fs::metadata(path) {
+        let _ = fs::set_permissions(&tmp, meta.permissions());
+    }
     fs::rename(&tmp, path).with_context(|| format!("can't write {}", path.display()))
 }
 
@@ -263,6 +269,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let last = Last::load(&dir.path().join("nowhere")).unwrap();
         assert_eq!(last.get("ren"), None);
+    }
+
+    #[test]
+    fn write_atomic_writes_through_a_symlink_and_keeps_the_mode() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("dotfiles/config.toml");
+        fs::create_dir_all(real.parent().unwrap()).unwrap();
+        fs::write(&real, "old").unwrap();
+        fs::set_permissions(&real, fs::Permissions::from_mode(0o600)).unwrap();
+        let link = dir.path().join("config.toml");
+        symlink(&real, &link).unwrap();
+
+        write_atomic(&link, "new").unwrap();
+        assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert_eq!(fs::read_to_string(&real).unwrap(), "new");
+        let mode = fs::metadata(&real).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]

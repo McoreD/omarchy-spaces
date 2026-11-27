@@ -5,7 +5,7 @@ Everything you can do with the `space` command. `space help` lists the commands 
 ## Spaces
 
 ```sh
-space new [dir]              # open a space with a terminal, in the folder you are in or dir
+space new [dir]              # open a space in the folder you are in or dir, with what [new_space] says to open
 space go <space>             # go to a space where you left it
 space next                   # the space below the active one, wrapping around
 space prev                   # the space above it
@@ -19,6 +19,10 @@ space current                # the space a command run here acts on
 A space left out is the one the command is run from (see [Where a command acts](#where-a-command-acts)).
 
 `space new` takes `--name <name>` to name the space right away, `--silent` to open it without going there, `--json` to print its id, and `-- <cmd...>` to run a command in its terminal (returning to your shell when it exits).
+
+The config's [`[new_space] open`](configuration.md#what-a-new-space-opens) is for a space opened without `--silent` and without `-- <cmd...>`, as the sidebar's `+` and a key do. With either, so in a script, only a terminal opens, unless `--open` says otherwise.
+
+`--open <what>` says what to open for this space, in place of that setting: any of `terminal`, `files` and an Omarchy agent's id, comma-separated, as `--open files,claude`, side by side on its first tab. `--open none`, or `--open ""`, opens an empty space, which you go to and which ends if you leave it empty. A mistake in `--open` (a word it doesn't know, an agent that isn't installed) opens nothing and says so. `-- <cmd...>` runs in the terminal, so a terminal opens for it, first, if `--open` has none. An empty space can't be opened with `--silent`, as it only lasts while you're on it.
 
 ## Tabs
 
@@ -57,6 +61,17 @@ space meta rm <key>           # remove a key
 ```
 
 Each takes `-s <space>` for a space other than the one it's run from.
+
+## Settings
+
+```sh
+space config get new_space.open          # what a new space opens: terminal,files; none for nothing
+space config get new_space.open --json   # as a list
+space config set new_space.open files,claude   # or none; the rest of config.toml stays as it is
+space config agents                      # Omarchy's agents, as JSON, with whether each is installed
+```
+
+`new_space.open` is the only setting `config` changes. `set` refuses a word that isn't `terminal`, `files` or one of Omarchy's agents, and makes `config.toml` if there isn't one. It is what the [sidebar's settings panel](sidebar.md#what-a-new-space-opens) runs.
 
 ## The rest
 

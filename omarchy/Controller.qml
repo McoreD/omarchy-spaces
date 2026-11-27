@@ -81,6 +81,27 @@ Item {
   property string pickingFileFor: ""
   readonly property string pickIconScript: String(Qt.resolvedUrl("pick-icon.py")).replace(/^file:\/\//, "")
 
+  // The settings panel (NewSpacePanel.qml): whether it is open, where, what a
+  // new space opens now, as `space config` has it (ids, none being []), and
+  // the rows to tick (Spaces.newSpaceRows). The file is the setting's: it is
+  // read as the panel opens, and what you tick is written with `space config
+  // set`, shown at once meanwhile.
+  property bool settingsOpen: false
+  property var settingsScreen: null
+  property var newSpaceOpen: []
+  property var newSpaceRows: Spaces.newSpaceRows("")
+  property string newSpaceArg: ""
+  property bool writingOpen: false
+  property bool writeAgain: false
+  // How many ticks there have been, and how many there were when the read
+  // that is running started: one begun before a tick is stale
+  // (Spaces.readCounts). Another read once it ends, if one was wanted meanwhile.
+  property int ticks: 0
+  property int readAt: 0
+  property bool readAgain: false
+  // Why the last write failed, for the panel.
+  property string settingsError: ""
+
   readonly property string home: Quickshell.env("HOME") || ""
   // The colours spaces' badges take, from the theme's colors.toml.
   property var palette: Spaces.DEFAULT_PALETTE
@@ -121,6 +142,7 @@ Item {
   }
 
   function placeMenu(x, y, screen) {
+    root.closeSettings()
     root.closeMenu()
     root.endNaming(false)
     root.closeIconPicker()
@@ -128,6 +150,94 @@ Item {
     root.menuX = x
     root.menuY = y
     root.menuScreen = screen || (root.sidebar ? root.sidebar.screen : null) || root.focusedScreen()
+  }
+
+  // Opens the settings panel on `screen`, beside the sidebar.
+  function openSettings(screen) {
+    root.closeMenu()
+    root.endNaming(false)
+    root.closeIconPicker()
+    if (root.sidebar) root.sidebar.cancelSearch()
+    root.settingsScreen = screen || (root.sidebar ? root.sidebar.screen : null) || root.focusedScreen()
+    root.settingsError = ""
+    root.settingsOpen = true
+    root.readSettings()
+  }
+
+  function closeSettings() {
+    root.settingsOpen = false
+  }
+
+  function readSettings() {
+    if (openProc.running) {
+      root.readAgain = true
+    } else {
+      root.readAt = root.ticks
+      openProc.running = true
+    }
+    if (!agentsProc.running) agentsProc.running = true
+  }
+
+  // Ticks or unticks a row, writing the setting.
+  function toggleNewSpace(id) {
+    root.newSpaceOpen = Spaces.toggleOpen(root.newSpaceOpen, id, root.newSpaceRows)
+    root.ticks++
+    root.settingsError = ""
+    root.newSpaceArg = Spaces.openArg(root.newSpaceOpen)
+    if (root.writingOpen) {
+      root.writeAgain = true
+      return
+    }
+    root.writeOpen()
+  }
+
+  function writeOpen() {
+    root.writingOpen = true
+    root.writeAgain = false
+    writeProc.command = ["space", "config", "set", "new_space.open", root.newSpaceArg]
+    writeProc.running = true
+  }
+
+  Process {
+    id: openProc
+    command: ["space", "config", "get", "new_space.open", "--json"]
+    stdout: StdioCollector {
+      // Not over what you ticked since it was asked.
+      onStreamFinished: {
+        if (Spaces.readCounts(root.readAt, root.ticks, root.writingOpen || root.writeAgain))
+          root.newSpaceOpen = Spaces.parseOpen(text)
+      }
+    }
+    onExited: {
+      if (!root.readAgain) return
+      root.readAgain = false
+      root.readSettings()
+    }
+  }
+
+  Process {
+    id: agentsProc
+    command: ["space", "config", "agents"]
+    stdout: StdioCollector {
+      onStreamFinished: root.newSpaceRows = Spaces.newSpaceRows(text)
+    }
+  }
+
+  Process {
+    id: writeProc
+    stderr: StdioCollector {
+      id: writeErrors
+    }
+    onExited: function(code) {
+      root.writingOpen = false
+      if (code !== 0) {
+        var why = String(writeErrors.text || "").trim()
+        console.warn("omarchy-spaces: space config set failed: " + why)
+        root.settingsError = why || "Couldn't save the setting"
+      }
+      if (root.writeAgain) root.writeOpen()
+      else root.readSettings()
+    }
   }
 
   function closeMenu() {
