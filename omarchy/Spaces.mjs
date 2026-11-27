@@ -1035,7 +1035,7 @@ export function parseOpen(text) {
 }
 
 // The panel's rows: None, Terminal, Files, then each agent that is installed,
-// from `space config agents`. Each is { id, name, icon } (an icon theme name).
+// from `space config agents`, sorted by name. Each is { id, name, icon } (an icon theme name).
 export function newSpaceRows(agentsText) {
   let agents = []
   try {
@@ -1047,12 +1047,19 @@ export function newSpaceRows(agentsText) {
     { id: "terminal", name: "Terminal", icon: "utilities-terminal" },
     { id: "files", name: "Files", icon: "folio" },
   ]
+  const installed = []
   agents.forEach(function(agent) {
     if (agent && agent.installed === true && typeof agent.id === "string") {
-      rows.push({ id: agent.id, name: String(agent.name || agent.id), icon: String(agent.icon || "") })
+      installed.push({ id: agent.id, name: String(agent.name || agent.id), icon: String(agent.icon || "") })
     }
   })
-  return rows
+  // Alphabetical by name, whatever order Omarchy lists them in.
+  installed.sort(function(a, b) {
+    const x = a.name.toLowerCase()
+    const y = b.name.toLowerCase()
+    return x < y ? -1 : x > y ? 1 : 0
+  })
+  return rows.concat(installed)
 }
 
 // Whether a row shows ticked: None when nothing opens, else when it does.

@@ -686,6 +686,12 @@ test("the settings panel lists None, Terminal, Files and the installed agents", 
   assert.deepEqual(newSpaceRows("").map((row) => row.id), ["none", "terminal", "files"])
 })
 
+test("the agents are listed alphabetically by name, after None, Terminal and Files", () => {
+  const agent = (id, name) => ({ id, name, icon: "", installed: true })
+  const agents = JSON.stringify([agent("pi", "Pi"), agent("opencode", "OpenCode"), agent("claude", "Claude Code"), agent("agy", "Antigravity"), agent("crush", "crush"), agent("codex", "Codex")])
+  assert.deepEqual(newSpaceRows(agents).map((row) => row.name), ["None", "Terminal", "Files", "Antigravity", "Claude Code", "Codex", "crush", "OpenCode", "Pi"])
+})
+
 test("ticking None clears the rest, ticking anything clears None", () => {
   const rows = newSpaceRows(JSON.stringify([{ id: "claude", name: "Claude Code", installed: true }]))
   // The setting and its ticks agree.
