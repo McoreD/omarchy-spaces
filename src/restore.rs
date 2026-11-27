@@ -113,7 +113,6 @@ pub(crate) fn session_of(
                 id: (row.id != HOME).then(|| row.id.clone()),
                 name: row.named.then(|| row.label.clone()),
                 icon: row.icon.clone(),
-                note: row.note.clone(),
                 meta: row.meta.clone(),
                 active: row.active,
                 last,
@@ -528,7 +527,6 @@ impl Restoring {
         if !saved.home {
             entry.name = entry.name.take().or_else(|| saved.name.clone());
             entry.icon = entry.icon.take().or_else(|| saved.icon.clone());
-            entry.note = entry.note.take().or_else(|| saved.note.clone());
             entry.folder = entry.folder.take().or_else(|| saved.folder.clone());
             entry.order = self.order;
         }

@@ -11,7 +11,6 @@ space next                   # the space below the active one, wrapping around
 space prev                   # the space above it
 space rename [space] <name>  # name a space; "" for its folder's name
 space icon [space] <icon>    # a glyph, emoji, or image file for a space's badge; "" for its letters
-space note [space] <text>    # a line of text on a space; "" clears it
 space reorder <space> <n>    # move a space to position n in the sidebar, 1 being the first below home
 space close [space]          # close a space's windows
 space current                # the space a command run here acts on
@@ -19,7 +18,7 @@ space current                # the space a command run here acts on
 
 A space left out is the one the command is run from (see [Where a command acts](#where-a-command-acts)).
 
-`space new` takes `--name <name>` and `--note <text>` to give the space them right away, `--silent` to open it without going there, `--json` to print its id, and `-- <cmd...>` to run a command in its terminal (returning to your shell when it exits).
+`space new` takes `--name <name>` to name the space right away, `--silent` to open it without going there, `--json` to print its id, and `-- <cmd...>` to run a command in its terminal (returning to your shell when it exits).
 
 ## Tabs
 
@@ -86,7 +85,7 @@ A terminal that Spaces opens has `SPACE_ID` set to its space, for when there's n
 
 `space ls --json` prints `{ version, spaces }`:
 
-- A space has its `tabs`, each with its `id`, for commands, and its `slot`, the number it shows on its `monitor` (`null` for none). It has its `note` and `meta` too.
+- A space has its `tabs`, each with its `id`, for commands, and its `slot`, the number it shows on its `monitor` (`null` for none). It has its `meta` too.
 - A terminal's `tab` is its tab's id.
 - `status` is `working`, `waiting` or `null`. Only `space watch`, which follows agents, can tell that one is done, so `space events` says so but `space ls` can't.
 - `version` goes up only when a change would break a script. New fields can come without.
@@ -99,7 +98,7 @@ Pass a tab's id as it is rather than reading or making one up: what it's made of
 
 - `space.created`, `space.removed`
 - `space.focused`: you went to another space
-- `space.changed`, with what did, as `changed`: its `note` or its `status`, say
+- `space.changed`, with what did, as `changed`: its `meta` or its `status`, say
 - `tab.created`, `tab.removed`, `tab.changed`
 - `status.changed`: an agent in a terminal is working, waiting or done, or no longer
 

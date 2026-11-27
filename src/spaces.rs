@@ -37,10 +37,6 @@ pub struct Entry {
     /// path, in place of the letters of its name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
-    /// A short one-line note or status summary for this space (for example, a
-    /// checkpoint written by you or an agent).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
     /// Opaque metadata owned by external scripts, plugins, or agents. Persisted
     /// across restarts and left untouched by Spaces.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -204,18 +200,6 @@ pub fn clean_name(raw: &str) -> Result<Option<String>> {
         bail!("'{name}' is longer than 64 characters");
     }
     Ok((!name.is_empty()).then(|| name.to_string()))
-}
-
-/// A short note on a space: any text, trimmed, on one line. Empty clears it.
-pub fn clean_note(raw: &str) -> Result<Option<String>> {
-    let note = raw.trim();
-    if note.chars().any(char::is_control) {
-        bail!("a note has to fit on one line");
-    }
-    if note.chars().count() > 256 {
-        bail!("a note can be at most 256 characters");
-    }
-    Ok((!note.is_empty()).then(|| note.to_string()))
 }
 
 /// Maximum number of metadata keys stored on one space.
@@ -481,15 +465,7 @@ mod tests {
     }
 
     #[test]
-    fn cleans_notes_and_metadata_and_round_trips() {
-        assert_eq!(
-            clean_note("  PR #412 ready  ").unwrap(),
-            Some("PR #412 ready".into())
-        );
-        assert_eq!(clean_note("   ").unwrap(), None);
-        assert!(clean_note("line1\nline2").is_err());
-        assert!(clean_note(&"x".repeat(257)).is_err());
-
+    fn cleans_metadata_and_round_trips() {
         assert_eq!(clean_meta_key(" linear.issue ").unwrap(), "linear.issue");
         assert!(clean_meta_key("").is_err());
         assert!(clean_meta_key("a b").is_err());
@@ -507,16 +483,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::lock(dir.path()).unwrap();
         let entry = store.entry("s1");
-        entry.note = Some("waiting on CI".into());
         entry.meta.insert("pr".into(), serde_json::json!(412));
         store.save().unwrap();
         drop(store);
 
         let loaded = Store::load(dir.path()).unwrap();
-        assert_eq!(
-            loaded.get("s1").unwrap().note.as_deref(),
-            Some("waiting on CI")
-        );
         assert_eq!(loaded.get("s1").unwrap().meta["pr"], serde_json::json!(412));
     }
 }

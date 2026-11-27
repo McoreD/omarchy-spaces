@@ -8,8 +8,8 @@ pub mod window;
 
 pub use crate::restore::restore;
 pub use space::{
-    NewOptions, close, current, go, icon, ls, meta_get, meta_rm, meta_set, new, note, rename,
-    reorder, step,
+    NewOptions, close, current, go, icon, ls, meta_get, meta_rm, meta_set, new, rename, reorder,
+    step,
 };
 pub use tab::{
     NewTabOptions, Target, close_tab, emptied, go_to_named_tab, go_to_tab, new_tab_cmd, rename_tab,

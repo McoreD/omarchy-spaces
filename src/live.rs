@@ -356,8 +356,6 @@ pub struct Row {
     pub named: bool,
     /// The glyph or emoji you picked for its badge, if any.
     pub icon: Option<String>,
-    /// A short one-line note on the space, if any.
-    pub note: Option<String>,
     /// Opaque external metadata attached to the space.
     pub meta: BTreeMap<String, serde_json::Value>,
     /// The checkout (or folder) its terminal is in. `None` for `home`, and
@@ -487,7 +485,6 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
                label: String,
                named: bool,
                icon: Option<String>,
-               note: Option<String>,
                meta: BTreeMap<String, serde_json::Value>,
                folder: Option<Folder>,
                tabs| {
@@ -497,7 +494,6 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
             label,
             named,
             icon,
-            note,
             meta,
             folder,
             active: live.is_some_and(|l| l.active.as_deref() == Some(id)),
@@ -533,7 +529,6 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
         HOME.to_string(),
         false,
         None,
-        None,
         home_meta,
         None,
         home_tabs,
@@ -551,10 +546,9 @@ pub(crate) fn rows(store: &mut Store, live: Option<&Live>, last: &Last) -> Vec<R
             None => describe(&id, &mut entry.clone(), &[]),
         };
         let icon = entry.icon.clone();
-        let note = entry.note.clone();
         let meta = entry.meta.clone();
         let tabs = entry.tabs.clone();
-        out.push(row(&id, label, named, icon, note, meta, folder, tabs));
+        out.push(row(&id, label, named, icon, meta, folder, tabs));
     }
     out
 }
@@ -757,7 +751,6 @@ mod tests {
             label: label.into(),
             named: false,
             icon: None,
-            note: None,
             meta: BTreeMap::new(),
             folder: None,
             active: false,

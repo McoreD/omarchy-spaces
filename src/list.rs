@@ -33,8 +33,6 @@ pub(crate) struct Space {
     pub named: bool,
     /// The glyph or emoji you picked for its badge, if any.
     pub icon: Option<String>,
-    /// A short one-line note on the space, if any.
-    pub note: Option<String>,
     /// Opaque external metadata attached to the space.
     pub meta: BTreeMap<String, serde_json::Value>,
     /// The checkout (or folder) its terminal is in. `null` for `home`, and
@@ -109,7 +107,6 @@ fn space(row: &Row, hyprland: Option<(&Snapshot, &Live)>) -> Space {
         label: row.label.clone(),
         named: row.named,
         icon: row.icon.clone(),
-        note: row.note.clone(),
         meta: row.meta.clone(),
         folder: row.folder.clone(),
         active: row.active,

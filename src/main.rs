@@ -25,9 +25,6 @@ enum Cmd {
         /// Give the new space a name right away.
         #[arg(long)]
         name: Option<String>,
-        /// Attach a one-line note to the new space.
-        #[arg(long)]
-        note: Option<String>,
         /// Open the space in the background without switching focus to it.
         #[arg(long)]
         silent: bool,
@@ -77,15 +74,6 @@ enum Cmd {
         #[arg(value_name = "SPACE")]
         first: String,
         #[arg(value_name = "ICON")]
-        second: Option<String>,
-    },
-    /// Attach a short one-line note to a space, the caller's or active one
-    /// unless you say which. An empty note clears it.
-    #[command(override_usage = "space note [SPACE] <TEXT>")]
-    Note {
-        #[arg(value_name = "SPACE")]
-        first: String,
-        #[arg(value_name = "TEXT")]
         second: Option<String>,
     },
     /// Read, set, or remove opaque external metadata on a space.
@@ -350,14 +338,12 @@ fn main() -> ExitCode {
         Cmd::New {
             dir,
             name,
-            note,
             silent,
             json,
             command,
         } => commands::new(commands::NewOptions {
             dir,
             name,
-            note,
             silent,
             json,
             command,
@@ -374,10 +360,6 @@ fn main() -> ExitCode {
         Cmd::Icon { first, second } => match second {
             Some(icon) => commands::icon(Some(first), icon),
             None => commands::icon(None, first),
-        },
-        Cmd::Note { first, second } => match second {
-            Some(text) => commands::note(Some(first), text),
-            None => commands::note(None, first),
         },
         Cmd::Meta(MetaCmd::Get { space, key }) => commands::meta_get(space, key),
         Cmd::Meta(MetaCmd::Set {

@@ -27,7 +27,6 @@ use crate::state::{self, Last};
 pub struct NewOptions {
     pub dir: Option<PathBuf>,
     pub name: Option<String>,
-    pub note: Option<String>,
     pub silent: bool,
     pub json: bool,
     pub command: Vec<String>,
@@ -48,10 +47,6 @@ struct CreatedSpace {
 pub fn new(opts: NewOptions) -> Result<()> {
     let custom_name = match opts.name {
         Some(raw) => spaces::clean_name(&raw)?,
-        None => None,
-    };
-    let custom_note = match opts.note {
-        Some(raw) => spaces::clean_note(&raw)?,
         None => None,
     };
     if !opts.command.is_empty() {
@@ -82,9 +77,6 @@ pub fn new(opts: NewOptions) -> Result<()> {
     entry.folder.get_or_insert(Folder::here(&dir));
     if let Some(name) = custom_name {
         entry.name = Some(name);
-    }
-    if let Some(note) = custom_note {
-        entry.note = Some(note);
     }
     if entry.order == 0 {
         entry.order = state::now();
@@ -322,26 +314,6 @@ pub fn icon(target: Option<String>, new_icon: String) -> Result<()> {
         }
         Some(new_icon) => println!("Gave the space the icon {new_icon}"),
         None => println!("The space shows its letters again"),
-    }
-    Ok(())
-}
-
-/// `space note [space] <text>`: attaches a short one-line note to a space, the
-/// caller's or active one by default. An empty note clears it.
-pub fn note(target: Option<String>, text: String) -> Result<()> {
-    let hypr = Hypr::from_env()?;
-    let (mut store, rows, seen) = live::lock_rows(Some(&hypr))?;
-    let id = target_space(target, &rows, seen.as_ref())?;
-    if id == HOME {
-        bail!("'home' is the plain workspaces; it can't have a note");
-    }
-    let note = spaces::clean_note(&text)?;
-
-    store.entry(&id).note = note.clone();
-    store.save()?;
-    match note {
-        Some(note) => println!("Noted '{note}' on the space"),
-        None => println!("Cleared the space's note"),
     }
     Ok(())
 }

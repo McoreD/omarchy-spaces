@@ -490,9 +490,6 @@ fn space_changed_fields(prev: &Space, next: &Space) -> Vec<&'static str> {
     if prev.icon != next.icon {
         changed.push("icon");
     }
-    if prev.note != next.note {
-        changed.push("note");
-    }
     if prev.meta != next.meta {
         changed.push("meta");
     }
@@ -647,7 +644,6 @@ mod tests {
             label: label.into(),
             named: false,
             icon: None,
-            note: None,
             meta: BTreeMap::new(),
             folder: Some(Folder::here("/p/app")),
             active,
@@ -691,10 +687,9 @@ mod tests {
     }
 
     #[test]
-    fn diffs_metadata_note_tabs_and_agent_status() {
+    fn diffs_metadata_tabs_and_agent_status() {
         let before = state("s1", "s1:1", vec![space("s1", "app", true)]);
         let mut s1 = space("s1", "app", true);
-        s1.note = Some("waiting on review".into());
         s1.meta.insert("pr".into(), serde_json::json!(412));
         s1.status = Some(Status::Waiting);
         s1.tabs.as_mut().unwrap()[0].status = Some(Status::Waiting);
@@ -720,7 +715,7 @@ mod tests {
         let Payload::SpaceChanged { changed, .. } = &events[0] else {
             panic!("expected space.changed");
         };
-        assert_eq!(changed, &["note", "meta", "status"]);
+        assert_eq!(changed, &["meta", "status"]);
 
         let Payload::StatusChanged {
             status, previous, ..

@@ -3786,7 +3786,6 @@ fn caller_context_resolves_live_window_and_falls_back_to_env() {
 
     // Bare mutations act on caller's space/tab (s1), not focused (s2)!
     env.ok(&["rename", "AlphaBg"]);
-    env.ok(&["note", "running tests"]);
     env.ok(&["meta", "set", "branch", "feat/bg"]);
     env.ok(&["tab", "rename", "agent"]);
     let created_tab: Value =
@@ -3800,11 +3799,9 @@ fn caller_context_resolves_live_window_and_falls_back_to_env() {
     let s1 = spaces.iter().find(|s| s["id"] == "s1").unwrap();
     let s2 = spaces.iter().find(|s| s["id"] == "s2").unwrap();
     assert_eq!(s1["label"], "AlphaBg");
-    assert_eq!(s1["note"], "running tests");
     assert_eq!(s1["meta"]["branch"], "feat/bg");
     assert_eq!(s1["tabs"][0]["label"], "agent");
     assert_eq!(s2["label"], "beta");
-    assert_eq!(s2["note"], Value::Null);
 
     // Moving the window to s2 updates caller context immediately (never stale).
     env.move_window(&w1, "s2:2");
@@ -3821,14 +3818,12 @@ fn new_and_tab_new_support_silent_json_and_space_targeting() {
     env.add_terminal("s1:1", &one);
     env.set_active("s1:1");
 
-    // Create s2 in the background with name, note, and JSON output.
+    // Create s2 in the background with a name and JSON output.
     let created: Value = serde_json::from_str(&env.ok(&[
         "new",
         two.to_str().unwrap(),
         "--name",
         "Worker",
-        "--note",
-        "building",
         "--silent",
         "--json",
     ]))
@@ -3869,7 +3864,7 @@ fn new_and_tab_new_support_silent_json_and_space_targeting() {
     let space_ids = fs::read_to_string(env.home().join("space_ids")).unwrap();
     assert_eq!(space_ids.lines().collect::<Vec<_>>(), ["s2", "s2"]);
 
-    // Verify s2's name, note, and named tab show up in `space ls --json`.
+    // Verify s2's name and named tab show up in `space ls --json`.
     let list: Value = serde_json::from_str(&env.ok(&["ls", "--json"])).unwrap();
     let s2 = list["spaces"]
         .as_array()
@@ -3878,7 +3873,6 @@ fn new_and_tab_new_support_silent_json_and_space_targeting() {
         .find(|s| s["id"] == "s2")
         .unwrap();
     assert_eq!(s2["label"], "Worker");
-    assert_eq!(s2["note"], "building");
     let tabs = s2["tabs"].as_array().unwrap();
     assert_eq!(tabs.len(), 2);
     assert_eq!(tabs[1]["label"], "logs");
@@ -3886,15 +3880,11 @@ fn new_and_tab_new_support_silent_json_and_space_targeting() {
 }
 
 #[test]
-fn note_and_meta_round_trip_through_ls_and_restore() {
+fn meta_round_trips_through_ls_and_restore() {
     let env = Env::new();
     let app = env.dir("app");
     env.add_terminal("s1:1", &app);
     env.set_active("s1:1");
-
-    // Note set, read via ls, clear, and reject on home.
-    env.ok(&["note", "s1", "PR #412 failing lint"]);
-    assert!(env.fails(&["note", "home", "nope"]).contains("home"));
 
     // Meta set (string and --json), get (whole object and single key), rm.
     env.ok(&["meta", "set", "-s", "s1", "branch", "feat/events"]);
@@ -3917,15 +3907,14 @@ fn note_and_meta_round_trip_through_ls_and_restore() {
             .contains("no metadata key")
     );
 
-    // Write a session containing note & meta via a simulated previous session,
-    // clear live state, and verify `space restore` brings both back.
+    // Write a session containing meta via a simulated previous session,
+    // clear live state, and verify `space restore` brings it back.
     let saved_session = json!({
         "version": 1,
         "instance": "old-instance",
         "spaces": [{
             "id": "s1",
             "name": "App",
-            "note": "PR #412 failing lint",
             "meta": {
                 "branch": "feat/events",
                 "pr": { "number": 412, "draft": false }
@@ -3957,12 +3946,10 @@ fn note_and_meta_round_trip_through_ls_and_restore() {
         .find(|s| s["id"] == "s1")
         .unwrap();
     assert_eq!(s1["label"], "App");
-    assert_eq!(s1["note"], "PR #412 failing lint");
     assert_eq!(s1["meta"]["branch"], "feat/events");
     assert_eq!(s1["meta"]["pr"]["number"], 412);
 
-    // Clearing note and removing metadata key updates ls.
-    restored_env.ok(&["note", "s1", ""]);
+    // Removing a metadata key updates ls.
     restored_env.ok(&["meta", "rm", "-s", "s1", "branch"]);
     restored_env.ok(&["meta", "rm", "-s", "s1", "nonexistent"]);
     let after: Value = serde_json::from_str(&restored_env.ok(&["ls", "--json"])).unwrap();
@@ -3972,7 +3959,6 @@ fn note_and_meta_round_trip_through_ls_and_restore() {
         .iter()
         .find(|s| s["id"] == "s1")
         .unwrap();
-    assert_eq!(s1["note"], Value::Null);
     assert!(s1["meta"].get("branch").is_none());
     assert_eq!(s1["meta"]["pr"]["number"], 412);
 }
@@ -4032,18 +4018,7 @@ fn events_come_from_the_watch_and_agree_with_it() {
     let seqs: Vec<u64> = evs.iter().map(|e| e["seq"].as_u64().unwrap()).collect();
     assert_eq!(seqs, (1..=seqs.len() as u64).collect::<Vec<_>>());
 
-    // Mutate note & meta -> space.changed with changed fields.
-    env.ok(&["note", "s1", "hello"]);
-    let evs = collect_until(&stream, "space.changed");
-    let changed = evs.last().unwrap();
-    assert_eq!(changed["space"]["note"], "hello");
-    assert!(
-        changed["changed"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("note"))
-    );
-
+    // Mutate meta -> space.changed with changed fields.
     env.ok(&["meta", "set", "-s", "s1", "pr", "42", "--json"]);
     let evs = collect_until(&stream, "space.changed");
     let changed = evs.last().unwrap();
@@ -4104,10 +4079,10 @@ fn events_come_from_the_watch_and_agree_with_it() {
     // It's connected once the watch has a third subscriber; nothing shows it,
     // so give it a moment.
     thread::sleep(Duration::from_millis(300));
-    env.ok(&["note", "s1", "filtered"]);
+    env.ok(&["meta", "set", "-s", "s1", "pass", "filtered"]);
     let ev = filtered.next_state(Duration::from_secs(3));
     assert_eq!(ev["type"], "space.changed");
-    assert_eq!(ev["space"]["note"], "filtered");
+    assert_eq!(ev["space"]["meta"]["pass"], "filtered");
     assert!(ev["seq"].as_u64().unwrap() > 1, "the watch's count: {ev}");
 
     // The watch restarts, as the plugin restarts it: a new snapshot comes.
@@ -4120,7 +4095,7 @@ fn events_come_from_the_watch_and_agree_with_it() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|s| s["note"] == "filtered")
+            .any(|s| s["meta"]["pass"] == "filtered")
     );
     drop(watch);
 
