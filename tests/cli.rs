@@ -3161,7 +3161,8 @@ fn install_update_replaces_only_its_own_outdated_binary() {
             format!("{{\n  \"version\": \"{ver}\",\n  \"id\": \"com.t4t5.spaces\"\n}}\n"),
         )
         .unwrap();
-        let out = Command::new(stage.join("scripts/package.sh"))
+        let out = Command::new("bash")
+            .arg(stage.join("scripts/package.sh"))
             .arg(bin)
             .arg(arch)
             .arg(&release)
@@ -3170,7 +3171,8 @@ fn install_update_replaces_only_its_own_outdated_binary() {
         assert!(out.status.success(), "{out:?}");
     };
     let run_install = |args: &[&str]| {
-        Command::new(plugin.join("install.sh"))
+        Command::new("bash")
+            .arg(plugin.join("install.sh"))
             .args(args)
             .env("HOME", &home)
             .env_remove("XDG_STATE_HOME")
@@ -3292,7 +3294,8 @@ fn install_setup_replaces_omarchys_menu_and_workspaces_once() {
     };
     let run = |dir: &Path, args: &[&str]| {
         fs::write(&log, "").unwrap();
-        let out = Command::new(dir.join("install.sh"))
+        let out = Command::new("bash")
+            .arg(dir.join("install.sh"))
             .args(args)
             .env("HOME", &home)
             .env_remove("XDG_STATE_HOME")
@@ -3428,7 +3431,8 @@ fn uninstall_undoes_the_setup_once_the_plugin_is_gone() {
     };
     let run = || {
         fs::write(&log, "").unwrap();
-        let out = Command::new(state.join("uninstall.sh"))
+        let out = Command::new("bash")
+            .arg(state.join("uninstall.sh"))
             .env("HOME", &home)
             .env_remove("XDG_STATE_HOME")
             .env("SPACES_TRIES", "1")
