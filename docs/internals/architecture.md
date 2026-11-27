@@ -20,6 +20,8 @@ The tabs are a bar widget (`TabsWidget.qml`), and `Base.qml` draws the sidebar u
 
 Both draw what one `space watch` says (`src/view.rs`). The plugin's service runs it (`Watch.qml`) and restarts it when it ends, as it does when Hyprland restarts or `space` is reinstalled. Each line is all of it as of one moment: where you are, each monitor's tabs and the spaces. The plugin binds to the last one, and neither copies it nor asks Hyprland where you are as well, as the two would come apart.
 
+The same watch serves `space events` (`src/events.rs`), on `$XDG_RUNTIME_DIR/omarchy-spaces/events.sock`. It sends each subscriber a snapshot when it joins, then the changes between one moment and the next. It's the only one that follows which agents are done and seen, so the events and the sidebar can't disagree. A subscriber that falls far behind is dropped rather than holding the watch up. The watch that serves holds `.events.lock` beside the socket. Another one, run beside the plugin's or started by the plugin before the last has ended, tries for the lock every two seconds and takes over once it gets it.
+
 ### When `space watch` reads again
 
 | What | When |
@@ -43,6 +45,6 @@ A tab is found by its name, as the bar shows it, never by a `name:` selector mad
 
 ## State
 
-`~/.local/state/omarchy-spaces/spaces.json` holds what Hyprland can't about each live space: the name and icon you gave it, the terminal it follows and that terminal's last folder. The saved sessions are beside it (see [Restoring your spaces](../guide/restore.md#whats-saved)); `space watch` saves them as they change, and after a restart the plugin runs `space restore`.
+`~/.local/state/omarchy-spaces/spaces.json` holds what Hyprland can't about each live space: the name, icon, note and metadata you gave it, the terminal it follows and that terminal's last folder. The saved sessions are beside it (see [Restoring your spaces](../guide/restore.md#whats-saved)); `space watch` saves them as they change, and after a restart the plugin runs `space restore`.
 
 All of these say their `version`. One that can't be read, or that a newer `space` made, is put aside as `<name>.broken-<time>` beside it rather than saved over.

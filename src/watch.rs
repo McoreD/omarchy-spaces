@@ -41,7 +41,7 @@ use crate::restore;
 use crate::session;
 use crate::spaces::Store;
 use crate::state::Last;
-use crate::{sound, status, terminal, view};
+use crate::{events, sound, status, terminal, view};
 
 /// How often the active space's terminals' shells are read.
 const FAST: Duration = Duration::from_millis(200);
@@ -104,6 +104,10 @@ pub fn watch(sounds: bool) -> Result<()> {
     let mut again_at: Option<Instant> = None;
     let mut printed = String::new();
     let mut out = std::io::stdout().lock();
+    // What `space events` reads. A convenience too: the watch goes on
+    // without it, and without it when another watch already serves them,
+    // retrying on the slow tick so an overlapping restart takes over cleanly.
+    let mut hub = serve_hub();
 
     loop {
         let now = Instant::now();
@@ -112,6 +116,9 @@ pub fn watch(sounds: bool) -> Result<()> {
             slow_at = now + SLOW;
             if replaced() {
                 return Ok(());
+            }
+            if hub.is_none() {
+                hub = serve_hub();
             }
             // Hyprland has no event for a window resized or a split turned.
             refresh(&hypr, &mut snapshot);
@@ -220,6 +227,9 @@ pub fn watch(sounds: bool) -> Result<()> {
         {
             eprintln!("space: warning: {e:#}");
         }
+        if let Some(hub) = &hub {
+            hub.publish(events::State::of(&snapshot, &live, &rows));
+        }
         let json = serde_json::to_string(&view::state(&snapshot, &live, &rows))?;
         if json != printed {
             // Nobody reading any more: done.
@@ -323,6 +333,14 @@ fn follow(event: &str, focused: &mut Option<String>) {
         let data = data.trim().trim_start_matches("0x");
         *focused = (!data.is_empty() && data != ",").then(|| format!("0x{data}"));
     }
+}
+
+/// Opens the events socket unless another watch is already serving there.
+fn serve_hub() -> Option<events::Hub> {
+    events::Hub::serve(&events::socket())
+        .inspect_err(|e| eprintln!("space: warning: {e:#}"))
+        .ok()
+        .flatten()
 }
 
 /// The config, or `None` when it can't be read.

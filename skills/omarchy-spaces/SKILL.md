@@ -86,13 +86,22 @@ Available helpers on `require("hypr.omarchy-spaces")`:
 
 ## CLI & IPC quick reference
 
+Commands without an explicit space or tab default to the caller's live Hyprland window (found via `/proc`), else the focused workspace when run outside a window. Terminals launched by Spaces also set `SPACE_ID` as a fallback when there is no window (e.g. inside tmux); that identifies the space but not the tab, so tab commands require an explicit tab id there.
+
 ```bash
-space ls --json                     # inspect spaces, tabs, slots, and agent status
-space new [dir]                     # open a new space
-space go <space>                    # switch space
-space rename [space] <name>         # rename space ("" resets to folder name)
-space icon [space] <icon-or-path>   # glyph, emoji, or image path ("" resets)
-space tab new | go <n|id> | next | prev | rename [tab] <name> | send [tab] <space> | close [tab]
+space current [--json]                                                 # inspect caller space/tab/window and focused place
+space ls --json                                                        # inspect spaces, tabs, slots, note, meta, and agent status
+space new [dir] [--name <name>] [--note <text>] [--silent] [--json]    # open a space (use --silent --json in background)
+space go <space>                                                       # switch space
+space rename [space] <name>                                            # rename space ("" resets to folder name)
+space icon [space] <icon-or-path>                                      # glyph, emoji, or image path ("" resets)
+space note [space] <text>                                              # set or clear ("") a one-line checkpoint note
+space meta get [-s <space>] [key]                                      # read opaque JSON metadata
+space meta set [-s <space>] <key> <value> [--json]                     # write metadata (plain string unless --json)
+space meta rm  [-s <space>] <key>                                      # remove metadata key
+space events [--type <types>] [--no-snapshot]                          # NDJSON event stream served by `space watch` (snapshot + typed diffs)
+space tab new [-s <space>] [--dir <dir>] [--name <name>] [--silent] [--json]
+space tab go <n|id> | next | prev | rename [tab] <name> | send [tab] <space> | close [tab]
 space window send <space|next|prev> [--silent]
 omarchy-shell shell call com.t4t5.spaces toggleSidebar ''
 ```
