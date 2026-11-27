@@ -7,8 +7,8 @@ use anyhow::{Context, Result, bail};
 
 use super::space::{neighbour, switch};
 use super::{
-    SpaceTarget, focus, forget, hold_tabs, moved, open_terminal_then, remember, session_selector,
-    session_workspace, take_turn,
+    SpaceTarget, focus, forget, fresh_key, hold_tabs, live_selector, moved, open_terminal_then,
+    remember, session_selector, session_workspace, take_turn,
 };
 use crate::hypr::{self, Hypr};
 use crate::layout;
@@ -51,9 +51,10 @@ pub fn go_to_tab(target: Target) -> Result<()> {
     if target == Target::New && space != HOME {
         return new_tab(&hypr, &active, &here);
     }
-    let strip = Strip::new(&hypr.workspaces()?, space, &active, &Blocks::load());
+    let workspaces = hypr.workspaces()?;
+    let strip = Strip::new(&workspaces, space, &active, &Blocks::load());
     let key = match target {
-        Target::Slot(slot) => strip.reach(slot),
+        Target::Slot(slot) => fresh_key(&workspaces, space, strip.reach(slot)),
         Target::New => new_tab_in(&strip, [])?,
         Target::Next | Target::Prev => {
             match step_tab(target == Target::Next, &strip.keys(), here.key()) {
@@ -86,7 +87,7 @@ pub fn go_to_named_tab(tab: String) -> Result<()> {
     {
         remember(here.space(), left_at);
     }
-    hypr.dispatch(&hypr::focus_workspace(&session_selector(&id, key)))?;
+    hypr.dispatch(&hypr::focus_workspace(&live_selector(&hypr, &id, key)))?;
     remember(&id, key);
     Ok(())
 }
@@ -192,7 +193,7 @@ pub fn reorder_tab(tab: String, position: usize) -> Result<()> {
     if id == HOME {
         reorder_home(&hypr, &active, key, &moves)?;
     } else {
-        hypr.eval(&rename_tabs(&id, key, &moves))?;
+        hypr.eval(&rename_tabs(&hypr.workspaces()?, &id, key, &moves))?;
     }
 
     if let Some(entry) = store.spaces.get_mut(&id) {
@@ -227,8 +228,15 @@ fn in_turn(first: u8, moves: &BTreeMap<u8, u8>) -> Vec<(u8, u8)> {
 
 /// The Lua that renames a space's workspaces as `moves` says, `first` being
 /// the tab the others make room for, which leaves their windows as they are.
-fn rename_tabs(space: &str, first: u8, moves: &BTreeMap<u8, u8>) -> String {
-    let tab = |key: u8| session_selector(space, key);
+/// Each is selected by its address, which a rename leaves as it was, so the
+/// one that waits aside is the same selector as before.
+fn rename_tabs(
+    workspaces: &[hypr::Workspace],
+    space: &str,
+    first: u8,
+    moves: &BTreeMap<u8, u8>,
+) -> String {
+    let tab = |key: u8| session_selector(workspaces, space, key);
     let name = |key: u8| session_workspace(space, key);
     let aside = ASIDE.trim_start_matches("name:").to_string();
     let mut renames = vec![(tab(first), aside)];
@@ -237,7 +245,17 @@ fn rename_tabs(space: &str, first: u8, moves: &BTreeMap<u8, u8>) -> String {
             .into_iter()
             .map(|(from, to)| (tab(from), name(to))),
     );
-    renames.push((ASIDE.to_string(), name(moves[&first])));
+    // The tab that waited aside, by its address if Hyprland says it (0.57),
+    // else by the name it was given.
+    let addressed = workspaces
+        .iter()
+        .any(|ws| ws.name == name(first) && !ws.address.is_empty());
+    let waiting = if addressed {
+        tab(first)
+    } else {
+        ASIDE.to_string()
+    };
+    renames.push((waiting, name(moves[&first])));
     renames
         .iter()
         .map(|(from, to)| format!("hl.dispatch({})\n", hypr::rename_workspace(from, to)))
@@ -255,7 +273,7 @@ fn reorder_home(
     moves: &BTreeMap<u8, u8>,
 ) -> Result<()> {
     let snapshot = live::snapshot(hypr)?;
-    let tab = |key: u8| session_selector(HOME, key);
+    let tab = |key: u8| session_selector(&[], HOME, key);
     let tabs: BTreeMap<u8, MovingTab> = moves
         .keys()
         .map(|key| {
@@ -491,7 +509,7 @@ pub fn send_tab(tab: Option<String>, to: SpaceTarget) -> Result<()> {
     }
     let moved = move_tab(&hypr, &snapshot, (&id, key), (&to, to_key), &windows);
     let went = moved
-        .and_then(|()| hypr.dispatch(&hypr::focus_workspace(&session_selector(&to, to_key))))
+        .and_then(|()| hypr.dispatch(&hypr::focus_workspace(&live_selector(&hypr, &to, to_key))))
         // Renamed, the tab you were on says nothing of being in another space.
         .and_then(|()| hypr.eval(hypr::FOLLOW));
     if let Some(reserved) = reserved {
@@ -535,14 +553,21 @@ pub fn send_tab(tab: Option<String>, to: SpaceTarget) -> Result<()> {
     Ok(())
 }
 
-/// The tabs of a space that have a workspace now, on any monitor.
+/// The tabs of a space that have a workspace now, on any monitor, and those
+/// whose number a new tab can't have: a renamed tab's workspace is still
+/// addressed by the number it was made with, which `name:` would find instead
+/// of making a new one. `space renumber` numbers it as the next tab.
 fn open_in(workspaces: &[hypr::Workspace], space: &str) -> BTreeSet<u8> {
-    workspaces
+    let by_name = workspaces
         .iter()
         .map(|ws| name::locate(ws.id, &ws.name))
-        .filter(|location| location.space() == space)
-        .filter_map(|location| location.key())
-        .collect()
+        .filter(|location| location.space() == space);
+    let by_address = workspaces
+        .iter()
+        .filter(|ws| ws.id <= 0)
+        .map(|ws| name::locate(0, &ws.address))
+        .filter(|location| matches!(location, Location::Space { name, .. } if name == space));
+    by_name.chain(by_address).filter_map(|l| l.key()).collect()
 }
 
 /// A new tab for a monitor, in the space called `label`.
@@ -567,10 +592,11 @@ fn move_tab(
     (to, to_key): (&str, u8),
     windows: &[&SpaceWindow],
 ) -> Result<()> {
-    let selector = session_selector(to, to_key);
+    let workspaces = hypr.workspaces()?;
+    let selector = session_selector(&workspaces, to, to_key);
     if from != HOME && to != HOME {
         return hypr.dispatch(&hypr::rename_workspace(
-            &session_selector(from, key),
+            &session_selector(&workspaces, from, key),
             &session_workspace(to, to_key),
         ));
     }
@@ -739,7 +765,8 @@ pub fn renumber() -> Result<()> {
 /// `renumber`, by a command already holding the tabs.
 fn renumber_tabs(hypr: &Hypr) -> Result<()> {
     let mut open: BTreeMap<String, BTreeSet<u8>> = BTreeMap::new();
-    for ws in hypr.workspaces()? {
+    let workspaces = hypr.workspaces()?;
+    for ws in &workspaces {
         if let Location::Space { name, key } = name::locate(ws.id, &ws.name) {
             open.entry(name).or_default().insert(key);
         }
@@ -753,12 +780,13 @@ fn renumber_tabs(hypr: &Hypr) -> Result<()> {
         return Ok(());
     }
     // Lowest first, each into a number that's free by then.
+    let by_address = &workspaces;
     let script: String = moves
         .iter()
         .flat_map(|(space, moves)| {
             moves.iter().map(move |(from, to)| {
                 let rename = hypr::rename_workspace(
-                    &session_selector(space, *from),
+                    &session_selector(by_address, space, *from),
                     &session_workspace(space, *to),
                 );
                 format!("hl.dispatch({rename})\n")

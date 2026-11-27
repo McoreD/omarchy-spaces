@@ -39,6 +39,8 @@ It holds:
 - the hook that numbers each space's tabs 1, 2, 3, … again as a workspace comes or goes (`space renumber`); the commands that can end a tab hold `.tabs.lock` while they run, so it waits for them,
 - the blur behind a glassy sidebar and bar.
 
+A tab is found by its name, as the bar shows it, never by a `name:` selector made from it. Hyprland (0.57) gives a workspace the name it was made with as its address, which `name:` matches, and a rename (`space renumber`) changes the name only, so after one `name:s1:1` can mean another tab, or none. `src/hypr.rs`'s `selector_for` and the Lua part's `target` look the name up and aim at the workspace that has it. A new tab never takes a number that is a renamed tab's address, for the same reason: `space renumber` numbers it as the next tab.
+
 ## State
 
 `~/.local/state/omarchy-spaces/spaces.json` holds what Hyprland can't about each live space: the name and icon you gave it, the terminal it follows and that terminal's last folder. The saved sessions are beside it (see [Restoring your spaces](../guide/restore.md#whats-saved)); `space watch` saves them as they change, and after a restart the plugin runs `space restore`.

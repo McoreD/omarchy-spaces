@@ -21,7 +21,7 @@ local monitor = { name = "eDP-1", id = 0 }
 local workspaces = {}
 local function tabs(space, count)
   for key = 1, count do
-    workspaces[#workspaces + 1] = { name = space .. ":" .. key, monitor = monitor }
+    workspaces[#workspaces + 1] = { name = space .. ":" .. key, address = space .. ":" .. key, monitor = monitor }
   end
 end
 hl = {
@@ -45,7 +45,16 @@ hl = {
   get_workspaces = function()
     return workspaces
   end,
-  get_workspace = function() end,
+  -- A selector `name:x` means the workspace whose address is x, as Hyprland
+  -- 0.57 has it: a workspace renamed keeps the one it was made with.
+  get_workspace = function(selector)
+    local address = tostring(selector):gsub("^name:", "")
+    for _, workspace in ipairs(workspaces) do
+      if workspace.address == address then
+        return workspace
+      end
+    end
+  end,
 }
 o = {
   shell_quote = function(value)
@@ -110,6 +119,8 @@ spaces.move_window_to_tab(4, false)()
 equal(table.concat(omarchy, ", "), "focus 3, move 4 false")
 equal(#dispatched, 0)
 
+-- A tab its selector finds goes by that, never by the workspace itself: 0.56
+-- takes no workspace in a dispatch, and goes to workspace 1 instead.
 -- In a space, its tabs.
 active = { name = "s1:1" }
 tabs("s1", 10)
@@ -166,6 +177,41 @@ equal(dispatched[5][2].workspace, "name:s1:3")
 equal(dispatched[6][2].workspace, "name:s1:3")
 spaces.go_to_tab(2)()
 equal(dispatched[7][2].workspace, "name:s1:2")
+
+-- Tabs `space renumber` renamed: the workspaces made as s1:2 and s1:3 are named
+-- s1:1 and s1:2 now. The keys go to them by their names, as the bar shows
+-- them, not to the ones whose address those names are, nor to an empty one.
+workspaces = {}
+for key = 1, 2 do
+  workspaces[key] = { name = "s1:" .. key, address = "s1:" .. (key + 1), monitor = monitor }
+end
+workspaces[3] = { name = "s6:2", address = "s6:1", monitor = monitor }
+workspaces[4] = { name = "s6:1", address = "s6:2", monitor = monitor }
+active = workspaces[1]
+local before = #dispatched
+spaces.go_to_tab(1)()
+spaces.go_to_tab(2)()
+spaces.move_window_to_tab(1)()
+spaces.move_window_to_tab(2, false)()
+equal(dispatched[before + 1][2].workspace, workspaces[1])
+equal(dispatched[before + 2][2].workspace, workspaces[2])
+equal(dispatched[before + 3][2].workspace, workspaces[1])
+equal(dispatched[before + 4][2].workspace, workspaces[2])
+equal(dispatched[before + 4][2].follow, false)
+-- A space whose tabs swapped names with their addresses.
+active = { name = "s6:1" }
+workspaces[3].monitor, workspaces[4].monitor = monitor, monitor
+spaces.go_to_tab(1)()
+equal(dispatched[before + 5][2].workspace, workspaces[4])
+spaces.go_to_tab(2)()
+equal(dispatched[before + 6][2].workspace, workspaces[3])
+-- A new tab after the last: the next number is a renamed tab's address (s1:3
+-- is named s1:2), so it takes the one after, which `space renumber` numbers.
+active = workspaces[1]
+spaces.go_to_tab(3)()
+equal(dispatched[before + 7][2].workspace, "name:s1:4")
+spaces.move_window_to_tab(3)()
+equal(dispatched[before + 8][2].workspace, "name:s1:4")
 
 -- What `space` itself calls (src/hypr.rs).
 equal(type(spaces.internal.sync), "function")

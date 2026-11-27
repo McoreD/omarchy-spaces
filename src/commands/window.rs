@@ -26,9 +26,10 @@ pub fn window_to_tab(slot: u8, silent: bool) -> Result<()> {
     }
 
     match &here {
-        Location::Space { name, .. } => {
-            hypr.dispatch(&hypr::move_window(&selector(name, key), !silent))?
-        }
+        Location::Space { name, .. } => hypr.dispatch(&hypr::move_window(
+            &selector(&workspaces, name, key),
+            !silent,
+        ))?,
         Location::Home { .. } => {
             let omarchy = if silent {
                 format!("o.workspaces.move_window({slot}, false)")
@@ -85,7 +86,10 @@ pub fn send_window(target: SpaceTarget, silent: bool) -> Result<()> {
         hypr.dispatch(&omarchy)
             .or_else(|_| hypr.dispatch(&hypr::move_window(&key.to_string(), !silent)))?;
     } else {
-        hypr.dispatch(&hypr::move_window(&selector(&id, key), !silent))?;
+        hypr.dispatch(&hypr::move_window(
+            &selector(&hypr.workspaces()?, &id, key),
+            !silent,
+        ))?;
     }
 
     if silent {

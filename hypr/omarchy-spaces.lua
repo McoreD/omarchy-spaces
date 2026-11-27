@@ -64,13 +64,43 @@ local function tab_name(space, key)
   return space == "home" and tostring(key) or space .. ":" .. key
 end
 
--- Hyprland's selector for a workspace by its name.
+-- Hyprland's selector for a workspace by its name, as a new one is made by
+-- it. For one that exists, use `target`: a selector like this matches the
+-- workspace's address, the name it was made with, and a renamed one (`space
+-- renumber` renames tabs) keeps that.
 local function selector(name)
   return name:match("^%d+$") and name or "name:" .. name
 end
 
+-- The workspace that has the name now, whatever its address.
+local function workspace_named(name)
+  for _, workspace in ipairs(hl.get_workspaces()) do
+    if workspace.name == name then
+      return workspace
+    end
+  end
+end
+
+-- What to dispatch to reach the workspace called `name`: its selector, if that
+-- finds it, else the workspace itself (a renamed one on 0.57), else the
+-- selector that makes it. Hyprland 0.56 takes no workspace in a dispatch: it
+-- goes to workspace 1 instead.
+local function target(name)
+  local found = hl.get_workspace(selector(name))
+  if found and found.name == name then
+    return selector(name)
+  end
+  return workspace_named(name) or selector(name)
+end
+
+-- Whether a new workspace can be made called `name`: none has the name, and
+-- none a renamed one made by it has as its address.
+local function name_is_free(name)
+  return not workspace_named(name) and not hl.get_workspace(selector(name))
+end
+
 local function move_to_monitor(workspace, monitor)
-  hl.dispatch(hl.dsp.workspace.move({ workspace = selector(workspace.name), monitor = monitor.name }))
+  hl.dispatch(hl.dsp.workspace.move({ workspace = target(workspace.name), monitor = monitor.name }))
 end
 
 -- The tab of a space to show on a monitor: the one with the window you last
@@ -98,7 +128,7 @@ local function tab_on(monitor, space)
   end
   local first = block_of(monitor) * SLOTS + 1
   for key = first, first + SLOTS - 1 do
-    if not hl.get_workspace(selector(tab_name(space, key))) then
+    if name_is_free(tab_name(space, key)) then
       return tab_name(space, key)
     end
   end
@@ -117,7 +147,7 @@ local function show(monitor, name)
     if not focused or focused.name ~= monitor.name then
       hl.dispatch(hl.dsp.focus({ monitor = monitor.name }))
     end
-    hl.dispatch(hl.dsp.focus({ workspace = selector(name) }))
+    hl.dispatch(hl.dsp.focus({ workspace = target(name) }))
     if focused and focused.name ~= monitor.name then
       hl.dispatch(hl.dsp.focus({ monitor = focused.name }))
     end
@@ -252,7 +282,7 @@ if reconcile then
       end
       for _, monitor in ipairs(monitors()) do
         local tab = tabs[monitor.name]
-        local there = tab and hl.get_workspace(selector(tab))
+        local there = tab and workspace_named(tab)
         if there and there.monitor and there.monitor.name ~= monitor.name then
           tab = nil
         end
@@ -299,16 +329,27 @@ local function tab_here(space, slot)
       free = free + (own[n] and 0 or 1)
     end
     if guests[free] then
-      return selector(tab_name(space, guests[free]))
+      return target(tab_name(space, guests[free]))
     end
   end
 
-  local name = tab_name(space, block * SLOTS + slot)
-  local workspace = hl.get_workspace(selector(name))
-  if workspace and workspace.monitor and monitor and workspace.monitor.name ~= monitor.name then
-    move_to_monitor(workspace, monitor)
+  local first = block * SLOTS + 1
+  local name = tab_name(space, first + slot - 1)
+  local workspace = workspace_named(name)
+  if workspace then
+    if workspace.monitor and monitor and workspace.monitor.name ~= monitor.name then
+      move_to_monitor(workspace, monitor)
+    end
+    return target(name)
   end
-  return selector(name)
+  -- A new tab. The name it'd have may be a renamed tab's address, which it
+  -- would find rather than make: take the next one free, and `space renumber`
+  -- numbers it as the next tab.
+  local key = first + slot - 1
+  while key < first + SLOTS - 1 and not name_is_free(tab_name(space, key)) do
+    key = key + 1
+  end
+  return selector(tab_name(space, key))
 end
 
 local function focus(slot)
@@ -405,7 +446,7 @@ end
 
 -- `show` too: the tab a monitor you aren't on goes on to.
 local function show_tab(name)
-  local workspace = hl.get_workspace(selector(name))
+  local workspace = workspace_named(name)
   if workspace and workspace.monitor then
     quietly(show, workspace.monitor, name)
   end

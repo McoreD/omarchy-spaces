@@ -93,11 +93,9 @@ pub(super) fn open_terminal_then(
 ) -> Result<()> {
     let events = hypr.events().ok();
     let command = terminal::command_in(&launch::terminal(), dir, &[]);
+    let on = hypr::selector_for(&hypr.workspaces().unwrap_or_default(), workspace);
     let placed = hypr
-        .dispatch(&hypr::exec_on(
-            &command,
-            &format!("name:{workspace} silent"),
-        ))
+        .dispatch(&hypr::exec_on(&command, &format!("{on} silent")))
         .is_ok();
     let window = match (placed, events) {
         (true, Some(events)) => wait_for_window(&events, workspace, OPEN_TIMEOUT, |_| true),
@@ -176,21 +174,47 @@ pub(super) fn focus(hypr: &Hypr, space: &str, key: u8) -> Result<()> {
         hypr.dispatch(&format!("o.workspaces.focus({})", name::slot_of(key)))
             .or_else(|_| hypr.dispatch(&hypr::focus_workspace(&key.to_string())))
     } else {
-        hypr.dispatch(&hypr::focus_workspace(&selector(space, key)))
+        let selector = selector(&hypr.workspaces()?, space, key);
+        hypr.dispatch(&hypr::focus_workspace(&selector))
     }
 }
 
-pub(super) fn selector(space: &str, key: u8) -> String {
-    format!("name:{}", name::workspace_name(space, key))
+/// `key`, or, if it'd be a new tab whose number is a renamed tab's address, so
+/// that going to it would find that tab, the next free one in its block:
+/// `space renumber` numbers it as the next tab.
+pub(super) fn fresh_key(workspaces: &[hypr::Workspace], space: &str, key: u8) -> u8 {
+    if space == HOME {
+        return key;
+    }
+    let usable = |key: u8| {
+        let name = name::workspace_name(space, key);
+        workspaces.iter().any(|ws| ws.name == name) || hypr::name_is_free(workspaces, &name)
+    };
+    let block = name::block_of(key);
+    (key..=u8::MAX)
+        .take_while(|next| name::block_of(*next) == block)
+        .find(|next| usable(*next))
+        .unwrap_or(key)
+}
+
+/// Hyprland's selector for a space's tab, found by its name as `workspaces`
+/// have it now (see `hypr::selector_for`). It's also how a tab that isn't
+/// there yet is made, so it skips a number that's a renamed tab's address
+/// (`fresh_key`): every command that goes to a tab or puts a window on one
+/// does so by this.
+pub(super) fn selector(workspaces: &[hypr::Workspace], space: &str, key: u8) -> String {
+    let key = fresh_key(workspaces, space, key);
+    hypr::selector_for(workspaces, &name::workspace_name(space, key))
 }
 
 /// Hyprland's selector for a tab, as a session has it.
-pub(crate) fn session_selector(space: &str, tab: u8) -> String {
-    format!(
-        "{}{}",
-        if space == HOME { "" } else { "name:" },
-        session_workspace(space, tab)
-    )
+pub(crate) fn session_selector(workspaces: &[hypr::Workspace], space: &str, tab: u8) -> String {
+    hypr::selector_for(workspaces, &session_workspace(space, tab))
+}
+
+/// `session_selector`, by the workspaces Hyprland has now.
+pub(crate) fn live_selector(hypr: &Hypr, space: &str, tab: u8) -> String {
+    session_selector(&hypr.workspaces().unwrap_or_default(), space, tab)
 }
 
 /// Hyprland's name for a tab, as a session has it.
