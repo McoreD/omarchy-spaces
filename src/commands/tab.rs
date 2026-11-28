@@ -837,7 +837,12 @@ impl MovingTab {
     fn moves(&self, selector: &str) -> String {
         self.windows
             .iter()
-            .map(|w| format!("hl.dispatch({})\n", hypr::move_window_to(w, selector)))
+            .map(|w| {
+                format!(
+                    "hl.dispatch({})\n",
+                    hypr::move_window(Some(w), selector, false)
+                )
+            })
             .collect()
     }
 }

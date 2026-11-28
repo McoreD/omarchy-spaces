@@ -61,10 +61,11 @@ impl Mover {
 
     /// Moves it to a workspace by selector, and goes along unless `silent`.
     fn to(&self, hypr: &Hypr, selector: &str, silent: bool) -> Result<()> {
-        hypr.dispatch(&match &self.address {
-            Some(address) => hypr::move_window_of(address, selector, !silent),
-            None => hypr::move_window(selector, !silent),
-        })
+        hypr.dispatch(&hypr::move_window(
+            self.address.as_deref(),
+            selector,
+            !silent,
+        ))
     }
 
     /// Moves it to the plain workspace numbered `number`, the way Omarchy

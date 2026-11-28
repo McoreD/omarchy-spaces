@@ -321,21 +321,16 @@ pub fn focus_workspace(selector: &str) -> String {
     format!("hl.dsp.focus({{ workspace = {} }})", lua_string(selector))
 }
 
-/// Move the focused window to a workspace by selector.
-pub fn move_window(selector: &str, follow: bool) -> String {
+/// Move a window to a workspace by selector, and go along with it when
+/// `follow`: the one at `address`, whether or not it has focus, or else the
+/// focused one. A grouped one takes its group.
+pub fn move_window(address: Option<&str>, selector: &str, follow: bool) -> String {
+    let window = address
+        .map(|address| format!(", window = {}", lua_string(&format!("address:{address}"))))
+        .unwrap_or_default();
     format!(
-        "hl.dsp.window.move({{ workspace = {}, follow = {follow} }})",
+        "hl.dsp.window.move({{ workspace = {}, follow = {follow}{window} }})",
         lua_string(selector)
-    )
-}
-
-/// Move the window at `address` to a workspace by selector, whether or not it
-/// has focus, and go along with it when `follow`.
-pub fn move_window_of(address: &str, selector: &str, follow: bool) -> String {
-    format!(
-        "hl.dsp.window.move({{ workspace = {}, follow = {follow}, window = {} }})",
-        lua_string(selector),
-        lua_string(&format!("address:{address}"))
     )
 }
 
@@ -374,16 +369,6 @@ pub fn rename_workspace(selector: &str, name: &str) -> String {
         "hl.dsp.workspace.rename({{ workspace = {}, name = {} }})",
         lua_string(selector),
         lua_string(name)
-    )
-}
-
-/// Move a window to a workspace by selector, without going along. A grouped
-/// one takes its group.
-pub fn move_window_to(address: &str, selector: &str) -> String {
-    format!(
-        "hl.dsp.window.move({{ workspace = {}, follow = false, window = {} }})",
-        lua_string(selector),
-        lua_string(&format!("address:{address}"))
     )
 }
 
@@ -458,7 +443,7 @@ mod tests {
             r#"hl.dsp.focus({ workspace = "name:ren:1" })"#
         );
         assert_eq!(
-            move_window("name:ren:2", false),
+            move_window(None, "name:ren:2", false),
             r#"hl.dsp.window.move({ workspace = "name:ren:2", follow = false })"#
         );
         assert_eq!(
@@ -466,7 +451,7 @@ mod tests {
             r#"hl.dsp.workspace.rename({ workspace = "name:s1:2", name = "s2:3" })"#
         );
         assert_eq!(
-            move_window_to("0x55a4", "name:s1:2"),
+            move_window(Some("0x55a4"), "name:s1:2", false),
             r#"hl.dsp.window.move({ workspace = "name:s1:2", follow = false, window = "address:0x55a4" })"#
         );
         assert_eq!(lua_string(r#"a"b\c"#), r#""a\"b\\c""#);
