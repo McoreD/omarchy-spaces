@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+use crate::config::{self, TabStyle};
 use crate::context;
 use crate::hypr::{self, Hypr};
 use crate::launch;
@@ -331,18 +332,30 @@ pub(super) fn focus(hypr: &Hypr, space: &str, key: u8) -> Result<()> {
 /// `key`, or, if it'd be a new tab whose number is a renamed tab's address, so
 /// that going to it would find that tab, the next free one in its block:
 /// `space renumber` numbers it as the next tab.
+///
+/// With the Omarchy style, which has tabs keep their numbers, it still never
+/// takes another tab's place: what it goes on to is a number that's free, not
+/// one that has a tab. Only a tab renamed before, by a browser's numbering,
+/// can block a number, and it stops when that tab ends; the style makes none.
 pub(super) fn fresh_key(workspaces: &[hypr::Workspace], space: &str, key: u8) -> u8 {
     if space == HOME {
         return key;
     }
-    let usable = |key: u8| {
+    let omarchy = config::tab_style() == TabStyle::Omarchy;
+    let named = |key: u8| {
         let name = name::workspace_name(space, key);
-        workspaces.iter().any(|ws| ws.name == name) || hypr::name_is_free(workspaces, &name)
+        workspaces.iter().any(|ws| ws.name == name)
+    };
+    let free = |key: u8| hypr::name_is_free(workspaces, &name::workspace_name(space, key));
+    let usable = |next: u8, first: bool| match (omarchy, first) {
+        // Exactly the one asked for, if it's there or can be made.
+        (true, true) | (false, _) => named(next) || free(next),
+        (true, false) => free(next),
     };
     let block = name::block_of(key);
     (key..=u8::MAX)
         .take_while(|next| name::block_of(*next) == block)
-        .find(|next| usable(*next))
+        .find(|next| usable(*next, *next == key))
         .unwrap_or(key)
 }
 

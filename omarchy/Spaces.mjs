@@ -6,14 +6,16 @@ const VERSION = 2
 
 // Before there is any.
 export const EMPTY = { space: "", focused: "", monitors: [], spaces: [] }
-const NO_MONITOR = { name: "", space: "", tab: "", refresh: 0, tiled: false, tabs: [] }
+const NO_MONITOR = { name: "", space: "", tab: "", style: "browser", refresh: 0, tiled: false, tabs: [] }
 
 // A line of `space watch`, or throws with a readable message:
 //   space:    `space`'s version (`Cargo.toml`), "" if omitted
 //   focused:  the monitor you are on, by name
-//   monitors: [{ name, space, tab, refresh, tiled, tabs }], the space and tab
-//             each shows, by their ids (tab "" on a workspace without a
-//             number), and the tabs its bar does: [{ id, slot, label, named,
+//   monitors: [{ name, space, tab, style, refresh, tiled, tabs }], the space
+//             and tab each shows, by their ids (tab "" on a workspace without
+//             a number), how its tabs are numbered ("browser" or "omarchy",
+//             as `tabs.style` says; "browser" if omitted), and the tabs its
+//             bar does: [{ id, slot, label, named,
 //             status, windows, active }], slot 0 for no number
 //   spaces:   the rows, in the sidebar's order, each with the windows it has:
 //             clients: [{ address, tab, slot, class, title }], tab "" and slot
@@ -42,6 +44,7 @@ export function parseState(text) {
         name: monitor.name,
         space: monitor.space,
         tab: typeof monitor.tab === "string" ? monitor.tab : "",
+        style: monitor.tab_style === "omarchy" ? "omarchy" : "browser",
         refresh: number(monitor.refresh),
         tiled: monitor.tiled === true,
         tabs: (Array.isArray(monitor.tabs) ? monitor.tabs : [])
@@ -773,14 +776,15 @@ export function customModuleUrl(entry, home) {
 
 // The numeral shown for a tab slot `1..10`: its own (`"1"`–`"10"`), the one at
 // its place in a custom `numerals` list (as kanji), or "" with `numerals`
-// false or without a slot.
-export function numeralFor(slot, numerals) {
+// false or without a slot. With `zero`, as Omarchy numbers its workspaces, its
+// own tenth is "0".
+export function numeralFor(slot, numerals, zero) {
   if (!(slot > 0) || numerals === false) return ""
   if (Array.isArray(numerals)) {
     const custom = numerals[slot - 1]
     if (custom !== undefined && custom !== null && String(custom) !== "") return String(custom)
   }
-  return String(slot)
+  return zero && slot === 10 ? "0" : String(slot)
 }
 
 // A terminal window as a widget in a slot sees it.
@@ -888,7 +892,14 @@ export function dragShift(index, from, to, pitch) {
 // number. Only `home`'s have gaps to show (`withGaps`): a space's tabs are
 // numbered again as one ends (`space renumber`), so a gap there is gone in a
 // moment.
-export function tabCells(tabs, withGaps) {
+//
+// With the Omarchy style (`omarchy`), every space's keep their numbers, as
+// Omarchy's workspaces do, so each shows as it does there: 1-5 always, the
+// empty ones as a number each, and any of 6-10 that a tab has, in number
+// order, with no `…` and the empty ones after the last too (`before` is then
+// the number of tabs).
+export function tabCells(tabs, withGaps, omarchy) {
+  if (omarchy) return omarchyCells(tabs)
   const cells = []
   let last = 0
   tabs.forEach((tab, index) => {
@@ -898,6 +909,27 @@ export function tabCells(tabs, withGaps) {
     }
     cells.push({ tab, index })
   })
+  return cells
+}
+
+// How many numbers Omarchy always shows.
+const ALWAYS = 5
+
+function omarchyCells(tabs) {
+  const cells = []
+  let slot = 1
+  tabs.forEach((tab, index) => {
+    if (tab.slot > 0) {
+      // The empty numbers up to it, and to the fifth if it's past it.
+      for (; slot < tab.slot && slot <= ALWAYS; slot++) cells.push({ gap: slot, run: false, before: index })
+      slot = Math.max(slot, tab.slot + 1)
+    } else {
+      // Those without a number come last, after the numbers up to the fifth.
+      for (; slot <= ALWAYS; slot++) cells.push({ gap: slot, run: false, before: index })
+    }
+    cells.push({ tab, index })
+  })
+  for (; slot <= ALWAYS; slot++) cells.push({ gap: slot, run: false, before: tabs.length })
   return cells
 }
 
@@ -982,10 +1014,13 @@ export function tabShifts(widths, from, to, spacing, gaps) {
 // The tabs once `space tab reorder` has moved the one at `from` to
 // `to`: the same numbers, with what's on them moved along.
 export function reorderTabs(model, from, to) {
-  return {
+  const out = {
     space: model.space,
     tabs: moveRow(model.tabs, from, to).map((tab, i) => Object.assign({}, tab, { id: model.tabs[i].id, slot: model.tabs[i].slot })),
   }
+  // How they're numbered goes along, if it was said.
+  if (model.style) out.style = model.style
+  return out
 }
 
 // Whether two lists of tabs show the same, whatever their agents are doing.

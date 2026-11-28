@@ -41,7 +41,7 @@ Item {
   // they will be, until `space watch` has them so.
   readonly property var model: root.heldTabs || root.live
   property var heldTabs: null
-  readonly property var cells: Spaces.tabCells(root.model.tabs, root.model.space === "home")
+  readonly property var cells: Spaces.tabCells(root.model.tabs, root.model.space === "home", root.model.style === "omarchy")
   readonly property bool showNewTab: !root.vertical && root.newTab && root.model.tabs.length < 10
 
   // The tab being dragged, where it would drop, and how far it has moved.
@@ -258,8 +258,9 @@ Item {
     readonly property bool menuOpen: !!button.tab && !!root.controller && root.controller.menuTabFor === button.tab.id
       && !!root.controller.menuScreen && root.controller.menuScreen.name === root.screenName
 
-    readonly property string numberText: Spaces.numeralFor(button.slot, root.numerals)
-    readonly property string fallbackSlot: button.slot > 0 ? String(button.slot) : "·"
+    readonly property bool omarchyStyle: root.model.style === "omarchy"
+    readonly property string numberText: Spaces.numeralFor(button.slot, root.numerals, button.omarchyStyle)
+    readonly property string fallbackSlot: button.slot > 0 ? Spaces.numeralFor(button.slot, null, button.omarchyStyle) : "·"
     readonly property string displayText: {
       if (button.gap) return button.gapRun ? "…" : (button.numberText || button.fallbackSlot)
       if (root.vertical) return button.numberText || button.fallbackSlot

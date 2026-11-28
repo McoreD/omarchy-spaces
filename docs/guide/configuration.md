@@ -13,6 +13,9 @@ open = ["terminal"]  # what a new space opens, side by side on its first tab
 # open = ["files", "claude"]
 # open = []          # nothing: an empty space
 
+[tabs]
+style = "browser"  # "omarchy": tabs keep their numbers, 1-5 always shown, as Omarchy's workspaces do
+
 [sounds]
 enabled = false   # play a sound when an agent starts waiting for you, or finishes while you aren't looking
 # done = "~/ding.oga"      # your own sounds, in place of the ones it comes with;
@@ -35,6 +38,10 @@ See [Restoring your spaces](restore.md) and [Agent status](agent-status.md) for 
 - nothing, `open = []`: an empty space, see [Spaces and tabs](spaces-and-tabs.md#spaces).
 
 The setting is for a space you open yourself: the `+`, a key bound to `spaces.new_space()`. A script's `space new --silent`, or `space new -- <cmd>`, opens just a terminal, as it always has, unless it says `--open`. A value Spaces doesn't know gets a warning, and is skipped, as is an agent or Files that isn't installed; if that leaves nothing of a list that had something in it, a terminal opens instead. Only `open = []` opens nothing. Pick what opens from the sidebar's [Settings screen](sidebar.md#settings), or with `space config set new_space.open files,claude`; either changes only that setting and leaves the rest of the file, comments included, as it is. `space new --open` [overrides it for one space](cli.md#spaces).
+
+## Tabs
+
+`[tabs] style` is `browser` (the default) or `omarchy`. A browser's tabs are numbered 1, 2, 3, … again as one ends, and a number past the last goes to a new tab after it. Omarchy's keep their numbers, always show 1–5 on the bar (an empty one faded) and go to exactly the number you ask for. [Spaces and tabs](spaces-and-tabs.md#tabs) has the details. A value that is neither gets a warning, and is read as `browser`. Pick it from the Settings screen, or with `space config set tabs.style omarchy`; the change counts at once, in the bar, the keys and the commands.
 
 ## Terminal
 

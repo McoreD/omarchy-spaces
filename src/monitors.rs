@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use crate::config::{self, TabStyle};
 use crate::hypr::Workspace;
 use crate::name::{self, HOME};
 use crate::paths;
@@ -14,18 +15,27 @@ use crate::state;
 
 /// The blocks of the monitors plugged in now, by connector.
 #[derive(Debug, Default)]
-pub struct Blocks(Vec<(String, u8)>);
+pub struct Blocks {
+    monitors: Vec<(String, u8)>,
+    /// How the tabs are numbered, from the config: not about monitors, but
+    /// every place that works out a space's tabs has these at hand.
+    pub style: TabStyle,
+}
 
 impl Blocks {
     /// None known when Omarchy hasn't said.
     pub fn load() -> Self {
-        Self::read(&paths::omarchy_monitors())
+        Self {
+            style: config::tab_style(),
+            ..Self::read(&paths::omarchy_monitors())
+        }
     }
 
     fn read(path: &Path) -> Self {
         let text = state::read_optional(path).unwrap_or_default();
-        Self(
-            text.lines()
+        Self {
+            monitors: text
+                .lines()
                 .filter_map(|line| {
                     let mut fields = line.split('\t');
                     let block = fields.next()?.parse().ok()?;
@@ -33,7 +43,8 @@ impl Blocks {
                     Some((connector.to_string(), block))
                 })
                 .collect(),
-        )
+            style: TabStyle::default(),
+        }
     }
 
     /// The block of the monitor a workspace is on, else the one it's in
@@ -48,14 +59,14 @@ impl Blocks {
 
     /// The block of a monitor, by name.
     pub fn block(&self, monitor: &str) -> Option<u8> {
-        let known = self.0.iter().find(|(name, _)| name == monitor);
+        let known = self.monitors.iter().find(|(name, _)| name == monitor);
         known.map(|(_, block)| *block)
     }
 
     /// The monitor whose tab a key is, if it's plugged in.
     pub fn monitor(&self, key: u8) -> Option<&str> {
         let block = name::block_of(key);
-        let known = self.0.iter().find(|(_, of)| *of == block);
+        let known = self.monitors.iter().find(|(_, of)| *of == block);
         known.map(|(name, _)| name.as_str())
     }
 }
@@ -84,6 +95,9 @@ pub struct Strip {
     slots: BTreeMap<u8, u8>,
     /// Whether it's `home`'s, whose tabs keep their numbers.
     home: bool,
+    /// Whether every space's tabs keep their numbers (`tabs.style =
+    /// "omarchy"`), as `home`'s do.
+    fixed: bool,
 }
 
 impl Strip {
@@ -110,7 +124,14 @@ impl Strip {
             block,
             slots,
             home: space == HOME,
+            fixed: blocks.style == TabStyle::Omarchy,
         }
+    }
+
+    /// Whether its tabs keep their numbers: `home`'s always, the others' too
+    /// with the Omarchy style.
+    pub fn fixed(&self) -> bool {
+        self.home || self.fixed
     }
 
     /// The tabs, by key, in the order they show.
@@ -128,9 +149,9 @@ impl Strip {
     /// The tab to go to for a slot, as `super+N` does: the one that shows as
     /// it, or past the last a new one after it, as a space's tabs have no
     /// gaps (`space renumber`). `home`'s are Omarchy's workspaces, any of
-    /// them.
+    /// them, and so are all with the Omarchy style.
     pub fn reach(&self, slot: u8) -> u8 {
-        if self.home {
+        if self.fixed() {
             return self.at(slot);
         }
         let after_last = u8::try_from(self.slots.len() + 1).unwrap_or(u8::MAX);
@@ -149,7 +170,8 @@ impl Strip {
     }
 
     /// A new tab for the monitor, after its last, else in its first free slot.
-    /// `taken` are the space's that aren't here, or not yet.
+    /// With the Omarchy style, the lowest free slot, as Omarchy's own next
+    /// workspace is. `taken` are the space's that aren't here, or not yet.
     pub fn new_tab(&self, taken: impl IntoIterator<Item = u8>) -> Option<u8> {
         let taken = taken
             .into_iter()
@@ -160,7 +182,11 @@ impl Strip {
             .copied()
             .chain(taken.map(name::slot_of))
             .collect();
-        let after_last = open.iter().max().map_or(1, |last| last + 1);
+        let after_last = if self.fixed {
+            1
+        } else {
+            open.iter().max().map_or(1, |last| last + 1)
+        };
         let slot = (after_last..=name::SLOTS)
             .chain(1..=name::SLOTS)
             .find(|slot| !open.contains(slot))?;
@@ -177,6 +203,7 @@ mod tests {
             block,
             slots: slots(keys.iter().copied(), block),
             home: false,
+            fixed: false,
         }
     }
 
@@ -240,6 +267,38 @@ mod tests {
         assert_eq!(new(&[], 1), Some(11));
         assert_eq!(new(&(1..=10).collect::<Vec<_>>(), 0), None);
         assert_eq!(strip(&[1], 0).new_tab([2, 12]), Some(3), "2 is opening");
+    }
+
+    fn omarchy(keys: &[u8], block: u8) -> Strip {
+        Strip {
+            fixed: true,
+            ..strip(keys, block)
+        }
+    }
+
+    #[test]
+    fn the_omarchy_style_goes_to_exactly_the_slot() {
+        let two = omarchy(&[1, 2], 0);
+        assert_eq!((two.reach(2), two.reach(3), two.reach(6)), (2, 3, 6));
+        assert_eq!(omarchy(&[11], 1).reach(5), 15, "the second monitor's block");
+        assert_eq!(omarchy(&[], 0).reach(4), 4);
+        assert!(two.fixed() && !strip(&[1, 2], 0).fixed());
+    }
+
+    #[test]
+    fn the_omarchy_style_opens_the_lowest_empty_tab() {
+        let new = |keys: &[u8], block| omarchy(keys, block).new_tab([]);
+        assert_eq!(new(&[1], 0), Some(2));
+        assert_eq!(new(&[1, 2, 5], 0), Some(3), "not after the last");
+        assert_eq!(new(&[2, 10], 0), Some(1));
+        assert_eq!(new(&[11, 13], 1), Some(12));
+        assert_eq!(new(&[], 1), Some(11));
+        assert_eq!(new(&(1..=10).collect::<Vec<_>>(), 0), None);
+        assert_eq!(
+            omarchy(&[1], 0).new_tab([2, 3, 12]),
+            Some(4),
+            "2 and 3 are opening"
+        );
     }
 
     fn workspace(name: &str, monitor: &str) -> Workspace {

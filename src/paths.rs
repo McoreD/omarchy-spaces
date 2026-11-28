@@ -32,6 +32,13 @@ pub fn state_dir() -> PathBuf {
     xdg("XDG_STATE_HOME", ".local/state").join("omarchy-spaces")
 }
 
+/// The style of the tabs as `space` last read it from the config
+/// (`config::tab_style`): `browser` or `omarchy`. The Lua in Hyprland reads it
+/// from here, so that it goes by what `space` does.
+pub fn tab_style_file() -> PathBuf {
+    state_dir().join("tab-style")
+}
+
 /// Where Omarchy keeps which workspaces are each monitor's (`monitors.rs`).
 pub fn omarchy_monitors() -> PathBuf {
     xdg("XDG_STATE_HOME", ".local/state").join("omarchy/monitor-workspaces")

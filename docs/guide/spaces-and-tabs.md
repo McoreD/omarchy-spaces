@@ -26,7 +26,18 @@ A **space** holds one piece of work. Each space has its own **tabs**, and each t
 
 **Closing.** Right-click a tab to close it. If it has windows it asks first, as they close with it. Closing the last window on a tab takes you to the next tab on that monitor, or the one before. With none there, the tab stays, empty, as long as the space has windows on another monitor.
 
-**Numbers.** A space's tabs are always numbered 1, 2, 3, … on each monitor, as a browser's are. When a tab ends, however it goes (closed, its last window closing or moving away, sent to another space), the tabs after it move up a number, with the names you gave them, and `super+1`–`0` follow. Going to a number past the last tab goes to a new, empty tab after it. `home` is different: its tabs are Omarchy's workspaces, which keep their numbers, so a closed tab with tabs after it leaves its number on the bar, faded, as Omarchy shows its empty workspaces. Click it to go there. Two or more empty numbers in a row show as one `…`, which goes to the first.
+**Numbers.** By default (`tabs.style` `browser`, "Like a browser" in [Settings](sidebar.md#settings)), a space's tabs are always numbered 1, 2, 3, … on each monitor, as a browser's are. When a tab ends, however it goes (closed, its last window closing or moving away, sent to another space), the tabs after it move up a number, with the names you gave them, and `super+1`–`0` follow. Going to a number past the last tab goes to a new, empty tab after it. `home` is different: its tabs are Omarchy's workspaces, which keep their numbers, so a closed tab with tabs after it leaves its number on the bar, faded, as Omarchy shows its empty workspaces. Click it to go there. Two or more empty numbers in a row show as one `…`, which goes to the first.
+
+**Numbers like Omarchy's.** Set `tabs.style` to `omarchy` ("Like Omarchy") and every space's tabs, `home`'s too, are numbered as Omarchy's workspaces are, on each monitor:
+
+- The bar always shows 1–5, an empty one faded, and any of 6–10 that has a tab, in number order. The tenth shows as `0`. There is no `…`. Click a faded number to go to that empty tab.
+- Numbers are fixed: nothing is numbered again when a tab ends, so a closed tab leaves its number, faded if it's one of 1–5, and gone from the bar if it's past them.
+- `super+N`, `space tab go N` and `space window tab N` go to exactly tab N, making it if it's empty, never "the next after the last".
+- A new tab (`+`, `space tab new`, `spaces.new_tab()`) takes the lowest number with no tab, as Omarchy's next free workspace does. A tab sent to another space does the same there.
+- `super+tab`, `space tab next` and `prev` go through the tabs there are, in number order, wrapping around, which is what Omarchy does with its workspaces in use. Empty numbers are skipped.
+- A space still ends when its last window closes, going to a space still takes every monitor along, and each monitor still has its own ten tabs (the second monitor's 11–20 show as 1–10).
+
+Changing the style counts at once, with no restart, in the bar, the keys and the commands. Sending a tab to another space, or dragging one to reorder, moves its windows rather than renaming it, so a number is never left blocked. One limit, right after switching from `browser`: a tab that a browser's numbering had moved up a number keeps its old workspace address, which can make one number skip to the next free one for `super+N`, and reordering the tabs of that space is refused until that tab ends: `space tab reorder` says why, while dragging on the bar just has the tab snap back. A restart clears it. Going back to `browser` numbers every space's tabs again, once, closing the gaps; going to `omarchy` changes nothing until you use it.
 
 All of these have [keys](keys.md) you can bind, [commands](cli.md), or both.
 

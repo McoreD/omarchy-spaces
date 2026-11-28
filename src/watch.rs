@@ -33,7 +33,7 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::{Result, bail};
 
 use crate::browser::Browsers;
-use crate::config::Config;
+use crate::config::{self, Config, TabStyle};
 use crate::hypr::Hypr;
 use crate::live;
 use crate::paths;
@@ -97,6 +97,8 @@ pub fn watch(sounds: bool) -> Result<()> {
     // `None` until the config can be read.
     let mut config = read_config();
     let mut config_seen = stamp(&paths::config_file());
+    // Noted for the Lua in Hyprland too, which goes by what's saved of it.
+    let mut style = config::tab_style();
     let mut focused = hypr.active_window_address()?;
     let mut read_all = true;
     let mut slow_at = Instant::now();
@@ -162,6 +164,17 @@ pub fn watch(sounds: bool) -> Result<()> {
             // Halfway through a change, or mistaken, what it last said stands.
             config = read_config().or(config);
             config_seen = configured;
+            // The tabs show as the style says, at once. Going back to a
+            // browser's, the gaps that the other left close, once.
+            let now = config::tab_style();
+            if style != now {
+                if style == TabStyle::Omarchy {
+                    renumber_in_background();
+                }
+                style = now;
+                refresh(&hypr, &mut snapshot);
+                read_all = true;
+            }
         }
 
         let mut live = live::live_from(&snapshot, |window| shells.get(&window.address)?.1.clone());
@@ -341,6 +354,28 @@ fn serve_hub() -> Option<events::Hub> {
         .inspect_err(|e| eprintln!("space: warning: {e:#}"))
         .ok()
         .flatten()
+}
+
+/// Has `space renumber` run, as Hyprland does as a workspace comes or goes,
+/// for the style of the tabs having gone from Omarchy's back to a browser's.
+/// Another process: it waits for the commands that can end a tab, as it does
+/// then.
+fn renumber_in_background() {
+    let run = std::env::current_exe().and_then(|exe| {
+        std::process::Command::new(exe)
+            .arg("renumber")
+            .stdin(std::process::Stdio::null())
+            .spawn()
+    });
+    match run {
+        // Reaped on its own time: it doesn't keep the watch.
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(e) => eprintln!("space: warning: can't run `space renumber`: {e}"),
+    }
 }
 
 /// The config, or `None` when it can't be read.

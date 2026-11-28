@@ -155,6 +155,18 @@ pub const SECTIONS: &[(&str, &str)] = &[
     ("new_space", "New spaces"),
     ("restore", "Restore"),
     ("sounds", "Sounds"),
+    ("tabs", "Tabs"),
+];
+
+const TAB_STYLES: &[Choice] = &[
+    Choice {
+        value: "browser",
+        label: "Like a browser",
+    },
+    Choice {
+        value: "omarchy",
+        label: "Like Omarchy",
+    },
 ];
 
 /// The settings, in the order the panel shows them, a section's together.
@@ -206,6 +218,14 @@ pub static SETTINGS: &[Setting] = &[
         kind: Kind::Bool,
         default: Initial::Bool(false),
         get: |config| Value::Bool(config.sounds.enabled),
+    },
+    Setting {
+        key: "tabs.style",
+        label: "Tabs",
+        help: "Like a browser, numbers close up as tabs end; like Omarchy, they stay and 1-5 always show.",
+        kind: Kind::Choice(TAB_STYLES),
+        default: Initial::Choice("browser"),
+        get: |config| Value::Choice(config.tabs.style.clone()),
     },
 ];
 
@@ -343,8 +363,20 @@ fn edit(setting: &Setting, value: Option<&Value>) -> Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).with_context(|| format!("can't make {}", paths::tilde(dir)))?;
     }
+    let was = crate::config::tab_style();
     // Through a symlink to the real file, keeping its mode.
-    crate::state::write_atomic(&path, &edited)
+    crate::state::write_atomic(&path, &edited)?;
+    // The style of the tabs counts from now: the Lua in Hyprland goes by what
+    // `space` has noted of it. Going back to a browser's, the gaps close once
+    // (as `space watch` does too, if it's running, so that one's enough).
+    let now = crate::config::tab_style();
+    if was == crate::config::TabStyle::Omarchy
+        && now == crate::config::TabStyle::Browser
+        && let Err(e) = crate::commands::tab::renumber()
+    {
+        eprintln!("space: warning: the tabs couldn't be numbered again: {e:#}");
+    }
+    Ok(())
 }
 
 fn toml(value: &Value) -> Toml {
@@ -685,6 +717,23 @@ mod tests {
     }
 
     #[test]
+    fn the_tabs_style_is_the_configs_own() {
+        let setting = find("tabs.style").unwrap();
+        assert_eq!((setting.get)(&Config::default()), setting.default.value());
+        for word in ["browser", "omarchy"] {
+            let value = parse(setting, word).unwrap();
+            let text = with_value("", "tabs", "style", Some(&value)).unwrap();
+            let config: Config = toml::from_str(&text).unwrap();
+            assert_eq!((setting.get)(&config), value, "{text}");
+        }
+        assert!(parse(setting, "chrome").is_err());
+        assert_eq!(
+            parse(setting, "Omarchy").unwrap(),
+            Value::Choice("omarchy".into())
+        );
+    }
+
+    #[test]
     fn reads_what_each_kind_takes() {
         let parse = |key: &str, raw: &str| parse(sample(key), raw);
         for (raw, on) in [
@@ -856,7 +905,7 @@ mod tests {
         assert_eq!(
             settings[1],
             json!({
-                "key": "tabs.style", "section": "tabs", "section_title": "tabs",
+                "key": "tabs.style", "section": "tabs", "section_title": "Tabs",
                 "label": "Tabs", "help": "How they look.", "type": "choice",
                 "default": "browser", "value": "omarchy",
                 "options": [

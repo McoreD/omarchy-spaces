@@ -99,7 +99,7 @@ space watch [--sounds]       # what the plugin runs, and for it alone; --sounds 
 
 A space can be given by what it's called or by its id (`s1`, as `space ls` shows), which stays with it across restarts and is never another's.
 
-A tab is given by its id, as `space ls --json` shows it. `space tab go 2` goes to the tab that shows as 2 on the monitor you are on. In a space, a number past the last tab goes to a new one after it, as tabs have no gaps.
+A tab is given by its id, as `space ls --json` shows it. `space tab go 2` goes to the tab that shows as 2 on the monitor you are on. In a space, a number past the last tab goes to a new one after it, as tabs have no gaps, unless `tabs.style` is `omarchy`, when it goes to exactly that tab, new if it's empty (and `space tab new` takes the lowest number with no tab).
 
 ## Where a command acts
 

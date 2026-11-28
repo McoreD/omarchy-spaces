@@ -42,6 +42,8 @@ struct Monitor<'a> {
     space: &'a str,
     /// The tab it shows, by its id. `None` on a workspace without a number.
     tab: Option<String>,
+    /// How its tabs are numbered: `browser` or `omarchy` (`tabs.style`).
+    tab_style: &'static str,
     /// How many frames it shows a second.
     refresh: f64,
     /// Whether the workspace it shows has tiled windows.
@@ -137,6 +139,7 @@ fn monitor<'a>(screen: &'a Screen, snapshot: &Snapshot, live: &Live, rows: &[Row
         name: &screen.name,
         space,
         tab: screen.shows.key().map(|key| name::tab_id(space, key)),
+        tab_style: snapshot.blocks.style.word(),
         refresh: screen.refresh,
         tiled: snapshot
             .space_windows

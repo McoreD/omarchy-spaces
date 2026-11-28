@@ -863,3 +863,33 @@ test("the value as space config set takes it", () => {
   assert.equal(settingArg(settingNamed("restore.auto"), false), "false")
   assert.equal(settingArg(settingNamed("tabs.style"), "omarchy"), "omarchy")
 })
+
+test("shows Omarchy's tabs: 1-5 always, the used ones past, empty ones faded", () => {
+  const tab = (slot) => ({ id: "s1:" + slot, slot })
+  const shown = (tabs) => tabCells(tabs, false, true).map((cell) => cell.tab ? cell.tab.slot + "@" + cell.index : "(" + cell.gap + (cell.run ? "…" : "") + ")@" + cell.before)
+  assert.deepEqual(shown([]), ["(1)@0", "(2)@0", "(3)@0", "(4)@0", "(5)@0"], "an empty space")
+  assert.deepEqual(shown([tab(1), tab(2)]), ["1@0", "2@1", "(3)@2", "(4)@2", "(5)@2"])
+  assert.deepEqual(shown([tab(2), tab(4)]), ["(1)@0", "2@0", "(3)@1", "4@1", "(5)@2"], "no gap after the fifth, none as `…`")
+  assert.deepEqual(shown([tab(1), tab(7)]), ["1@0", "(2)@1", "(3)@1", "(4)@1", "(5)@1", "7@1"], "6 isn't shown while it's empty")
+  assert.deepEqual(shown([tab(7), tab(8), tab(10)]), ["(1)@0", "(2)@0", "(3)@0", "(4)@0", "(5)@0", "7@0", "8@1", "10@2"])
+  assert.deepEqual(shown([tab(3), tab(0)]), ["(1)@0", "(2)@0", "3@0", "(4)@1", "(5)@1", "0@1"], "one without a number last")
+  assert.deepEqual(shown([tab(1), tab(2), tab(3), tab(4), tab(5), tab(6)]), ["1@0", "2@1", "3@2", "4@3", "5@4", "6@5"])
+  // Home's too, and the browser style is as it was.
+  assert.deepEqual(tabCells([tab(1), tab(3)], true, false).map((cell) => cell.gap || cell.tab.slot), [1, 2, 3])
+  assert.deepEqual(tabCells([tab(1)], false).map((cell) => cell.gap || cell.tab.slot), [1])
+})
+
+test("reads how a monitor's tabs are numbered, and numbers the tenth 0 as Omarchy does", () => {
+  assert.equal(parseState(line([])).monitors[0].style, "browser", "none said: as it was")
+  const text = JSON.parse(line([]))
+  text.monitors[0].tab_style = "omarchy"
+  text.monitors[1].tab_style = "other"
+  const monitors = parseState(JSON.stringify(text)).monitors
+  assert.deepEqual(monitors.map((m) => m.style), ["omarchy", "browser"])
+  assert.equal(monitorNamed(EMPTY, "x").style, "browser")
+  assert.equal(numeralFor(10, null, true), "0")
+  assert.equal(numeralFor(10, null, false), "10")
+  assert.equal(numeralFor(9, null, true), "9")
+  assert.equal(numeralFor(10, ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"], true), "j", "your own")
+  assert.equal(reorderTabs({ space: "s1", style: "omarchy", tabs: [{ id: "a", slot: 1 }, { id: "b", slot: 2 }] }, 0, 1).style, "omarchy")
+})

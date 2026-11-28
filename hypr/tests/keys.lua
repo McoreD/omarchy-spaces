@@ -213,6 +213,53 @@ equal(dispatched[before + 7][2].workspace, "name:s1:4")
 spaces.move_window_to_tab(3)()
 equal(dispatched[before + 8][2].workspace, "name:s1:4")
 
+-- With `tabs.style = "omarchy"`, super+N is exactly tab N, new if it's empty,
+-- never the next after the last. What `space` has noted of the style is what
+-- counts, not the config: a file halfway through an edit, or with the setting
+-- in another form, is for `space` to read.
+local noted = os.tmpname()
+spaces.internal.settings.file = noted
+local function note(text)
+  local file = assert(io.open(noted, "w"))
+  file:write(text)
+  file:close()
+end
+workspaces = {}
+tabs("s1", 2)
+active = { name = "s1:2" }
+note("omarchy\n")
+local from = #dispatched
+spaces.go_to_tab(6)()
+spaces.move_window_to_tab(9)()
+spaces.go_to_tab(2)()
+equal(dispatched[from + 1][2].workspace, "name:s1:6")
+equal(dispatched[from + 2][2].workspace, "name:s1:9")
+equal(dispatched[from + 3][2].workspace, "name:s1:2")
+note("omarchy")
+spaces.go_to_tab(5)()
+equal(dispatched[#dispatched][2].workspace, "name:s1:5")
+for _, text in ipairs({ "browser\n", "", "chrome\n", "omarchy-ish\n", "\n" }) do
+  note(text)
+  spaces.go_to_tab(5)()
+  equal(dispatched[#dispatched][2].workspace, "name:s1:3")
+end
+-- Nothing noted yet: a browser's.
+os.remove(noted)
+spaces.go_to_tab(5)()
+equal(dispatched[#dispatched][2].workspace, "name:s1:3")
+-- A number a renamed tab's address blocks: not the tab after it that is there,
+-- but one that's free (`space` does the same).
+note("omarchy\n")
+workspaces = {}
+workspaces[1] = { name = "s1:1", address = "s1:2", monitor = monitor }
+workspaces[2] = { name = "s1:2", address = "s1:3", monitor = monitor }
+workspaces[3] = { name = "s1:4", address = "s1:4", monitor = monitor }
+active = workspaces[1]
+spaces.go_to_tab(3)()
+equal(dispatched[#dispatched][2].workspace, "name:s1:5")
+os.remove(noted)
+spaces.internal.settings.file = nil
+
 -- What `space` itself calls (src/hypr.rs).
 equal(type(spaces.internal.sync), "function")
 equal(type(spaces.internal.show), "function")

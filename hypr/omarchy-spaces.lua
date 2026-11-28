@@ -21,6 +21,36 @@
 local SLOTS = 10
 local LAST_KEY = 250
 
+-- How tabs are numbered, "browser" (the default) or "omarchy" (`tabs.style` in
+-- ~/.config/omarchy-spaces/config.toml). It isn't read from there: `space`
+-- decides what the config says, so as not to disagree with it about a file
+-- that's halfway through an edit or has the setting in another form, and
+-- notes it in a file of its own in its state folder, which this reads each
+-- time it matters, so a change counts at once. Without the file, a browser's.
+-- A plain read, so these keys can't leave you stuck, and need no `space`.
+local settings = {}
+
+local function style_file()
+  if settings.file then
+    return settings.file
+  end
+  local base = os.getenv("XDG_STATE_HOME")
+  if not base or base == "" then
+    base = (os.getenv("HOME") or "") .. "/.local/state"
+  end
+  return base .. "/omarchy-spaces/tab-style"
+end
+
+local function omarchy_style()
+  local file = io.open(style_file())
+  if not file then
+    return false
+  end
+  local word = file:read("l")
+  file:close()
+  return word ~= nil and word:match("^%s*(.-)%s*$") == "omarchy"
+end
+
 -- The space and tab a workspace is, as `space` reads its name (src/name.rs):
 -- `s1:n`. `home` and no tab for any other, nil for special ones.
 local function locate(workspace)
@@ -233,8 +263,9 @@ end
 -- are: one that ends, however it does, takes its number with it, and `space
 -- renumber` moves the ones after it up. It runs as any workspace but one of
 -- `home`'s comes or goes, so a gap closes whatever left it. `home`'s tabs are
--- Omarchy's workspaces and keep their numbers. A workspace that's gone may
--- not say what it was.
+-- Omarchy's workspaces and keep their numbers, and so do all with
+-- `tabs.style` "omarchy" (see above), where it only forgets the names of tabs
+-- that have ended. A workspace that's gone may not say what it was.
 local function renumber(workspace)
   local ok, space = pcall(locate, workspace)
   if ok and space == "home" then
@@ -302,7 +333,8 @@ end
 -- The tab that shows as a slot on the focused monitor: one of its own, or a
 -- guest, another monitor's left here as it was unplugged. Guests take the
 -- lowest slots free, in order, as `space` numbers them (src/monitors.rs).
--- Past the last tab, it's a new one after it, as tabs have no gaps.
+-- Past the last tab, it's a new one after it, as tabs have no gaps; with the
+-- Omarchy style, it's exactly that slot's, new if it's empty.
 local function tab_here(space, slot)
   local monitor = hl.get_active_monitor()
   local block = monitor and block_of(monitor) or 0
@@ -321,7 +353,9 @@ local function tab_here(space, slot)
   for _ in pairs(own) do
     count = count + 1
   end
-  slot = math.min(slot, count + 1)
+  if not omarchy_style() then
+    slot = math.min(slot, count + 1)
+  end
   if not own[slot] then
     table.sort(guests)
     local free = 0
@@ -344,7 +378,10 @@ local function tab_here(space, slot)
   end
   -- A new tab. The name it'd have may be a renamed tab's address, which it
   -- would find rather than make: take the next one free, and `space renumber`
-  -- numbers it as the next tab.
+  -- numbers it as the next tab. With the Omarchy style, which doesn't rename
+  -- tabs itself, only one renamed before can be in the way, and stops once it
+  -- ends. (`space` goes on to the next that is free, not to a tab that's there,
+  -- the same.)
   local key = first + slot - 1
   while key < first + SLOTS - 1 and not name_is_free(tab_name(space, key)) do
     key = key + 1
@@ -475,7 +512,8 @@ local M = {
   terminal = terminal,
 
   -- For `space` alone (src/hypr.rs).
-  internal = { sync = sync, show = show_tab },
+  -- `settings.file` is where the tests put the style.
+  internal = { sync = sync, show = show_tab, settings = settings },
 }
 
 -- A tab emptied by closing its last window doesn't linger, however the

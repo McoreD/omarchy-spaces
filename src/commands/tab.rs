@@ -13,6 +13,7 @@ use super::{
     SpaceTarget, focus, forget, fresh_key, hold_tabs, live_selector, moved, open_terminal_then,
     remember, resolve_dir, session_selector, session_workspace, take_turn, target_space,
 };
+use crate::config::{self, TabStyle};
 use crate::context;
 use crate::hypr::{self, Hypr};
 use crate::layout;
@@ -344,8 +345,8 @@ pub fn reorder_tab(tab: String, position: usize) -> Result<()> {
         return Ok(());
     };
 
-    if id == HOME {
-        reorder_home(&hypr, &active, key, &moves)?;
+    if id == HOME || config::tab_style() == TabStyle::Omarchy {
+        reorder_by_moving(&hypr, &active, &on.monitor, &id, key, &moves)?;
     } else {
         hypr.eval(&rename_tabs(&hypr.workspaces()?, &id, key, &moves))?;
     }
@@ -416,40 +417,72 @@ fn rename_tabs(
         .collect()
 }
 
-/// Moves what's on `home`'s tabs as `moves` says, `first` being the tab the
-/// others make room for. Their workspaces are Hyprland's numbered ones, which
-/// keep their numbers, so each window moves, and the tiles are split again as
-/// they were.
-fn reorder_home(
+/// Moves what's on a space's tabs as `moves` says, `first` being the tab the
+/// others make room for, when their workspaces can't be renamed: `home`'s are
+/// Hyprland's numbered ones, which keep their numbers, and with the Omarchy
+/// style a renamed one would keep its old address, which would block that
+/// number. So each window moves, and the tiles are split again as they were.
+fn reorder_by_moving(
     hypr: &Hypr,
     active: &hypr::Workspace,
+    monitor: &str,
+    space: &str,
     first: u8,
     moves: &BTreeMap<u8, u8>,
 ) -> Result<()> {
+    let workspaces = if space == HOME {
+        Vec::new()
+    } else {
+        hypr.workspaces()?
+    };
+    // A renamed workspace keeps the address it was made with, which `name:`
+    // matches. With the Omarchy style nothing renames one, but a tab left by a
+    // browser's numbering may have one: moving windows by number onto it, as
+    // the others empty and may go meanwhile, could make a second of the same
+    // name. So nothing is moved until it ends.
+    if let Some(odd) = workspaces
+        .iter()
+        .find(|ws| is_mismatched(ws) && name::locate(ws.id, &ws.name).space() == space)
+    {
+        bail!(
+            "can't reorder the tabs of this space while tab {} is addressed by another number, as a browser's numbering left it: it clears once that tab ends",
+            shown_id(odd.id, &odd.name)
+        );
+    }
     let snapshot = live::snapshot(hypr)?;
-    let tab = |key: u8| session_selector(&[], HOME, key);
+    let focused_window = hypr.active_window_address()?;
+    let tab = |key: u8| session_selector(&workspaces, space, key);
     let tabs: BTreeMap<u8, MovingTab> = moves
         .keys()
         .map(|key| {
-            let on_tab = |w: &&SpaceWindow| w.space == HOME && w.tab == Some(*key);
+            let on_tab = |w: &&SpaceWindow| w.space == space && w.tab == Some(*key);
             let windows: Vec<&SpaceWindow> = snapshot.space_windows.iter().filter(on_tab).collect();
-            (*key, MovingTab::of(&snapshot, HOME, *key, &windows))
+            (*key, MovingTab::of(&snapshot, space, *key, &windows))
         })
         .collect();
 
     let mut script = String::from(
         "local animated = hl.get_config(\"animations.enabled\")\n\
+         local no_warps = hl.get_config(\"cursor.no_warps\")\n\
          hl.config({ animations = { enabled = false } })\n\
+         hl.config({ cursor = { no_warps = true } })\n\
          local ok, err = pcall(function()\n",
     );
+    // A workspace made meanwhile is made on the monitor you are on.
+    let there = space != HOME && monitor != active.monitor;
+    if there {
+        script.push_str(&format!("hl.dispatch({})\n", hypr::focus_monitor(monitor)));
+    }
     script.push_str(&tabs[&first].moves(ASIDE));
     for (from, to) in in_turn(first, moves) {
         script.push_str(&tabs[&from].moves(&tab(to)));
     }
     script.push_str(&tabs[&first].moves(&tab(moves[&first])));
-    let here = u8::try_from(active.id)
-        .ok()
-        .filter(|_| matches!(name::locate(active.id, &active.name), Location::Home { .. }));
+    let here = match name::locate(active.id, &active.name) {
+        Location::Home { .. } if space == HOME => u8::try_from(active.id).ok(),
+        Location::Space { name, key } if name == space => Some(key),
+        _ => None,
+    };
     if let Some(to) = here.and_then(|here| moves.get(&here)) {
         script.push_str(&format!(
             "hl.dispatch({})\n",
@@ -459,12 +492,35 @@ fn reorder_home(
     for moving in tabs.values().filter(|t| !t.layout.is_plain()) {
         script.push_str(&format!("do\n{}end\n", moving.layout.script()));
     }
+    script.push_str("end)\n");
+    // Where you were, outside the protected call, so that a move that fails
+    // doesn't leave you elsewhere.
+    if there {
+        script.push_str(&format!(
+            "pcall(function() hl.dispatch({}) end)\n",
+            hypr::focus_monitor(&active.monitor)
+        ));
+        if let Some(window) = &focused_window {
+            script.push_str(&format!(
+                "pcall(function() hl.dispatch({}) end)\n",
+                hypr::focus_window(window)
+            ));
+        }
+    }
     script.push_str(
-        "end)\n\
-         hl.config({ animations = { enabled = animated } })\n\
+        "hl.config({ animations = { enabled = animated } })\n\
+         hl.config({ cursor = { no_warps = no_warps } })\n\
          if not ok then error(err) end\n",
     );
     hypr.eval(&script)
+}
+
+/// Whether a space's tab is a workspace that was renamed, so that its address,
+/// which `name:` matches, is another number than its name.
+fn is_mismatched(ws: &hypr::Workspace) -> bool {
+    matches!(name::locate(ws.id, &ws.name), Location::Space { .. })
+        && !ws.address.is_empty()
+        && ws.address != ws.name
 }
 
 /// A space's tab, and the number it shows.
@@ -771,7 +827,10 @@ fn move_tab(
 ) -> Result<()> {
     let workspaces = hypr.workspaces()?;
     let selector = session_selector(&workspaces, to, to_key);
-    if from != HOME && to != HOME {
+    // With the Omarchy style the windows move rather than the workspace being
+    // renamed: a renamed workspace keeps the address it was made with, which
+    // would block that number for a new tab as long as it lives.
+    if from != HOME && to != HOME && config::tab_style() != TabStyle::Omarchy {
         return hypr.dispatch(&hypr::rename_workspace(
             &session_selector(&workspaces, from, key),
             &session_workspace(to, to_key),
@@ -930,7 +989,9 @@ pub(super) fn emptied_held(workspace: &str) -> Result<()> {
 /// are, all between two frames. `home`'s tabs are Omarchy's numbered
 /// workspaces, which other things know by their numbers: they keep theirs.
 /// Nothing happens while a session is being restored, as that opens tabs by
-/// the numbers it saved.
+/// the numbers it saved, nor with `tabs.style` set to `omarchy`, whose tabs
+/// keep their numbers: going back to `browser` runs it once, which closes the
+/// gaps that have come.
 pub fn renumber() -> Result<()> {
     let _tabs = hold_tabs()?;
     let Some(_restoring) = session::lock_restore(&paths::state_dir())? else {
@@ -939,53 +1000,99 @@ pub fn renumber() -> Result<()> {
     renumber_tabs(&Hypr::from_env()?)
 }
 
-/// `renumber`, by a command already holding the tabs.
-fn renumber_tabs(hypr: &Hypr) -> Result<()> {
-    let mut open: BTreeMap<String, BTreeSet<u8>> = BTreeMap::new();
+/// The tabs each space has, by their numbers.
+type OpenTabs = BTreeMap<String, BTreeSet<u8>>;
+
+/// The workspaces there are, and the tabs each space has now.
+fn open_tabs(hypr: &Hypr) -> Result<(Vec<hypr::Workspace>, OpenTabs)> {
+    let mut open = OpenTabs::new();
     let workspaces = hypr.workspaces()?;
     for ws in &workspaces {
         if let Location::Space { name, key } = name::locate(ws.id, &ws.name) {
             open.entry(name).or_default().insert(key);
         }
     }
-    let moves: BTreeMap<String, BTreeMap<u8, u8>> = open
-        .iter()
-        .map(|(space, keys)| (space.clone(), closing_moves(keys)))
-        .filter(|(_, moves)| !moves.is_empty())
-        .collect();
-    if moves.is_empty() {
+    Ok((workspaces, open))
+}
+
+/// `renumber`, by a command already holding the tabs. With the Omarchy style
+/// the tabs keep their numbers, as `home`'s do, so only the names of tabs that
+/// have ended go, so as not to come back on the next one with the number.
+fn renumber_tabs(hypr: &Hypr) -> Result<()> {
+    let omarchy = config::tab_style() == TabStyle::Omarchy;
+    let (workspaces, mut open) = open_tabs(hypr)?;
+    let moves: BTreeMap<String, BTreeMap<u8, u8>> = if omarchy {
+        BTreeMap::new()
+    } else {
+        open.iter()
+            .map(|(space, keys)| (space.clone(), closing_moves(keys)))
+            .filter(|(_, moves)| !moves.is_empty())
+            .collect()
+    };
+    if !omarchy && moves.is_empty() {
         return Ok(());
     }
-    // Lowest first, each into a number that's free by then.
-    let by_address = &workspaces;
-    let script: String = moves
-        .iter()
-        .flat_map(|(space, moves)| {
-            moves.iter().map(move |(from, to)| {
-                let rename = hypr::rename_workspace(
-                    &session_selector(by_address, space, *from),
-                    &session_workspace(space, *to),
-                );
-                format!("hl.dispatch({rename})\n")
+    if !moves.is_empty() {
+        // Lowest first, each into a number that's free by then.
+        let by_address = &workspaces;
+        let script: String = moves
+            .iter()
+            .flat_map(|(space, moves)| {
+                moves.iter().map(move |(from, to)| {
+                    let rename = hypr::rename_workspace(
+                        &session_selector(by_address, space, *from),
+                        &session_workspace(space, *to),
+                    );
+                    format!("hl.dispatch({rename})\n")
+                })
             })
-        })
-        .collect();
-    hypr.eval(&script)?;
+            .collect();
+        hypr.eval(&script)?;
+    }
 
     // The names you gave them go along. Those of tabs that have ended go,
     // so as not to land on another.
     let mut store = Store::lock(&paths::state_dir())?;
-    for (space, moves) in &moves {
-        if let Some(entry) = store.spaces.get_mut(space) {
-            entry.tabs = std::mem::take(&mut entry.tabs)
-                .into_iter()
-                .filter(|(key, _)| open[space].contains(key))
-                .map(|(key, name)| (*moves.get(&key).unwrap_or(&key), name))
+    if omarchy {
+        // Of every space, and as the tabs are now, after the lock: a tab
+        // named since is there, and keeps its name.
+        open = open_tabs(hypr)?.1;
+    }
+    // Those whose terminal is on its way count: it names them as soon as it's up.
+    let opening = if omarchy {
+        reserve::reserved(&paths::reserved_dir()).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let mut changed = false;
+    for space in if omarchy {
+        open.keys().cloned().collect::<Vec<_>>()
+    } else {
+        moves.keys().cloned().collect()
+    } {
+        let moves = moves.get(&space);
+        if let Some(entry) = store.spaces.get_mut(&space) {
+            let before = std::mem::take(&mut entry.tabs);
+            entry.tabs = before
+                .iter()
+                .filter(|(key, _)| {
+                    open[&space].contains(key) || opening.contains(&(space.clone(), **key))
+                })
+                .map(|(key, name)| {
+                    let to = moves.and_then(|moves| moves.get(key));
+                    (*to.unwrap_or(key), name.clone())
+                })
                 .collect();
+            changed |= entry.tabs != before;
         }
     }
-    store.save()?;
+    if changed || !moves.is_empty() {
+        store.save()?;
+    }
     drop(store);
+    if moves.is_empty() {
+        return Ok(());
+    }
     // Where you left each space is still the tab you left.
     Last::update(&paths::state_dir(), |last| {
         for (space, moves) in &moves {

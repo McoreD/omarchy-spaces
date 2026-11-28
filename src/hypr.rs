@@ -339,6 +339,14 @@ pub fn move_window_of(address: &str, selector: &str, follow: bool) -> String {
     )
 }
 
+/// Focus a window, by its address.
+pub fn focus_window(address: &str) -> String {
+    format!(
+        "hl.dsp.focus({{ window = {} }})",
+        lua_string(&format!("address:{address}"))
+    )
+}
+
 /// Focus a monitor, by its name.
 pub fn focus_monitor(monitor: &str) -> String {
     format!("hl.dsp.focus({{ monitor = {} }})", lua_string(monitor))

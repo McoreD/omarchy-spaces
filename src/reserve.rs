@@ -32,7 +32,7 @@ pub fn reserve(
 }
 
 /// What is reserved, clearing out what has been for too long.
-fn reserved(dir: &Path) -> Result<Vec<(String, u8)>> {
+pub fn reserved(dir: &Path) -> Result<Vec<(String, u8)>> {
     let mut reserved = Vec::new();
     for file in fs::read_dir(dir).with_context(|| format!("can't read {}", dir.display()))? {
         let file = file?;

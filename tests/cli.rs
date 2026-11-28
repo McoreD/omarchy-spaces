@@ -4895,7 +4895,7 @@ fn a_bad_value_still_leaves_the_settings_readable_and_fixable() {
     env.write_config("[sounds]\nenabled = \"yes\"\n[restore]\nauto = false\n");
     let schema: Value = serde_json::from_str(&env.ok(&["config", "schema", "--json"])).unwrap();
     let settings = schema["settings"].as_array().unwrap();
-    assert_eq!(settings.len(), 5);
+    assert_eq!(settings.len(), 6);
     let sounds = settings
         .iter()
         .find(|s| s["key"] == "sounds.enabled")
@@ -4961,7 +4961,8 @@ fn config_schema_lists_every_setting_with_its_value() {
             "restore.auto",
             "restore.agents",
             "restore.browsers",
-            "sounds.enabled"
+            "sounds.enabled",
+            "tabs.style"
         ]
     );
     let open = &settings[0];
@@ -5079,4 +5080,431 @@ fn config_set_writes_through_a_symlink_and_keeps_its_mode() {
         fs::metadata(&real).unwrap().permissions().mode() & 0o777,
         0o600
     );
+}
+
+const OMARCHY_TABS: &str = "[tabs]\nstyle = \"omarchy\"\n";
+
+#[test]
+fn the_omarchy_tab_style_leaves_the_numbers_as_they_are() {
+    let env = Env::new();
+    env.write_config(OMARCHY_TABS);
+    env.add_terminal("s1:1", &env.dir("ren"));
+    env.add_window("s1:3");
+    env.add_window("s1:4");
+    env.add_window("s2:2");
+    env.add_window("2");
+    env.set_active("s1:4");
+    env.ok(&["tab", "rename", "s1:4", "server"]);
+    env.ok(&["go", "s2"]);
+
+    let renames = |env: &Env| {
+        let hypr = env.hypr.lock().unwrap();
+        hypr.evaluated
+            .iter()
+            .filter(|script| script.contains("workspace.rename"))
+            .count()
+    };
+    let before = renames(&env);
+    env.ok(&["renumber"]);
+    assert_eq!(renames(&env), before, "nothing renamed");
+    assert_eq!(
+        env.windows(),
+        ["s1:1", "s1:3", "s1:4", "s2:2", "2"],
+        "a space's keep theirs too, as home's do"
+    );
+    assert_eq!(env.tab_names(1), json!({ "s1:4": "server" }));
+
+    // Back to a browser's: the gaps close, once.
+    env.write_config("[tabs]\nstyle = \"browser\"\n");
+    env.ok(&["renumber"]);
+    assert_eq!(env.windows(), ["s1:1", "s1:2", "s1:3", "s2:1", "2"]);
+    assert_eq!(env.tab_names(1), json!({ "s1:3": "server" }));
+    let closed = renames(&env);
+    env.ok(&["renumber"]);
+    assert_eq!(renames(&env), closed, "once");
+}
+
+#[test]
+fn the_omarchy_tab_style_goes_to_exactly_the_tab() {
+    let env = Env::new();
+    env.write_config(OMARCHY_TABS);
+    env.add_window("s1:1");
+    env.set_active("s1:1");
+    env.ok(&["tab", "go", "4"]);
+    assert_eq!(env.active(), "s1:4", "not the next after the last");
+    env.ok(&["tab", "go", "10"]);
+    assert_eq!(env.active(), "s1:10");
+    env.ok(&["tab", "go", "1"]);
+    assert_eq!(env.active(), "s1:1");
+
+    // A window goes to exactly that one too.
+    env.ok(&["window", "tab", "7"]);
+    assert_eq!(env.windows(), ["s1:7"]);
+    assert_eq!(env.active(), "s1:7");
+    env.ok(&["window", "tab", "2", "--silent"]);
+    assert_eq!(env.windows(), ["s1:2"]);
+    assert_eq!(env.active(), "s1:7");
+
+    // Next and previous go among the tabs there are, in number order.
+    env.add_window("s1:5");
+    env.ok(&["tab", "go", "2"]);
+    env.ok(&["tab", "next"]);
+    assert_eq!(env.active(), "s1:5");
+    env.ok(&["tab", "prev"]);
+    assert_eq!(env.active(), "s1:2");
+
+    // Browser style: as before.
+    env.write_config("");
+    env.set_active("s1:2");
+    env.ok(&["tab", "go", "9"]);
+    assert_eq!(env.active(), "s1:3");
+}
+
+#[test]
+fn the_omarchy_tab_style_numbers_the_second_monitors_block_too() {
+    let env = Env::new();
+    env.write_config(OMARCHY_TABS);
+    env.add_window("s1:1");
+    env.add_window("s1:11");
+    env.set_active("s1:1");
+    env.plug_in("s1:11");
+    env.hypr.lock().unwrap().go("s1:11".into());
+    env.ok(&["tab", "go", "4"]);
+    assert_eq!(env.active(), "s1:14");
+    env.add_window("s1:14");
+    env.ok(&["window", "tab", "6"]);
+    assert_eq!(env.windows().last().unwrap(), "s1:16");
+    // The lowest free number of its own block.
+    env.ok(&["tab", "go", "1"]);
+    env.ok(&["tab", "new"]);
+    assert_eq!(env.active(), "s1:12");
+}
+
+#[test]
+fn the_omarchy_tab_style_opens_a_new_tab_on_the_lowest_empty_number() {
+    let env = Env::new();
+    env.write_config(OMARCHY_TABS);
+    env.add_window("s1:1");
+    env.add_window("s1:3");
+    env.add_window("s1:4");
+    env.set_active("s1:4");
+    env.ok(&["tab", "new"]);
+    assert_eq!(env.active(), "s1:2");
+    env.add_window("s1:2");
+    env.ok(&["tab", "new"]);
+    assert_eq!(env.active(), "s1:5");
+
+    // In `home`, Omarchy's own: the lowest empty too.
+    let env = Env::new();
+    env.write_config(OMARCHY_TABS);
+    env.add_window("1");
+    env.add_window("3");
+    env.ok(&["tab", "new"]);
+    assert_eq!(env.active(), "2");
+}
+
+#[test]
+fn watch_says_how_the_tabs_are_numbered_and_follows_a_change() {
+    use std::time::Duration;
+    let env = Env::new();
+    env.add_window("s1:1");
+    env.add_window("s1:3");
+    env.set_active("s1:1");
+    let watch = Watch::start(&env);
+    let state = watch.settled(Duration::from_millis(400));
+    assert_eq!(state["monitors"][0]["tab_style"], "browser");
+
+    env.write_config(OMARCHY_TABS);
+    let mut state = watch.next_state(Duration::from_secs(3));
+    while state["monitors"][0]["tab_style"] != "omarchy" {
+        state = watch.next_state(Duration::from_secs(3));
+    }
+    let slots: Vec<Value> = state["monitors"][0]["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tab| tab["slot"].clone())
+        .collect();
+    assert_eq!(slots, [1, 3], "the numbers it has");
+    assert_eq!(env.windows(), ["s1:1", "s1:3"]);
+
+    // Back to a browser's: the gap closes.
+    env.write_config("[tabs]\nstyle = \"browser\"\n");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while env.windows() != ["s1:1", "s1:2"] {
+        assert!(std::time::Instant::now() < deadline, "{:?}", env.windows());
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn the_omarchy_tab_style_never_lands_on_a_renamed_tab() {
+    let env = Env::new();
+    // Left as a browser's tabs were by a tab that ended.
+    env.renamed_space("s1", &env.dir("ren"));
+    env.set_active("s1:2");
+    env.write_config(OMARCHY_TABS);
+    let windows = env.windows();
+
+    env.ok(&["tab", "go", "1"]);
+    assert_eq!(env.active(), "s1:1");
+    env.ok(&["tab", "go", "2"]);
+    assert_eq!(env.active(), "s1:2");
+    assert_eq!(env.workspace_names(), ["s1:1", "s1:2"]);
+    // Exactly 3: its number is a renamed tab's address, so it takes the
+    // next one free, as a browser's does.
+    env.ok(&["tab", "go", "3"]);
+    assert_eq!(env.workspace_names().len(), 3);
+    assert_eq!(env.windows(), windows, "no window moved");
+    env.ok(&["renumber"]);
+    assert_eq!(env.workspace_names().len(), 3, "kept as they are");
+    // Where nothing is in the way, exactly.
+    env.ok(&["tab", "go", "7"]);
+    assert_eq!(env.active(), "s1:7");
+}
+
+impl Env {
+    /// Whether a workspace is still addressed by `address` (`name:address`
+    /// would find it), whatever it's named now.
+    fn has_address(&self, address: &str) -> bool {
+        let hypr = self.hypr.lock().unwrap();
+        hypr.workspaces
+            .iter()
+            .any(|(_, name)| hypr.address(name) == address)
+    }
+}
+
+#[test]
+fn the_omarchy_tab_style_sends_a_tab_away_without_leaving_its_address() {
+    let env = Env::new();
+    env.write_config(OMARCHY_TABS);
+    for tab in 1..=4 {
+        env.add_window(&format!("s1:{tab}"));
+    }
+    env.add_window("s2:1");
+    env.set_active("s1:3");
+    env.ok(&["tab", "send", "s1:3", "s2"]);
+    assert!(!env.has_address("s1:3"), "{:?}", env.workspace_names());
+    assert_eq!(env.windows().iter().filter(|w| *w == "s1:4").count(), 1);
+
+    // Number 3 is empty and exactly reachable, not the tab after it.
+    env.ok(&["go", "s1"]);
+    env.ok(&["tab", "go", "3"]);
+    assert_eq!(env.active(), "s1:3");
+    env.ok(&["tab", "go", "1"]);
+    env.ok(&["tab", "new"]);
+    assert_eq!(env.active(), "s1:3", "the lowest empty");
+    env.ok(&["tab", "go", "1"]);
+    env.ok(&["window", "tab", "3", "--silent"]);
+    // The new tab's terminal, and the window sent there; tab 4's are as ever.
+    assert_eq!(env.windows().iter().filter(|w| *w == "s1:3").count(), 2);
+    assert_eq!(env.windows().iter().filter(|w| *w == "s1:4").count(), 1);
+}
+
+#[test]
+fn the_omarchy_tab_style_reorders_and_closes_without_dangling_addresses() {
+    let env = Env::new();
+    env.write_config(OMARCHY_TABS);
+    for tab in 1..=3 {
+        env.add_window(&format!("s1:{tab}"));
+    }
+    env.set_active("s1:1");
+    env.ok(&["tab", "reorder", "s1:1", "3"]);
+    for tab in 1..=3 {
+        assert!(env.has_address(&format!("s1:{tab}")));
+    }
+    assert_eq!(env.workspace_names(), ["s1:1", "s1:2", "s1:3"]);
+    env.ok(&["tab", "close", "s1:3"]);
+    env.set_active("s1:1");
+    assert!(!env.has_address("s1:3"), "{:?}", env.workspace_names());
+    env.ok(&["tab", "go", "3"]);
+    assert_eq!(env.active(), "s1:3");
+}
+
+#[test]
+fn the_omarchy_tab_style_never_lands_on_an_existing_tab_for_a_blocked_number() {
+    let env = Env::new();
+    // As a browser's renumbering leaves them: named :1 and :2, addressed :2
+    // and :3, with a fourth tab beyond.
+    env.renamed_space("s1", &env.dir("ren"));
+    env.add_window("s1:4");
+    env.set_active("s1:2");
+    env.write_config(OMARCHY_TABS);
+    env.ok(&["tab", "go", "3"]);
+    assert_ne!(env.active(), "s1:4", "tab 4's");
+    assert!(!["s1:1", "s1:2"].contains(&env.active().as_str()));
+}
+
+#[test]
+fn the_omarchy_tab_style_forgets_the_name_of_a_tab_that_ended() {
+    let env = Env::new();
+    env.write_config(OMARCHY_TABS);
+    env.add_window("s1:1");
+    let second = env.add_window("s1:2");
+    env.add_window("s1:3");
+    env.set_active("s1:1");
+    env.ok(&["tab", "rename", "s1:2", "logs"]);
+    let saved = |env: &Env| fs::read_to_string(env.state().join("spaces.json")).unwrap();
+    assert!(saved(&env).contains("logs"));
+    env.close_window(&second);
+    // The tabs keep their numbers, and the name of the one that ended goes.
+    env.ok(&["renumber"]);
+    assert_eq!(env.windows(), ["s1:1", "s1:3"]);
+    assert!(!saved(&env).contains("logs"), "{}", saved(&env));
+    env.ok(&["tab", "new"]);
+    assert_eq!(env.active(), "s1:2");
+    env.add_window("s1:2");
+    assert_eq!(env.tab_names(1), json!({}));
+}
+
+#[test]
+fn config_set_notes_the_tab_style_for_hyprland_and_closes_the_gaps_going_back() {
+    let env = Env::new();
+    let noted = |env: &Env| fs::read_to_string(env.state().join("tab-style")).unwrap();
+    env.add_window("s1:1");
+    env.add_window("s1:3");
+    env.set_active("s1:1");
+    env.ok(&["config", "set", "tabs.style", "omarchy"]);
+    assert_eq!(noted(&env), "omarchy\n");
+    assert_eq!(env.windows(), ["s1:1", "s1:3"], "nothing to do going to it");
+
+    // Halfway through a hand edit, it stays as it was.
+    env.write_config("[tabs\nstyle = \"browser\"\n");
+    env.ok(&["tab", "go", "1"]);
+    assert_eq!(noted(&env), "omarchy\n");
+
+    env.write_config(OMARCHY_TABS);
+    env.ok(&["config", "set", "tabs.style", "browser"]);
+    assert_eq!(noted(&env), "browser\n");
+    assert_eq!(env.windows(), ["s1:1", "s1:2"], "the gap closed, once");
+}
+
+/// Tabs as a browser's numbering leaves them: `a` on the first, named s1:1 and
+/// addressed s1:2, and `b` and `c` on the second, named s1:2, addressed s1:3.
+fn browser_era_tabs(env: &Env) -> (String, String, String) {
+    let a = env.add_terminal("s1:2", &env.dir("ren"));
+    let b = env.add_window("s1:3");
+    let c = env.add_window("s1:3");
+    env.ok(&["renumber"]);
+    assert_eq!(env.window_place(&a), "s1:1");
+    assert!(env.has_address("s1:2") && env.has_address("s1:3"));
+    assert!(!env.has_address("s1:1"));
+    (a, b, c)
+}
+
+#[test]
+fn a_tab_named_as_it_opens_keeps_its_name_while_the_tabs_are_renumbered() {
+    let env = Env::new();
+    env.write_config(OMARCHY_TABS);
+    env.add_window("s1:1");
+    env.set_active("s1:1");
+    // Its name is saved first, its terminal not up yet: reserved.
+    let dir = env.root.path().join("run/omarchy-spaces/reserved");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("s1:2"), "").unwrap();
+    env.ok(&["tab", "rename", "s1:1", "first"]);
+    {
+        let mut store: Value =
+            serde_json::from_str(&fs::read_to_string(env.state().join("spaces.json")).unwrap())
+                .unwrap();
+        store["spaces"]["s1"]["tabs"]["2"] = json!("logs");
+        fs::write(env.state().join("spaces.json"), store.to_string()).unwrap();
+    }
+    env.ok(&["renumber"]);
+    let saved = fs::read_to_string(env.state().join("spaces.json")).unwrap();
+    assert!(saved.contains("logs") && saved.contains("first"), "{saved}");
+    // Not reserved, and no tab: gone.
+    fs::remove_file(dir.join("s1:2")).unwrap();
+    env.ok(&["renumber"]);
+    assert!(
+        !fs::read_to_string(env.state().join("spaces.json"))
+            .unwrap()
+            .contains("logs")
+    );
+}
+
+impl Env {
+    fn evaluated(&self) -> usize {
+        self.hypr.lock().unwrap().evaluated.len()
+    }
+}
+
+#[test]
+fn renumbering_in_the_omarchy_style_never_moves_windows() {
+    let env = Env::new();
+    browser_era_tabs(&env);
+    env.write_config(OMARCHY_TABS);
+    let before = env.evaluated();
+    env.ok(&["renumber"]);
+    assert_eq!(env.evaluated(), before, "nothing run");
+    assert!(
+        env.has_address("s1:3"),
+        "left as it was, for the commands that ask"
+    );
+}
+
+#[test]
+fn the_omarchy_tab_style_refuses_to_reorder_while_a_tab_has_an_old_address() {
+    let env = Env::new();
+    let (a, b, c) = browser_era_tabs(&env);
+    env.write_config(OMARCHY_TABS);
+    env.set_active("s1:1");
+    let evaluated = env.evaluated();
+    let err = env.fails(&["tab", "reorder", "s1:1", "2"]);
+    assert!(err.contains("can't reorder"), "{err}");
+    assert_eq!(env.evaluated(), evaluated, "nothing ran");
+    assert!(env.dispatched().iter().all(|d| !d.contains("window.move")));
+    assert_eq!(env.window_place(&a), "s1:1");
+    assert_eq!(env.window_place(&b), "s1:2");
+    assert_eq!(env.window_place(&c), "s1:2");
+    // The other spaces' are no matter.
+    env.add_window("s2:1");
+    env.add_window("s2:2");
+    env.ok(&["tab", "reorder", "s2:1", "2"]);
+    // Super+N onto a number that is blocked goes to a free one.
+    env.ok(&["tab", "go", "3"]);
+    assert!(!["s1:1", "s1:2"].contains(&env.active().as_str()));
+    // Once those tabs end, and new ones are made, it works again.
+    env.set_active("s2:1");
+    for window in [&a, &b, &c] {
+        env.close_window(window);
+    }
+    let first = env.add_window("s1:1");
+    let second = env.add_window("s1:2");
+    env.set_active("s1:1");
+    env.ok(&["tab", "reorder", "s1:1", "2"]);
+    assert_eq!(env.window_place(&first), "s1:2");
+    assert_eq!(env.window_place(&second), "s1:1");
+}
+
+#[test]
+fn a_reorder_on_the_second_monitor_lands_there_with_the_cursor_left_be() {
+    let env = Env::new();
+    env.write_config(OMARCHY_TABS);
+    env.add_window("s1:1");
+    let first = env.add_window("s1:11");
+    let second = env.add_window("s1:12");
+    env.set_active("s1:1");
+    env.plug_in("s1:11");
+    env.ok(&["tab", "reorder", "s1:12", "1"]);
+    assert_eq!(env.window_place(&second), "s1:11");
+    assert_eq!(env.window_place(&first), "s1:12");
+    assert_eq!(env.workspace_names(), ["s1:1", "s1:11", "s1:12"]);
+    let hypr = env.hypr.lock().unwrap();
+    let script = hypr.evaluated.last().unwrap();
+    let at = |needle: &str| {
+        script
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle} isn't in {script}"))
+    };
+    // To the monitor first, the cursor kept where it is, then back.
+    let (no_warps, there) = (at("no_warps = true"), at("focus({ monitor = \"DP-1\" })"));
+    let moves = at("window.move");
+    let back = at("focus({ monitor = \"eDP-1\" })");
+    let restored = at("no_warps = no_warps");
+    // Back to where you were after the moves, outside the protected call, so
+    // that a move that fails doesn't leave you elsewhere.
+    let after_moves = at("end)\n");
+    assert!(no_warps < there && there < moves && moves < after_moves);
+    assert!(after_moves < back && back < restored);
 }
